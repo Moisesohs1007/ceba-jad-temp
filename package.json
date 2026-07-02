@@ -1,0 +1,14 @@
+{
+  "name": "ceba-jad",
+  "private": true,
+  "version": "1.0.0",
+  "description": "App web institucional con Supabase y simulador de costos.",
+  "scripts": {
+    "serve": "node serve-local.js",
+    "test": "node run-tests.js",
+    "cost:simulate": "node cost_sim/simulate_week.js",
+    "cost:dashboard": "node cost_sim/server.js",
+    "cost:all": "node cost_sim/run_all.js",
+    "cost:audit": "node cost_sim/analyze_audit.js"
+  }
+}
