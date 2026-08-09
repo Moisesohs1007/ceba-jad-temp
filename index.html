@@ -2316,6 +2316,14 @@
           <span></span>
         </div><span class="msb-sublabel">Rol de Exámenes</span>
       </button>
+      <button class="msb-subitem" id="msb-sub-chat" onclick="msbPickSub(this,'chat','comunicacion','💬 Chat Interno')">
+        <div class="msb-dot msb-dot-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+          <span id="msb-chat-badge" style="display:none;background:#ef4444;color:#fff;font-size:10px;padding:1px 6px;border-radius:999px;font-weight:700;position:absolute;right:8px;">0</span>
+        </div><span class="msb-sublabel">Chat Interno</span>
+      </button>
     </div>
 
     <!-- Configuración -->
@@ -2435,7 +2443,7 @@
       </div>
 
       <div id="login-loading" style="text-align:center;color:#B0C4E8;font-size:0.82rem;margin-top:10px;display:none;">⏳ Verificando...</div>
-      <div class="ln-forgot">¿Olvidó su contraseña?</div>
+      <div class="ln-forgot" onclick="solicitarRecuperacionPass()">¿Olvidó su contraseña?</div>
     </div>
 
     <!-- DERECHA: banner -->
@@ -2513,23 +2521,23 @@
 <div id="modal-cambiar-pass-personal" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.7);align-items:center;justify-content:center;padding:16px;">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;width:100%;max-width:380px;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-      <div style="font-size:1rem;font-weight:800;color:var(--text);">Cambiar contraseña</div>
+      <div id="titulo-pass-personal" style="font-size:1rem;font-weight:800;color:var(--text);">Cambiar contraseña</div>
       <button onclick="document.getElementById('modal-cambiar-pass-personal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;">✕</button>
     </div>
     <div id="err-pass-personal" style="display:none;background:rgba(248,113,113,0.15);border:1px solid rgba(248,113,113,0.3);color:var(--danger);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:0.83rem;"></div>
-    <div class="form-group" style="margin-bottom:14px;">
+    <div class="form-group" id="grupo-pass-actual" style="margin-bottom:14px;">
       <label>Contraseña actual</label>
       <input type="password" id="pass-actual" placeholder="Tu contraseña actual" style="width:100%;">
     </div>
     <div class="form-group" style="margin-bottom:14px;">
-      <label>Nueva contraseña</label>
+      <label id="label-pass-nueva-1">Nueva contraseña</label>
       <input type="password" id="pass-nueva-1" placeholder="Mínimo 6 caracteres" style="width:100%;">
     </div>
     <div class="form-group" style="margin-bottom:22px;">
-      <label>Confirmar nueva contraseña</label>
+      <label id="label-pass-nueva-2">Confirmar nueva contraseña</label>
       <input type="password" id="pass-nueva-2" placeholder="Repite la contraseña" style="width:100%;">
     </div>
-    <button class="btn btn-primary" onclick="cambiarPassPersonal()" style="width:100%;justify-content:center;padding:12px;">
+    <button class="btn btn-primary" id="btn-guardar-pass-personal" onclick="cambiarPassPersonal()" style="width:100%;justify-content:center;padding:12px;">
       Guardar contraseña
     </button>
   </div>
@@ -2659,6 +2667,8 @@
         <div class="nav-drop-item" id="nav-horarios-grado" onclick="event.stopPropagation();showSection('horarios-grado');setActiveTab('tab-comunicacion');closeNavDrops()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"/><path d="M7 13h10"/><path d="M7 17h7"/></svg>🗂️ Horarios por grado</div>
         <div class="nav-drop-sep"></div>
         <div class="nav-drop-item" id="nav-rol-examenes" onclick="event.stopPropagation();showSection('rol-examenes');setActiveTab('tab-comunicacion');closeNavDrops()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11h6"/><path d="M9 15h6"/><path d="M7 3h10a2 2 0 0 1 2 2v16l-3-2-3 2-3-2-3 2V5a2 2 0 0 1 2-2z"/></svg>📝 Rol de Exámenes</div>
+        <div class="nav-drop-sep"></div>
+        <div class="nav-drop-item" id="nav-chat" onclick="event.stopPropagation();showSection('chat');setActiveTab('tab-comunicacion');closeNavDrops()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>💬 Chat Interno <span id="nav-chat-badge" style="display:none;float:right;background:#ef4444;color:#fff;font-size:10px;padding:1px 7px;border-radius:999px;font-weight:700;">0</span></div>
       </div>
     </button>
     <!-- Configuración -->
@@ -4772,6 +4782,67 @@
     </div>
   </div>
 
+  <!-- ===== CHAT INTERNO ===== -->
+  <div class="section" id="sec-chat">
+    <div class="page-title">💬 Chat Interno</div>
+    <div class="page-sub">Comunícate con los apoderados de tus alumnos</div>
+
+    <div class="card" id="chat-staff-card" style="display:grid;grid-template-columns:300px 1fr;gap:0;padding:0;overflow:hidden;min-height:62vh;">
+      <!-- Bandeja de conversaciones -->
+      <div id="chat-staff-band" style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <input id="chat-staff-buscar" placeholder="Buscar conversación..." oninput="renderChatStaffBandeja()"
+            style="flex:1;min-width:140px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-family:var(--font-body);font-size:0.82rem;">
+          <button class="btn btn-primary" onclick="abrirModalNuevoChatStaff()" style="padding:6px 10px;font-size:0.82rem;justify-content:center;" title="Nueva conversación">+ Nuevo</button>
+        </div>
+        <div id="chat-staff-lista" style="flex:1;min-height:0;overflow:auto;">
+          <div style="padding:24px;text-align:center;color:var(--muted);font-size:0.83rem;">Cargando...</div>
+        </div>
+      </div>
+      <!-- Vista de conversación -->
+      <div id="chat-staff-conv-wrap" style="display:flex;flex-direction:column;min-height:0;">
+        <div id="chat-staff-conv-header" style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;min-height:54px;">
+          <div style="color:var(--muted);font-size:0.85rem;">Selecciona una conversación o inicia una nueva</div>
+        </div>
+        <div id="chat-staff-msgs" style="flex:1;min-height:0;overflow:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px;background:var(--surface2);">
+        </div>
+        <div style="padding:10px 16px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:flex-end;">
+          <textarea id="chat-staff-input" placeholder="Escribe un mensaje... (Enter para enviar, Shift+Enter nueva línea)"
+            onkeydown="chatStaffInputKey(event)"
+            style="flex:1;min-height:42px;max-height:160px;resize:vertical;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px;color:var(--text);font-family:var(--font-body);font-size:0.88rem;"></textarea>
+          <button class="btn btn-primary" onclick="enviarChatStaffMsg()" id="chat-staff-send" style="justify-content:center;padding:10px 14px;" disabled>Enviar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: nueva conversación staff -->
+  <div class="modal-bg" id="modal-nuevo-chat-staff">
+    <div class="modal" onclick="event.stopPropagation()" style="max-width:520px;">
+      <div class="modal-header">
+        <div class="modal-title">✉️ Nueva conversación</div>
+        <button class="modal-close" onclick="closeModal('modal-nuevo-chat-staff')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Buscar alumno (para chatear con su apoderado)</label>
+          <input type="text" id="chat-nuevo-buscar" placeholder="Buscar por nombre, DNI, código..." oninput="renderChatNuevoAlumnos()">
+        </div>
+        <div class="form-group">
+          <label>Tipo</label>
+          <select id="chat-nuevo-scope">
+            <option value="TUTOR_ALUMNO">Sobre el alumno (Tutor / Profesor)</option>
+            <option value="ALUMNO_GENERAL">General con apoderado</option>
+            <option value="ADMIN_APOD" id="chat-nuevo-opt-admin">Canal directo (Admin/Director/Coord)</option>
+          </select>
+        </div>
+        <div id="chat-nuevo-lista" style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:6px;">
+          <div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">Escribe para buscar...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== ALERTAS ===== -->
   <div class="section" id="sec-alertas">
     <div class="page-title">Alertas automáticas</div>
@@ -5601,6 +5672,7 @@ function canAccessSection(secId) {
   if(id === 'agenda') return (r === 'admin' || r === 'director' || r === 'coordinador' || (r === 'profesor' && isTutor));
   if(id === 'rol-examenes') return (_isAdminDirectorOrCoord() || r === 'psicologo' || (r === 'profesor' && isTutor));
   if(id === 'ia-horarios' || id === 'horarios-grado') return (r === 'admin' || r === 'director' || r === 'coordinador');
+  if(id === 'chat') return (r === 'admin' || r === 'director' || r === 'coordinador' || r === 'profesor' || r === 'psicologo' || r === 'auxiliar' || r === 'portero');
   if(id === 'usuarios' || id === 'config') return _isAdminDirector();
   if(id === 'generadores-ia') return false;
   return false;
@@ -5684,6 +5756,7 @@ let _loginIntentos = 0;
 let _blockTimer = null;
 let _loginBusyPersonal = false;
 let _creandoCuentaApoderado = false;
+let _passwordRecoveryMode = false;
 let _apoderadoUID = null; // UID Firebase del apoderado logueado
 let _apoderadoAlumno = null; // datos del alumno del apoderado
 
@@ -5763,6 +5836,64 @@ function _normLoginDni(v) {
   return String(v || '').replace(/\D+/g, '').slice(0, 8);
 }
 
+function _urlHasRecoveryMode() {
+  try {
+    const href = String(window.location.href || '').toLowerCase();
+    const hash = String(window.location.hash || '').toLowerCase();
+    return href.includes('type=recovery') || href.includes('recovery=1') || hash.includes('type=recovery');
+  } catch(e) {
+    return false;
+  }
+}
+
+function _setModoCambioPassPersonal(recoveryMode) {
+  _passwordRecoveryMode = !!recoveryMode;
+  const titulo = document.getElementById('titulo-pass-personal');
+  const grupoActual = document.getElementById('grupo-pass-actual');
+  const label1 = document.getElementById('label-pass-nueva-1');
+  const label2 = document.getElementById('label-pass-nueva-2');
+  const btn = document.getElementById('btn-guardar-pass-personal');
+  const errEl = document.getElementById('err-pass-personal');
+  if(titulo) titulo.textContent = recoveryMode ? 'Restablecer contraseña' : 'Cambiar contraseña';
+  if(grupoActual) grupoActual.style.display = recoveryMode ? 'none' : '';
+  if(label1) label1.textContent = 'Nueva contraseña';
+  if(label2) label2.textContent = recoveryMode ? 'Confirmar nueva contraseña' : 'Confirmar nueva contraseña';
+  if(btn) btn.textContent = recoveryMode ? 'Guardar nueva contraseña' : 'Guardar contraseña';
+  if(errEl) errEl.style.display = 'none';
+  const actual = document.getElementById('pass-actual');
+  const nueva1 = document.getElementById('pass-nueva-1');
+  const nueva2 = document.getElementById('pass-nueva-2');
+  if(actual) actual.value = '';
+  if(nueva1) nueva1.value = '';
+  if(nueva2) nueva2.value = '';
+}
+
+async function solicitarRecuperacionPass() {
+  const email = _normLoginEmail(document.getElementById('login-email').value);
+  const errEl = document.getElementById('login-error');
+  if(!email) {
+    errEl.textContent = 'Ingresa tu correo para enviarte el enlace de recuperación';
+    errEl.style.display = 'block';
+    return;
+  }
+  try {
+    errEl.style.display = 'none';
+    await auth.sendPasswordResetEmail(email);
+    toast('Te enviamos un enlace para restablecer tu contraseña. Revisa tu correo.', 'success');
+  } catch(err) {
+    const msgs = {
+      'auth/invalid-email': 'El correo no es válido',
+      'auth/too-many-requests': 'Demasiados intentos. Espera unos minutos antes de volver a intentar',
+    };
+    errEl.textContent = msgs[err.code] || ('No se pudo enviar el correo: ' + (err.message || err.code || 'Error desconocido'));
+    errEl.style.display = 'block';
+  }
+}
+
+function _abrirRecuperacionPass() {
+  _setModoCambioPassPersonal(true);
+  document.getElementById('modal-cambiar-pass-personal').style.display = 'flex';
+}
 
 
 window.doLogin = function() {
@@ -6076,20 +6207,31 @@ async function cambiarPassPersonal() {
   const errEl   = document.getElementById('err-pass-personal');
   errEl.style.display = 'none';
 
-  if(!actual)        { errEl.textContent = 'Ingresa tu contraseña actual'; errEl.style.display = 'block'; return; }
   if(nueva1.length < 6) { errEl.textContent = 'La nueva contraseña debe tener al menos 6 caracteres'; errEl.style.display = 'block'; return; }
   if(nueva1 !== nueva2) { errEl.textContent = 'Las contraseñas no coinciden'; errEl.style.display = 'block'; return; }
+  if(!_passwordRecoveryMode && !actual) { errEl.textContent = 'Ingresa tu contraseña actual'; errEl.style.display = 'block'; return; }
 
   try {
     const user = auth.currentUser;
-    // Re-autenticar antes de cambiar contraseña
-    const cred = firebase.auth.EmailAuthProvider.credential(user.email, actual);
-    await user.reauthenticateWithCredential(cred);
+    if(!_passwordRecoveryMode) {
+      // Re-autenticar antes de cambiar contraseña
+      const cred = firebase.auth.EmailAuthProvider.credential(user.email, actual);
+      await user.reauthenticateWithCredential(cred);
+    }
     await user.updatePassword(nueva1);
     document.getElementById('modal-cambiar-pass-personal').style.display = 'none';
     document.getElementById('pass-actual').value  = '';
     document.getElementById('pass-nueva-1').value = '';
     document.getElementById('pass-nueva-2').value = '';
+    if(_passwordRecoveryMode) {
+      _setModoCambioPassPersonal(false);
+      try {
+        if(window.history && window.history.replaceState) window.history.replaceState(null, '', window.location.pathname);
+      } catch(_) {}
+      toast('✅ Contraseña restablecida. Inicia sesión con tu nueva clave.', 'success');
+      await auth.signOut();
+      return;
+    }
     toast('✅ Contraseña actualizada correctamente', 'success');
   } catch(e) {
     if(e.code === 'auth/wrong-password') {
@@ -6139,10 +6281,18 @@ function doLogout() {
   clearTimeout(_inactWarning);
   if(!confirm('¿Cerrar sesión?')) return;
   sessionStorage.removeItem('splashMostrado');
+  sessionStorage.removeItem('asmqr_haySession');
   try { localStorage.removeItem('asmqr_lastTab'); } catch(e) {}
   try { localStorage.removeItem('asmqr_lastSection'); } catch(e) {}
   try { sessionStorage.removeItem('asmqr_lastSection'); } catch(e) {}
-  try { if(window.history && window.history.replaceState) window.history.replaceState(null, '', window.location.pathname + window.location.search); } catch(e) {}
+  // Limpiar URL (search + hash) para que quede solo index.html limpio al cerrar sesión
+  try {
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(null, '', window.location.pathname);
+    } else if (window.location.hash) {
+      window.location.hash = '';
+    }
+  } catch(e) {}
   if(_alumnosTsUnsubscribe) { _alumnosTsUnsubscribe(); _alumnosTsUnsubscribe = null; }
   if(_configUnsubscribe) { _configUnsubscribe(); _configUnsubscribe = null; }
   auth.signOut();
@@ -6177,6 +6327,21 @@ auth.onAuthStateChanged(async user => {
     if(esApo) {
       // ── ES APODERADO — redirigir a apoderado.html ──
       window.location.href = 'apoderado.html';
+      return;
+    }
+
+    if(_urlHasRecoveryMode()) {
+      currentUser = user;
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('login-loading').style.display = 'none';
+      document.getElementById('btn-login').disabled = false;
+      document.getElementById('app-header').style.display = 'none';
+      document.getElementById('app-main').style.display = 'none';
+      const navEl = document.getElementById('nav-tabs');
+      if(navEl) navEl.style.display = 'none';
+      const bnav = document.getElementById('bottom-nav');
+      if(bnav) bnav.style.display = 'none';
+      _abrirRecuperacionPass();
       return;
     }
 
@@ -6285,6 +6450,23 @@ auth.onAuthStateChanged(async user => {
     anunciarSesion();        // Avisar a otras pestañas
   } else {
     // SIN SESION — mostrar login solo si splash ya terminó
+
+    // Limpiar cualquier sección vieja del hash (p.ej. #usuarios) para que NO aparezca pegado a la URL del login,
+    // y evitar que al recargar vuelva a intentar abrir una sección sin autenticar.
+    try {
+      if (window.location.hash) {
+        if (window.history && window.history.replaceState) {
+          window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        } else if ('replaceState' in window.history) {
+          window.location.hash = '';
+        }
+      }
+    } catch(_eHash) {}
+
+    // Resetear también la bandera de sesión ANTES de continuar,
+    // para que aplicarPermisos no lea un #hash de una sesión vieja.
+    try { sessionStorage.removeItem('asmqr_haySession'); } catch(_e) {}
+
     var _ls = document.getElementById('login-screen');
     var _sp = document.getElementById('splash-screen');
     var splashActivo = _sp && _sp.style.display !== 'none';
@@ -6405,10 +6587,17 @@ function aplicarPermisos(rol) {
     if(bUso) bUso.style.display = (_normRol(currentRol) === 'admin') ? '' : 'none';
   } catch(e) {}
 
-  // Restaurar última sección activa si existe y está permitida
+  // Restaurar última sección activa si existe y está permitida.
+  // IMPORTANTE: NO usar nunca window.location.hash si NO hay sesión autenticada establecida
+  // (delegamos esa limpieza en onAuthStateChanged sin-sesión). Aquí SOLO la tomamos si
+  // realmente hay marca de sesión válida y permisos.
   var lastSection = null;
   var hashSection = '';
-  try { hashSection = String(window.location.hash || '').replace(/^#/, ''); } catch(e) { hashSection = ''; }
+  var haySesionMarcada = false;
+  try { haySesionMarcada = (sessionStorage.getItem('asmqr_haySession') === '1'); } catch(e) {}
+  if (haySesionMarcada) {
+    try { hashSection = String(window.location.hash || '').replace(/^#/, ''); } catch(e) { hashSection = ''; }
+  }
   if(hashSection && canAccessSection(hashSection) && document.getElementById('sec-'+hashSection)) {
     lastSection = hashSection;
   } else {
@@ -6430,7 +6619,7 @@ function showSectionDirect(id) {
   document.getElementById('scan-action-bar').style.display = 'none';
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   const sec = document.getElementById('sec-'+id);
-  const _commSubs = ['comunicado','agenda','rol-examenes','ia-horarios','horarios-grado'];
+  const _commSubs = ['comunicado','agenda','rol-examenes','ia-horarios','horarios-grado','chat'];
   let tab = document.getElementById('tab-'+id) || null;
   if(!tab && _commSubs.includes(id)) tab = document.getElementById('tab-comunicacion');
   if(!tab && id === 'materiales') tab = document.getElementById('tab-aula');
@@ -18570,11 +18759,12 @@ async function saveUsuario() {
     const rolScope = (rol === 'profesor' || rol === 'psicologo');
     const restringir = rolScope ? document.getElementById('u-restringir').checked : false;
     let asignaciones = rolScope ? tempAsignaciones : {};
-    const esTutor = rol === 'profesor' ? !!document.getElementById('u-es-tutor')?.checked : false;
+    const esProfesor = rol === 'profesor';
+    const esTutor = esProfesor ? !!document.getElementById('u-es-tutor')?.checked : false;
     const telefonoVal = document.getElementById('u-telefono').value.trim();
-    const tutorNivel = esTutor ? (document.getElementById('u-tutor-nivel')?.value || '') : '';
-    const tutorGrado = esTutor ? (document.getElementById('u-tutor-grado')?.value || '') : '';
-    const tutorSeccion = esTutor ? (document.getElementById('u-tutor-seccion')?.value || '') : '';
+    const tutorNivel = (esProfesor && esTutor) ? (document.getElementById('u-tutor-nivel')?.value || '') : '';
+    const tutorGrado = (esProfesor && esTutor) ? (document.getElementById('u-tutor-grado')?.value || '') : '';
+    const tutorSeccion = (esProfesor && esTutor) ? (document.getElementById('u-tutor-seccion')?.value || '') : '';
     if(rol === 'psicologo') {
       if(!restringir) { toast('Activa "Restringir acceso por grados/secciones"','warning'); return; }
       if(!Object.keys(asignaciones || {}).length) { toast('Configura las asignaciones del psicólogo','warning'); return; }
@@ -18598,6 +18788,25 @@ async function saveUsuario() {
       const { data: { session } } = await _sb.auth.getSession();
       const jwt = session?.access_token;
       if(!jwt) { toast('Inicia sesión nuevamente','warning'); return; }
+      const payloadCrear = {
+        email,
+        password: pass,
+        rol,
+        nombre,
+        cargo,
+        telefono: telefonoVal,
+        incidentesDiaLectura,
+        permisosExtra,
+        restringir,
+        asignaciones
+      };
+      if (esProfesor) {
+        payloadCrear.esTutor = esTutor;
+        if (esTutor) {
+          payloadCrear.tutorGrado = tutorGrado;
+          payloadCrear.tutorSeccion = tutorSeccion;
+        }
+      }
       const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-crear-usuario`, {
         method: 'POST',
         headers: {
@@ -18605,21 +18814,7 @@ async function saveUsuario() {
           'Authorization': `Bearer ${jwt}`,
           'apikey': SUPABASE_ANON_KEY
         },
-        body: JSON.stringify({
-          email,
-          password: pass,
-          rol,
-          nombre,
-          cargo,
-          telefono: telefonoVal,
-          incidentesDiaLectura,
-          permisosExtra,
-          restringir,
-          asignaciones,
-          esTutor,
-          tutorGrado,
-          tutorSeccion
-        })
+        body: JSON.stringify(payloadCrear)
       });
       const body = await res.json().catch(() => ({}));
       if(!res.ok) {
@@ -18631,7 +18826,14 @@ async function saveUsuario() {
       toast('Usuario creado correctamente','success');
     } else {
       // EDITAR usuario
-      const update1 = { nombre, rol, cargo, telefono: telefonoVal, incidentesDiaLectura, permisosExtra, restringir, asignaciones, esTutor, tutorGrado: esTutor ? tutorGrado : null, tutorSeccion: esTutor ? tutorSeccion : null };
+      const update1 = { nombre, rol, cargo, telefono: telefonoVal, incidentesDiaLectura, permisosExtra, restringir, asignaciones };
+      // Solo actualizar campos de tutor si el usuario es profesor.
+      // Si es profesor y NO es tutor, borrar explícitamente los valores antiguos enviando ''.
+      if (esProfesor) {
+        update1.esTutor = esTutor;
+        update1.tutorGrado = esTutor ? tutorGrado : '';
+        update1.tutorSeccion = esTutor ? tutorSeccion : '';
+      }
       try {
         await db.collection('usuarios').doc(editingUsuarioId).update(update1);
       } catch(e) {
@@ -22335,6 +22537,602 @@ async function resetearTodoElSistema() {
     toast('Error: ' + e.message, 'error');
   }
 }
+
+// ============================================================
+// CHAT INTERNO — Staff (portal index.html)
+// ============================================================
+const CHAT_STAFF = {
+  bandeja: [],
+  convActual: null,    // row chat_conversaciones
+  convActualId: null,
+  mensajes: [],
+  susConv: null,
+  susMsgs: null,
+  uid: null,
+  rol: null,
+  nombre: '',
+  alumnosCache: [],
+  usuariosCache: new Map(), // uid -> datos public.usuarios
+  apoderadosCache: new Map(), // auth uid -> {nombres, apellidos, telefono}
+  initDone: false,
+};
+
+function chatStaffGetSB() {
+  return (window._sb && window._sb.supabase) ? window._sb.supabase : null;
+}
+
+function chatStaffColegioId() {
+  return window.COLEGIO_ID || (window._cfg && window._cfg.colegio_id) || 'sigece';
+}
+
+function chatStaffInitShow() {
+  if (!currentUser) return;
+  if (!CHAT_STAFF.uid) {
+    CHAT_STAFF.uid = currentUser.uid;
+    CHAT_STAFF.rol = _normRol(currentRol);
+    CHAT_STAFF.nombre = (currentUserData && (currentUserData.nombre || currentUserData.nombres)) || 'Usuario';
+  }
+  // Visibilidad de opción ADMIN_APOD
+  const optAdmin = document.getElementById('chat-nuevo-opt-admin');
+  if (optAdmin) {
+    optAdmin.style.display = _isAdminDirectorOrCoord() ? '' : 'none';
+  }
+  if (!CHAT_STAFF.initDone) {
+    CHAT_STAFF.initDone = true;
+    chatStaffCargarBandeja().then(() => chatStaffSuscribirBandeja()).catch(e => console.error('chatStaffInitShow', e));
+  } else {
+    renderChatStaffBandeja();
+  }
+}
+
+// Interceptar showSection para inicializar el chat al abrirlo
+const _origShowSectionDirect = window.showSectionDirect;
+window.showSectionDirect = function(id) {
+  _origShowSectionDirect && _origShowSectionDirect.apply(this, arguments);
+  if (id === 'chat') chatStaffInitShow();
+};
+
+async function chatStaffCargarBandeja() {
+  const sb = chatStaffGetSB();
+  if (!sb) return;
+  const colegio = chatStaffColegioId();
+  try {
+    const { data, error } = await sb
+      .from('chat_conversaciones')
+      .select('*')
+      .eq('colegio_id', colegio)
+      .order('last_message_at', { ascending: false })
+      .limit(200);
+    if (error) throw error;
+    CHAT_STAFF.bandeja = data || [];
+    await chatStaffHidratarNombres(CHAT_STAFF.bandeja);
+    renderChatStaffBandeja();
+    chatBadgeUpdateStaff();
+  } catch(e) {
+    console.error(e);
+    const el = document.getElementById('chat-staff-lista');
+    if (el) el.innerHTML = `<div style="padding:18px;color:#ef4444;font-size:0.82rem;">Error al cargar: ${e.message}</div>`;
+  }
+}
+
+async function chatStaffHidratarNombres(convList) {
+  if (!convList || !convList.length) return;
+  const sb = chatStaffGetSB();
+  const apodUids = [...new Set(convList.map(c => c.apoderado_auth_uid).filter(Boolean))];
+  const staffUids = [...new Set(convList.map(c => c.staff_user_id).filter(Boolean))];
+  // Staff: public.usuarios
+  if (staffUids.length) {
+    const faltan = staffUids.filter(u => !CHAT_STAFF.usuariosCache.has(u));
+    if (faltan.length && sb) {
+      try {
+        const { data } = await sb.from('usuarios').select('id,nombre,nombres,apellidos,cargo,rol').in('id', faltan);
+        (data || []).forEach(u => CHAT_STAFF.usuariosCache.set(u.id, u));
+      } catch(e) { /* ignore */ }
+    }
+  }
+  // Apoderados: intentamos construir nombre desde alumnos (por alumno_id) o desde auth (si es admin usa Edge func)
+  const alumnoIds = [...new Set(convList.map(c => c.alumno_id).filter(Boolean))];
+  if (alumnoIds.length && sb) {
+    try {
+      const { data } = await sb.from('alumnos').select('id,nombres,apellidos,apoderado_nombres,apoderado_apellidos,correo_apoderado,apoderado_telefono,grado,seccion').in('id', alumnoIds);
+      (data || []).forEach(a => {
+        if (!CHAT_STAFF.apoderadosCache.has('_alumno_'+a.id)) CHAT_STAFF.apoderadosCache.set('_alumno_'+a.id, a);
+      });
+    } catch(e) { /* ignore */ }
+  }
+}
+
+function chatStaffNombreStaff(uid) {
+  const u = CHAT_STAFF.usuariosCache.get(uid);
+  if (!u) return 'Personal';
+  return (u.nombre || [u.nombres, u.apellidos].filter(Boolean).join(' ')).trim() || 'Personal';
+}
+
+function chatStaffNombreApoderado(conv) {
+  if (conv && conv.alumno_id) {
+    const a = CHAT_STAFF.apoderadosCache.get('_alumno_' + conv.alumno_id);
+    if (a) {
+      const noms = [a.apoderado_nombres, a.apoderado_apellidos].filter(Boolean).join(' ');
+      if (noms) return noms;
+    }
+  }
+  return 'Apoderado';
+}
+
+function chatStaffAlumnoLabel(conv) {
+  if (!conv || !conv.alumno_id) return '';
+  const a = CHAT_STAFF.apoderadosCache.get('_alumno_' + conv.alumno_id);
+  if (!a) return conv.alumno_id;
+  return [a.nombres, a.apellidos].filter(Boolean).join(' ') + (a.grado ? ` · ${a.grado}${a.seccion ? ' '+a.seccion : ''}` : '');
+}
+
+function chatStaffIniciales(nom) {
+  const s = String(nom || '').trim().split(/\s+/).filter(Boolean).slice(0,2);
+  return s.map(p => p[0] || '').join('').toUpperCase() || '?';
+}
+
+function chatStaffFmtHora(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const hoy = new Date();
+  const esHoy = d.toDateString() === hoy.toDateString();
+  if (esHoy) return d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  const ayer = new Date(hoy.getTime() - 86400000);
+  if (d.toDateString() === ayer.toDateString()) return 'Ayer ' + d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  return d.toLocaleDateString([], { day:'2-digit', month:'short' }) + ' ' + d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+}
+
+function renderChatStaffBandeja() {
+  const el = document.getElementById('chat-staff-lista');
+  if (!el) return;
+  const q = String(document.getElementById('chat-staff-buscar')?.value || '').toLowerCase().trim();
+  const r = _normRol(currentRol);
+  const adminVerTodas = _isAdminDirectorOrCoord();
+  let lista = (CHAT_STAFF.bandeja || []).filter(c => {
+    if (!adminVerTodas && c.staff_user_id !== CHAT_STAFF.uid) return false;
+    if (q) {
+      const nomApo = chatStaffNombreApoderado(c).toLowerCase();
+      const nomAl = chatStaffAlumnoLabel(c).toLowerCase();
+      const last = (c.last_message || '').toLowerCase();
+      if (!(nomApo.includes(q) || nomAl.includes(q) || last.includes(q))) return false;
+    }
+    return true;
+  });
+  if (!lista.length) {
+    el.innerHTML = `<div style="padding:26px 18px;text-align:center;color:var(--muted);font-size:0.83rem;">
+      ${(CHAT_STAFF.bandeja||[]).length ? 'No hay coincidencias' : 'Sin conversaciones aún. Haz clic en + Nuevo para iniciar.'}
+    </div>`;
+    return;
+  }
+  const parts = lista.map(c => {
+    const unread = (c.read_by_staff === false) ? 1 : 0;
+    const nom = chatStaffNombreApoderado(c);
+    const al = chatStaffAlumnoLabel(c);
+    const convId = c.id;
+    const active = (convId === CHAT_STAFF.convActualId) ? ' style="background:var(--surface2);border-left:3px solid var(--accent);"' : '';
+    return `<div class="chat-row-item" data-conv="${convId}" onclick="abrirConversacionStaff('${convId}')" style="padding:11px 12px;border-bottom:1px solid var(--border);cursor:pointer;${unread ? 'font-weight:700;' : ''}${active ? 'background:var(--surface2);border-left:3px solid var(--accent);' : ''}" onmouseover="this.style.background='var(--surface2)'" onmouseout="${active ? 'this.style.background=\'var(--surface2)\'' : 'this.style.background=\'\''}">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:38px;height:38px;border-radius:50%;background:#C9A84C;color:#0D1A3A;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">${chatStaffIniciales(nom)}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <div style="font-size:0.85rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nom}</div>
+            <div style="font-size:0.7rem;color:var(--muted);white-space:nowrap;flex-shrink:0;">${chatStaffFmtHora(c.last_message_at)}</div>
+          </div>
+          <div style="font-size:0.72rem;color:#185FA5;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${al || 'Sin alumno'}</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
+            <div style="flex:1;font-size:0.78rem;color:var(--muted);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.last_message ? (c.last_sender_type==='staff' ? 'Tú: ' : '') + c.last_message : 'Sin mensajes'}</div>
+            ${unread ? `<span style="background:var(--accent2,#ef4444);color:#fff;font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;">!</span>` : ''}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  });
+  el.innerHTML = parts.join('');
+}
+
+function chatBadgeUpdateStaff() {
+  const r = _normRol(currentRol);
+  const adminVerTodas = _isAdminDirectorOrCoord();
+  const count = (CHAT_STAFF.bandeja || []).filter(c => c.read_by_staff === false && (adminVerTodas || c.staff_user_id === CHAT_STAFF.uid)).length;
+  const nb = document.getElementById('nav-chat-badge');
+  if (nb) {
+    nb.style.display = count > 0 ? '' : 'none';
+    nb.textContent = count > 99 ? '99+' : String(count);
+  }
+  const mb = document.getElementById('msb-chat-badge');
+  if (mb) {
+    mb.style.display = count > 0 ? '' : 'none';
+    mb.textContent = count > 99 ? '99+' : String(count);
+  }
+}
+
+function chatStaffSuscribirBandeja() {
+  const sb = chatStaffGetSB();
+  if (!sb) return;
+  try {
+    const colegio = chatStaffColegioId();
+    CHAT_STAFF.susConv = sb
+      .channel('chat_conv_staff')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_conversaciones', filter: `colegio_id=eq.${colegio}` },
+        (payload) => {
+          const ev = payload.eventType;
+          const newR = payload.new;
+          const oldR = payload.old;
+          if (ev === 'INSERT' && newR) {
+            if (!CHAT_STAFF.bandeja.find(x => x.id === newR.id)) CHAT_STAFF.bandeja.unshift(newR);
+          } else if (ev === 'UPDATE' && newR) {
+            const i = CHAT_STAFF.bandeja.findIndex(x => x.id === newR.id);
+            if (i >= 0) CHAT_STAFF.bandeja[i] = newR; else CHAT_STAFF.bandeja.unshift(newR);
+          } else if (ev === 'DELETE' && oldR) {
+            CHAT_STAFF.bandeja = CHAT_STAFF.bandeja.filter(x => x.id !== oldR.id);
+          }
+          // Ordenar por last_message_at desc
+          CHAT_STAFF.bandeja.sort((a,b) => new Date(b.last_message_at||0) - new Date(a.last_message_at||0));
+          if ((ev === 'INSERT' || ev === 'UPDATE') && newR) {
+            chatStaffHidratarNombres([newR]).then(() => {
+              renderChatStaffBandeja();
+              chatBadgeUpdateStaff();
+              // Si es la conversación abierta, refrescar mensajes header y no-leídos
+              if (newR.id === CHAT_STAFF.convActualId) {
+                CHAT_STAFF.convActual = newR;
+                chatStaffMarcarLeido();
+              }
+              // Toast si no es el emisor staff y hay nuevo mensaje no leído
+              if (ev === 'UPDATE' && newR.read_by_staff === false && newR.last_sender_type === 'apoderado' && newR.staff_user_id === CHAT_STAFF.uid && CHAT_STAFF.convActualId !== newR.id) {
+                toast('Nuevo mensaje de ' + chatStaffNombreApoderado(newR), 'info');
+              }
+            });
+          } else {
+            renderChatStaffBandeja();
+            chatBadgeUpdateStaff();
+          }
+        })
+      .subscribe();
+  } catch(e) { console.error('sus conv', e); }
+}
+
+async function abrirConversacionStaff(convId) {
+  CHAT_STAFF.convActualId = convId;
+  const conv = CHAT_STAFF.bandeja.find(c => c.id === convId) || null;
+  CHAT_STAFF.convActual = conv;
+  renderChatStaffBandeja();
+  // Header
+  const hdr = document.getElementById('chat-staff-conv-header');
+  if (hdr && conv) {
+    const nomApo = chatStaffNombreApoderado(conv);
+    const al = chatStaffAlumnoLabel(conv);
+    const scopeLabel = conv.scope_type === 'ADMIN_APOD' ? 'Canal directo' : conv.scope_type === 'ALUMNO_GENERAL' ? 'General' : 'Tutoría';
+    hdr.innerHTML = `<div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
+      <div style="width:38px;height:38px;border-radius:50%;background:#C9A84C;color:#0D1A3A;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">${chatStaffIniciales(nomApo)}</div>
+      <div style="min-width:0;flex:1;">
+        <div style="font-size:0.9rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nomApo}</div>
+        <div style="font-size:0.72rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${scopeLabel}${al ? ' · '+al : ''}</div>
+      </div>
+    </div>`;
+  }
+  const sendBtn = document.getElementById('chat-staff-send');
+  if (sendBtn) sendBtn.disabled = !conv;
+  // Suscribir mensajes
+  chatStaffSuscribirMensajes(convId);
+  // Cargar mensajes
+  await chatStaffCargarMensajes(convId);
+  // Marcar leído si venía no-leído
+  chatStaffMarcarLeido();
+  // Enfocar input
+  setTimeout(() => { try { document.getElementById('chat-staff-input')?.focus(); } catch(e){} }, 50);
+}
+
+async function chatStaffCargarMensajes(convId) {
+  const sb = chatStaffGetSB();
+  if (!sb || !convId) return;
+  const el = document.getElementById('chat-staff-msgs');
+  if (el) el.innerHTML = `<div style="padding:16px;text-align:center;color:var(--muted);font-size:0.82rem;">Cargando...</div>`;
+  try {
+    const { data, error } = await sb
+      .from('chat_mensajes')
+      .select('*')
+      .eq('conversacion_id', convId)
+      .order('created_at', { ascending: true })
+      .limit(400);
+    if (error) throw error;
+    CHAT_STAFF.mensajes = data || [];
+    renderChatStaffMensajes();
+  } catch(e) {
+    console.error(e);
+    if (el) el.innerHTML = `<div style="padding:16px;color:#ef4444;font-size:0.82rem;">Error: ${e.message}</div>`;
+  }
+}
+
+function renderChatStaffMensajes() {
+  const el = document.getElementById('chat-staff-msgs');
+  if (!el) return;
+  const list = CHAT_STAFF.mensajes || [];
+  if (!list.length) {
+    el.innerHTML = `<div style="padding:24px;text-align:center;color:var(--muted);font-size:0.82rem;">Aún no hay mensajes. Escribe el primero.</div>`;
+    return;
+  }
+  let lastDay = '';
+  const parts = [];
+  list.forEach(m => {
+    const d = new Date(m.created_at);
+    const day = d.toLocaleDateString([], { weekday:'long', day:'2-digit', month:'long' });
+    if (day !== lastDay) {
+      lastDay = day;
+      parts.push(`<div style="text-align:center;margin:10px 0;"><span style="background:var(--surface);border:1px solid var(--border);padding:2px 12px;border-radius:999px;font-size:0.7rem;color:var(--muted);">${day}</span></div>`);
+    }
+    const mios = m.sender_type === 'staff';
+    const bubbleBg = mios ? 'background:var(--accent);color:#fff;' : 'background:var(--surface);color:var(--text);border:1px solid var(--border);';
+    const align = mios ? 'margin-left:auto;' : 'margin-right:auto;';
+    parts.push(`<div style="max-width:78%;min-width:120px;${align}">
+      <div style="${bubbleBg}border-radius:${mios ? '14px 14px 2px 14px' : '14px 14px 14px 2px'};padding:8px 12px;font-size:0.88rem;line-height:1.35;word-wrap:break-word;white-space:pre-wrap;">${escapeHtml(m.texto || '')}</div>
+      <div style="font-size:0.66rem;color:var(--muted);margin-top:3px;text-align:${mios ? 'right' : 'left'};">${chatStaffFmtHora(m.created_at)}</div>
+    </div>`);
+  });
+  el.innerHTML = parts.join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function chatStaffSuscribirMensajes(convId) {
+  const sb = chatStaffGetSB();
+  if (!sb) return;
+  if (CHAT_STAFF.susMsgs) { try { sb.removeChannel(CHAT_STAFF.susMsgs); } catch(e){} }
+  CHAT_STAFF.susMsgs = null;
+  if (!convId) return;
+  try {
+    CHAT_STAFF.susMsgs = sb
+      .channel('chat_msgs_staff_' + convId.slice(0,8))
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_mensajes', filter: `conversacion_id=eq.${convId}` },
+        (payload) => {
+          const m = payload.new;
+          if (!m) return;
+          if (!CHAT_STAFF.mensajes.find(x => x.id === m.id)) {
+            CHAT_STAFF.mensajes.push(m);
+            renderChatStaffMensajes();
+            // Si enviaron apoderado, ya la conversación se actualiza via bandeja listener y marca no-leido;
+            // forzamos marca leido porque estamos dentro de la conversación.
+            if (m.sender_type === 'apoderado') chatStaffMarcarLeido();
+          }
+        })
+      .subscribe();
+  } catch(e) { console.error('sus msgs', e); }
+}
+
+async function chatStaffMarcarLeido() {
+  const conv = CHAT_STAFF.convActual;
+  if (!conv || conv.read_by_staff === true) return;
+  const sb = chatStaffGetSB();
+  if (!sb) return;
+  try {
+    const { error } = await sb
+      .from('chat_conversaciones')
+      .update({ read_by_staff: true })
+      .eq('id', conv.id)
+      .eq('colegio_id', chatStaffColegioId());
+    if (!error) {
+      conv.read_by_staff = true;
+      const i = CHAT_STAFF.bandeja.findIndex(c => c.id === conv.id);
+      if (i >= 0) CHAT_STAFF.bandeja[i].read_by_staff = true;
+      renderChatStaffBandeja();
+      chatBadgeUpdateStaff();
+    }
+  } catch(e) { /* ignore */ }
+}
+
+function chatStaffInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    enviarChatStaffMsg();
+  }
+}
+
+async function enviarChatStaffMsg() {
+  const conv = CHAT_STAFF.convActual;
+  if (!conv) { toast('Selecciona una conversación', 'warning'); return; }
+  const inp = document.getElementById('chat-staff-input');
+  const txt = String(inp?.value || '').trim();
+  if (!txt) return;
+  const sb = chatStaffGetSB();
+  if (!sb) return;
+  inp.value = '';
+  inp.style.height = '';
+  try {
+    const { error } = await sb.from('chat_mensajes').insert({
+      colegio_id: chatStaffColegioId(),
+      conversacion_id: conv.id,
+      sender_type: 'staff',
+      sender_id: CHAT_STAFF.uid,
+      texto: txt,
+    });
+    if (error) throw error;
+    // Optimista (el listener realtime lo agrega también)
+  } catch(e) {
+    toast('Error al enviar: ' + e.message, 'error');
+    inp.value = txt;
+  }
+}
+
+// ------------- Nuevo chat (buscar alumno y crear conversación) -------------
+function abrirModalNuevoChatStaff() {
+  const modal = document.getElementById('modal-nuevo-chat-staff');
+  if (!modal) return;
+  document.getElementById('chat-nuevo-buscar').value = '';
+  document.getElementById('chat-nuevo-lista').innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">Cargando alumnos...</div>`;
+  modal.style.display = 'flex';
+  chatStaffPrecargarAlumnos().then(renderChatNuevoAlumnos);
+}
+
+async function chatStaffPrecargarAlumnos() {
+  if (CHAT_STAFF.alumnosCache && CHAT_STAFF.alumnosCache.length) return;
+  const sb = chatStaffGetSB();
+  if (!sb) return;
+  const r = _normRol(currentRol);
+  try {
+    let q = sb.from('alumnos').select('id,nombres,apellidos,dni,grado,seccion,turno,apoderado_nombres,apoderado_apellidos,apoderado_telefono,correo_apoderado').eq('colegio_id', chatStaffColegioId());
+    // Si es tutor, restringir a su aula
+    if (_isTutorUser() && currentTutorInfo) {
+      if (currentTutorInfo.grado) q = q.eq('grado', currentTutorInfo.grado);
+      if (currentTutorInfo.seccion) q = q.eq('seccion', currentTutorInfo.seccion);
+    } else if (_normRol(currentRol) === 'profesor' && currentPrivilegios && currentPrivilegios.grados) {
+      const gs = Object.keys(currentPrivilegios.grados || {});
+      if (gs.length) q = q.in('grado', gs);
+    }
+    q = q.order('grado', { ascending:true }).order('seccion', { ascending:true }).order('apellidos', { ascending:true }).limit(1500);
+    const { data, error } = await q;
+    if (error) throw error;
+    CHAT_STAFF.alumnosCache = data || [];
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+function renderChatNuevoAlumnos() {
+  const el = document.getElementById('chat-nuevo-lista');
+  if (!el) return;
+  const q = String(document.getElementById('chat-nuevo-buscar')?.value || '').toLowerCase().trim();
+  const list = (CHAT_STAFF.alumnosCache || []).filter(a => {
+    if (!q) return true;
+    const texto = [a.nombres,a.apellidos,a.dni,a.grado,a.seccion,a.apoderado_nombres,a.apoderado_apellidos,a.apoderado_telefono,a.correo_apoderado].filter(Boolean).join(' ').toLowerCase();
+    return texto.includes(q);
+  }).slice(0, 60);
+  if (!list.length) {
+    el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">${q ? 'Sin coincidencias' : 'Sin alumnos para mostrar.'}</div>`;
+    return;
+  }
+  const parts = list.map(a => {
+    const nom = [a.nombres, a.apellidos].filter(Boolean).join(' ');
+    const apo = [a.apoderado_nombres, a.apoderado_apellidos].filter(Boolean).join(' ') || 'Apoderado sin datos';
+    const aula = [a.grado, a.seccion].filter(Boolean).join(' ');
+    return `<div onclick="iniciarChatStaffConAlumno('${a.id}')" style="padding:10px 12px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:10px;margin-bottom:4px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      <div style="width:38px;height:38px;border-radius:50%;background:#185FA5;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">${chatStaffIniciales(nom)}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:0.85rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nom}</div>
+        <div style="font-size:0.72rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${aula ? aula+' · ' : ''}Apoderado: ${apo}</div>
+        ${a.apoderado_telefono ? `<div style="font-size:0.7rem;color:#10b981;">📱 ${a.apoderado_telefono}</div>` : ''}
+      </div>
+      <div style="color:var(--accent);font-size:1.1rem;">›</div>
+    </div>`;
+  });
+  el.innerHTML = parts.join('');
+}
+
+async function iniciarChatStaffConAlumno(alumnoId) {
+  if (!alumnoId) return;
+  const sb = chatStaffGetSB();
+  if (!sb) return;
+  const alumno = (CHAT_STAFF.alumnosCache || []).find(a => a.id === alumnoId);
+  if (!alumno) { toast('Alumno no encontrado', 'error'); return; }
+  // Determinar apoderado_auth_uid: usamos DNI del alumno como email virtual DNI@apo.marello.pe? No, el apoderado tiene su propio DNI.
+  // Intentamos buscar la cuenta de apoderado asociada. Primero mirar si la tabla alumnos tiene el uid... usamos edge function o intentamos buscar por email DNI_apoderado ? Mejor: usamos el ID del alumno que viene en app_metadata.alumno_id al crear el apoderado.
+  // Recuperamos los auth.users que tengan app_metadata.alumno_id == alumno.id. Para eso usamos una consulta simple si hay RLS que lo permita, de lo contrario hay un Edge Function.
+  // Alternativa: buscamos en chat_conversaciones existentes por alumno_id
+  const scopeSel = document.getElementById('chat-nuevo-scope')?.value || 'TUTOR_ALUMNO';
+  const scope = (scopeSel === 'ADMIN_APOD' && _isAdminDirectorOrCoord()) ? 'ADMIN_APOD' :
+                (_isTutorUser() ? 'TUTOR_ALUMNO' : (scopeSel==='ALUMNO_GENERAL' ? 'ALUMNO_GENERAL' : 'TUTOR_ALUMNO'));
+
+  // Buscar apoderado uid: primero buscar en conversaciones existentes de este alumno
+  let apodUid = null;
+  const existPrevia = (CHAT_STAFF.bandeja || []).find(c => c.alumno_id === alumnoId);
+  if (existPrevia) apodUid = existPrevia.apoderado_auth_uid;
+
+  if (!apodUid) {
+    // Intentamos buscar mediante Edge Function reset-apoderado? No, hay que listar. Alternativa: buscamos por auth.users con app_metadata.alumno_id
+    try {
+      // Si hay una función RPC o si tenemos service role (no). En su defecto, creamos apoderado temporal con correo virtual DNI-alumnoId
+      // Usamos el patrón actual: email virtual del apoderado es DNI_apoderado@apo.marello.pe; como no tenemos el DNI del apoderado, construimos uno con el ID del alumno: ALU_{alumnoId}@apo.marello.pe
+      // Para no dar error, primero intentamos crear/recuperar auth uid por email
+      const emailVirtual = `ALU_${String(alumnoId).replace(/[^a-z0-9]/gi,'')}@apo.marello.pe`;
+      // Llamamos a la Edge Function reset-apoderado que crea o actualiza el usuario de este apoderado
+      try {
+        const { data: funData, error: funErr } = await sb.functions.invoke('reset-apoderado', {
+          body: JSON.stringify({
+            alumno_id: alumnoId,
+            nombres: alumno.apoderado_nombres || 'Apoderado',
+            apellidos: alumno.apoderado_apellidos || alumno.apellidos || '',
+            colegio_id: chatStaffColegioId(),
+          })
+        });
+        if (funErr) throw funErr;
+        const resp = funData ? (typeof funData === 'string' ? JSON.parse(funData) : funData) : {};
+        if (resp && resp.user_id) apodUid = resp.user_id;
+      } catch(e1) {
+        console.warn('reset-apoderado falló, usando método alterno', e1);
+        // Método alterno: listar conversaciones de este alumno con cualquier staff y sacar apoderado_auth_uid
+        const { data } = await sb.from('chat_conversaciones').select('apoderado_auth_uid').eq('colegio_id', chatStaffColegioId()).eq('alumno_id', alumnoId).limit(1);
+        if (data && data[0] && data[0].apoderado_auth_uid) apodUid = data[0].apoderado_auth_uid;
+      }
+      // Si aún no hay uid y tenemos correo del apoderado, invitamos crear cuenta
+      if (!apodUid) {
+        toast('El apoderado aún no tiene cuenta. Envía un SMS o WhatsApp primero para que active su portal.', 'warning');
+        return;
+      }
+      // Persistir datos de alumno para nombres
+      CHAT_STAFF.apoderadosCache.set('_alumno_'+alumnoId, alumno);
+    } catch(e) {
+      console.error(e);
+      toast('No se pudo ubicar al apoderado: ' + e.message, 'error');
+      return;
+    }
+  } else {
+    CHAT_STAFF.apoderadosCache.set('_alumno_'+alumnoId, alumno);
+  }
+
+  // Upsert de la conversación
+  try {
+    const colegio = chatStaffColegioId();
+    const dataInsert = {
+      colegio_id: colegio,
+      scope_type: scope,
+      staff_user_id: CHAT_STAFF.uid,
+      apoderado_auth_uid: apodUid,
+      alumno_id: alumnoId || '',
+      grado: alumno.grado || '',
+      seccion: alumno.seccion || '',
+    };
+    const { error } = await sb.from('chat_conversaciones').insert(dataInsert);
+    // Si hay error de UNIQUE, no pasa nada: ya existía. Buscamos la conversación para abrirla.
+    let conv = null;
+    if (error && error.code !== '23505') throw error;
+    // Recuperar la conversación (recién creada o existente)
+    const { data: listC } = await sb
+      .from('chat_conversaciones')
+      .select('*')
+      .eq('colegio_id', colegio)
+      .eq('scope_type', scope)
+      .eq('staff_user_id', CHAT_STAFF.uid)
+      .eq('apoderado_auth_uid', apodUid)
+      .eq('alumno_id', alumnoId || '')
+      .limit(1);
+    conv = (listC && listC[0]) || null;
+    if (!conv) {
+      // Fallback: buscar por participante + alumno
+      const { data: list2 } = await sb.from('chat_conversaciones').select('*').eq('colegio_id',colegio).eq('staff_user_id',CHAT_STAFF.uid).eq('apoderado_auth_uid',apodUid).eq('alumno_id', alumnoId||'').limit(1);
+      conv = (list2 && list2[0]) || null;
+    }
+    closeModal('modal-nuevo-chat-staff');
+    if (conv) {
+      if (!CHAT_STAFF.bandeja.find(c => c.id === conv.id)) {
+        CHAT_STAFF.bandeja.unshift(conv);
+        CHAT_STAFF.bandeja.sort((a,b) => new Date(b.last_message_at||0) - new Date(a.last_message_at||0));
+      }
+      await chatStaffHidratarNombres([conv]);
+      renderChatStaffBandeja();
+      abrirConversacionStaff(conv.id);
+    } else {
+      toast('No se pudo iniciar la conversación', 'error');
+    }
+  } catch(e) {
+    console.error(e);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+// ============================================================
+// FIN CHAT STAFF
+// ============================================================
 
 </script>
 

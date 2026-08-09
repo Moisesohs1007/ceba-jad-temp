@@ -541,16 +541,18 @@ function _bindConsanguinidadSelects() {
 }
 
 function showTab(tab) {
-  ['resumen','historial','incidentes','agenda','carnet','comunicados','contacto'].forEach(function(t) {
+  ['resumen','historial','incidentes','agenda','carnet','comunicados','chat','contacto'].forEach(function(t) {
     var panel = document.getElementById('panel-'+t);
     if(panel) panel.style.display = t === tab ? 'block' : 'none';
   });
   // Actualizar topbar móvil
   apoMsbSetActive(tab);
   // Resaltar menú activo
-  var _map = {resumen:'inicio',historial:'asistencia',incidentes:'academico',agenda:'academico',comunicados:'comunicacion',carnet:'cuenta',contacto:'cuenta'};
+  var _map = {resumen:'inicio',historial:'asistencia',incidentes:'academico',agenda:'academico',comunicados:'comunicacion',chat:'comunicacion',carnet:'cuenta',contacto:'cuenta'};
   setApoTabActive(_map[tab]||'inicio', tab);
   try { sessionStorage.setItem('asmqr_apo_lastTab', tab); } catch(e) {}
+  // Inicializar chat al abrirlo
+  if (tab === 'chat') { if (typeof chatApoInitShow === 'function') chatApoInitShow(); }
   if(tab === 'resumen') {
     var mesActual = String(new Date().getMonth()+1).padStart(2,'0');
     var anio      = new Date().getFullYear();

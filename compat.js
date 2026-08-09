@@ -655,6 +655,27 @@ const auth = {
     return { user: _mapUser(data.user) };
   },
 
+  async sendPasswordResetEmail(email) {
+    const redirectTo = (() => {
+      try {
+        return window.location.origin + window.location.pathname + '?recovery=1';
+      } catch (_) {
+        return undefined;
+      }
+    })();
+    const { error } = await _sb.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : {});
+    if (error) {
+      const map = {
+        'For security purposes': { code: 'auth/too-many-requests' },
+        'Unable to validate email address': { code: 'auth/invalid-email' },
+        'Email rate limit exceeded': { code: 'auth/too-many-requests' },
+      };
+      const matched = Object.entries(map).find(([k]) => error.message.includes(k));
+      const code = matched ? matched[1].code : 'auth/unknown';
+      throw { code, message: error.message };
+    }
+  },
+
   async signOut() {
     await _sb.auth.signOut();
   },
@@ -706,6 +727,10 @@ auth.Auth = { Persistence: { SESSION: 'session', LOCAL: 'local' } };
 auth.EmailAuthProvider = {
   credential: (email, pass) => ({ email, pass, __type: 'credential' })
 };
+// También exponer en el namespace firebase.auth (algunos puntos del front
+// acceden como firebase.auth.EmailAuthProvider, ej. cambiar contraseña perfil).
+firebase.auth.EmailAuthProvider = auth.EmailAuthProvider;
+firebase.auth.Auth = auth.Auth;
 
 // ============================================================
 // USER OBJECT — emula el usuario de Firebase Auth

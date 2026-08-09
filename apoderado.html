@@ -110,6 +110,9 @@
       <div class="apo-drop-item" id="apo-drop-comunicados" onclick="event.stopPropagation();showTab('comunicados');setApoTabActive('comunicacion','comunicados')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/></svg>Comunicados
       </div>
+      <div class="apo-drop-item" id="apo-drop-chat" onclick="event.stopPropagation();showTab('chat');setApoTabActive('comunicacion','chat')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>💬 Chat Interno <span id="apo-drop-chat-badge" style="display:none;float:right;background:#ef4444;color:#fff;font-size:10px;padding:1px 7px;border-radius:999px;font-weight:700;">0</span>
+      </div>
     </div>
   </button>
 
@@ -173,6 +176,7 @@
     </button>
     <div class="apo-msb-sub" id="apo-msb-sub-comunicacion">
       <button class="apo-msb-subitem" onclick="apoMsbPickSub(this,'comunicados','comunicacion','💬 Comunicados')"><div class="apo-msb-dot"></div><span class="apo-msb-sublabel">Comunicados</span></button>
+      <button class="apo-msb-subitem" onclick="apoMsbPickSub(this,'chat','comunicacion','💬 Chat Interno')"><div class="apo-msb-dot"></div><span class="apo-msb-sublabel">Chat Interno <span id="apo-msb-chat-badge" style="display:none;background:#ef4444;color:#fff;font-size:10px;padding:1px 6px;border-radius:999px;font-weight:700;margin-left:6px;">0</span></span></button>
     </div>
     <button class="apo-msb-item" id="apo-msb-btn-cuenta" onclick="apoMsbToggleSub('cuenta')">
       <div class="apo-msb-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div>
@@ -304,6 +308,44 @@
       </div>
     </div>
     <div id="apo-comunicados-list"><div style="padding:16px;text-align:center;color:var(--muted);font-size:0.83rem;">Cargando...</div></div>
+  </div>
+
+  <!-- CHAT APODERADO -->
+  <div id="panel-chat" style="display:none;">
+    <div class="card" style="padding:0;margin-bottom:12px;overflow:hidden;min-height:62vh;display:flex;flex-direction:column;">
+      <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:800;font-size:0.98rem;">💬 Chat Interno</div>
+          <div style="font-size:0.78rem;color:var(--muted);margin-top:2px;">Conversaciones con el personal del colegio</div>
+        </div>
+      </div>
+      <div id="apo-chat-layout" style="display:grid;grid-template-columns:280px 1fr;gap:0;flex:1;min-height:0;">
+        <!-- Bandeja -->
+        <div id="apo-chat-band" style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;">
+          <div style="padding:10px 12px;border-bottom:1px solid var(--border);">
+            <input id="apo-chat-buscar" placeholder="Buscar..." oninput="renderChatApoBandeja()"
+              style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-family:var(--font-body);font-size:0.82rem;">
+          </div>
+          <div id="apo-chat-lista" style="flex:1;min-height:0;overflow:auto;">
+            <div style="padding:24px;text-align:center;color:var(--muted);font-size:0.83rem;">Cargando...</div>
+          </div>
+        </div>
+        <!-- Conversación -->
+        <div id="apo-chat-conv-wrap" style="display:flex;flex-direction:column;min-height:0;">
+          <div id="apo-chat-header" style="padding:12px 16px;border-bottom:1px solid var(--border);min-height:52px;color:var(--muted);font-size:0.85rem;">
+            Selecciona una conversación
+          </div>
+          <div id="apo-chat-msgs" style="flex:1;min-height:0;overflow:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px;background:var(--surface2);">
+          </div>
+          <div style="padding:10px 16px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:flex-end;">
+            <textarea id="apo-chat-input" placeholder="Escribe un mensaje... (Enter enviar, Shift+Enter nueva línea)"
+              onkeydown="chatApoInputKey(event)"
+              style="flex:1;min-height:42px;max-height:160px;resize:vertical;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px;color:var(--text);font-family:var(--font-body);font-size:0.88rem;"></textarea>
+            <button class="btn-primary" onclick="enviarChatApoMsg()" id="apo-chat-send" style="padding:10px 14px;border-radius:10px;background:var(--accent);color:#fff;border:none;font-weight:700;cursor:pointer;font-size:0.88rem;justify-content:center;" disabled>Enviar</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- CONTACTO -->
@@ -487,6 +529,9 @@
   </div>
 </div>
 
+<!-- Contenedor para notificaciones toast -->
+<div id="toast-container"></div>
+
 <!-- jsPDF para descarga incidentes -->
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <!-- html2canvas para carnet -->
@@ -497,5 +542,418 @@
 <script src="db_supabase.js?v=124"></script>
 
 <script src="js/portal.js"></script>
+
+<script>
+// ============================================================
+// CHAT INTERNO — Apoderado (portal apoderado.html)
+// ============================================================
+
+// Helper toast (igual que en js/main.js). Requerido por módulo chat.
+if (typeof window.toast !== 'function') {
+  window.toast = function toast(msg, type) {
+    var types = type || 'success';
+    var icons = { success:'✓', error:'✕', warning:'⚠', info:'ℹ' };
+    var el = document.createElement('div');
+    el.className = 'toast ' + (types === 'info' ? 'success' : types);
+    var s = document.createElement('span');
+    s.style.fontSize = '1rem';
+    s.textContent = icons[types] || 'ℹ';
+    var m = document.createElement('span');
+    m.className = 'toast-msg';
+    m.textContent = msg;
+    el.appendChild(s);
+    el.appendChild(m);
+    var cont = document.getElementById('toast-container');
+    if (cont) {
+      cont.appendChild(el);
+      setTimeout(function(){ if (el.parentNode) el.remove(); }, 3500);
+    }
+  };
+}
+
+const CHAT_APO = {
+  bandeja: [],
+  convActual: null,
+  convActualId: null,
+  mensajes: [],
+  susConv: null,
+  susMsgs: null,
+  uid: null,
+  alumnosCache: new Map(),
+  staffCache: new Map(),
+  initDone: false,
+};
+
+function chatApoGetSB() {
+  return (window._sb && window._sb.supabase) ? window._sb.supabase : null;
+}
+function chatApoColegioId() {
+  return window.COLEGIO_ID || (window._cfg && window._cfg.colegio_id) || 'sigece';
+}
+function chatApoIniciales(nom) {
+  var s = String(nom || '').trim().split(/\s+/).filter(Boolean).slice(0,2);
+  return s.map(function(p){ return p[0] || ''; }).join('').toUpperCase() || '?';
+}
+function chatApoEscapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function chatApoFmtHora(ts) {
+  if (!ts) return '';
+  var d = new Date(ts);
+  var hoy = new Date();
+  if (d.toDateString() === hoy.toDateString()) return d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  var ayer = new Date(hoy.getTime() - 86400000);
+  if (d.toDateString() === ayer.toDateString()) return 'Ayer ' + d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  return d.toLocaleDateString([], { day:'2-digit', month:'short' }) + ' ' + d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+}
+
+function chatApoInitShow() {
+  if (typeof auth === 'undefined' || !auth.currentUser) return;
+  if (!CHAT_APO.uid) {
+    CHAT_APO.uid = auth.currentUser.uid;
+  }
+  if (!CHAT_APO.initDone) {
+    CHAT_APO.initDone = true;
+    chatApoCargarBandeja().then(function(){ chatApoSuscribirBandeja(); }).catch(function(e){ console.error('chatApoInitShow', e); });
+  } else {
+    renderChatApoBandeja();
+  }
+  // Responsive layout móvil: apilar layout en pantallas pequeñas
+  try {
+    var lay = document.getElementById('apo-chat-layout');
+    if (lay) {
+      if (window.innerWidth < 640) lay.style.gridTemplateColumns = '1fr';
+      else lay.style.gridTemplateColumns = '280px 1fr';
+    }
+  } catch(e) {}
+}
+
+async function chatApoCargarBandeja() {
+  var sb = chatApoGetSB();
+  if (!sb) return;
+  var colegio = chatApoColegioId();
+  try {
+    var res = await sb
+      .from('chat_conversaciones')
+      .select('*')
+      .eq('colegio_id', colegio)
+      .eq('apoderado_auth_uid', CHAT_APO.uid)
+      .order('last_message_at', { ascending: false })
+      .limit(200);
+    if (res.error) throw res.error;
+    CHAT_APO.bandeja = res.data || [];
+    await chatApoHidratar(CHAT_APO.bandeja);
+    renderChatApoBandeja();
+    chatApoBadge();
+  } catch(e) {
+    console.error(e);
+    var el = document.getElementById('apo-chat-lista');
+    if (el) el.innerHTML = '<div style="padding:18px;color:#ef4444;font-size:0.82rem;">Error al cargar: '+chatApoEscapeHtml(e.message)+'</div>';
+  }
+}
+
+async function chatApoHidratar(convList) {
+  if (!convList || !convList.length) return;
+  var sb = chatApoGetSB();
+  var staffUids = [];
+  var alumnoIds = [];
+  convList.forEach(function(c){
+    if (c.staff_user_id) staffUids.push(c.staff_user_id);
+    if (c.alumno_id) alumnoIds.push(c.alumno_id);
+  });
+  staffUids = staffUids.filter(function(u,i){ return staffUids.indexOf(u)===i && !CHAT_APO.staffCache.has(u); });
+  alumnoIds = alumnoIds.filter(function(u,i){ return alumnoIds.indexOf(u)===i && !CHAT_APO.alumnosCache.has(u); });
+  if (staffUids.length && sb) {
+    try {
+      var ru = await sb.from('usuarios').select('id,nombre,nombres,apellidos,cargo,rol').in('id', staffUids);
+      (ru.data || []).forEach(function(u){ CHAT_APO.staffCache.set(u.id, u); });
+    } catch(e) {}
+  }
+  if (alumnoIds.length && sb) {
+    try {
+      var ra = await sb.from('alumnos').select('id,nombres,apellidos,grado,seccion,apoderado_nombres,apoderado_apellidos').in('id', alumnoIds);
+      (ra.data || []).forEach(function(a){ CHAT_APO.alumnosCache.set(a.id, a); });
+    } catch(e) {}
+  }
+}
+
+function chatApoStaffNombre(uid) {
+  var u = CHAT_APO.staffCache.get(uid);
+  if (!u) return 'Personal del colegio';
+  return (u.nombre || [u.nombres, u.apellidos].filter(Boolean).join(' ')).trim() || 'Personal';
+}
+function chatApoStaffCargo(uid) {
+  var u = CHAT_APO.staffCache.get(uid);
+  if (!u) return '';
+  var rolMap = { admin:'Administrador', director:'Director', coordinador:'Coordinador', profesor:'Profesor', psicologo:'Psicólogo', auxiliar:'Auxiliar', portero:'Portero' };
+  return (u.cargo || rolMap[u.rol] || 'Personal');
+}
+function chatApoAlumnoLabel(conv) {
+  if (!conv || !conv.alumno_id) return '';
+  var a = CHAT_APO.alumnosCache.get(conv.alumno_id);
+  if (!a) return conv.alumno_id;
+  return [a.nombres, a.apellidos].filter(Boolean).join(' ') + (a.grado ? ' · '+a.grado+(a.seccion ? ' '+a.seccion : '') : '');
+}
+
+function renderChatApoBandeja() {
+  var el = document.getElementById('apo-chat-lista');
+  if (!el) return;
+  var q = String(document.getElementById('apo-chat-buscar') ? document.getElementById('apo-chat-buscar').value : '').toLowerCase().trim();
+  var lista = (CHAT_APO.bandeja || []).filter(function(c){
+    if (!q) return true;
+    var ns = chatApoStaffNombre(c.staff_user_id).toLowerCase();
+    var na = chatApoAlumnoLabel(c).toLowerCase();
+    var lm = (c.last_message || '').toLowerCase();
+    return (ns.includes(q) || na.includes(q) || lm.includes(q));
+  });
+  if (!lista.length) {
+    el.innerHTML = '<div style="padding:24px 18px;text-align:center;color:var(--muted);font-size:0.83rem;">'+((CHAT_APO.bandeja||[]).length ? 'Sin coincidencias' : 'Aún no tienes conversaciones. El personal del colegio te escribirá cuando necesite comunicarse.')+'</div>';
+    return;
+  }
+  var parts = lista.map(function(c){
+    var unread = c.read_by_apoderado === false;
+    var nom = chatApoStaffNombre(c.staff_user_id);
+    var cargo = chatApoStaffCargo(c.staff_user_id);
+    var al = chatApoAlumnoLabel(c);
+    var active = (c.id === CHAT_APO.convActualId) ? 'background:var(--surface2);border-left:3px solid var(--accent);' : '';
+    return '<div onclick="abrirConversacionApo(\''+c.id+'\')" style="padding:11px 12px;border-bottom:1px solid var(--border);cursor:pointer;'+(unread ? 'font-weight:700;' : '')+active+'" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="'+(active ? 'this.style.background=\'var(--surface2)\'' : 'this.style.background=\'\'')+'">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:38px;height:38px;border-radius:50%;background:#185FA5;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">'+chatApoIniciales(nom)+'</div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <div style="font-size:0.85rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+chatApoEscapeHtml(nom)+'</div>
+            <div style="font-size:0.7rem;color:var(--muted);white-space:nowrap;flex-shrink:0;">'+chatApoFmtHora(c.last_message_at)+'</div>
+          </div>
+          <div style="font-size:0.72rem;color:#C9A84C;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+chatApoEscapeHtml(cargo || 'Personal')+'</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
+            <div style="flex:1;font-size:0.78rem;color:var(--muted);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+(c.last_message ? ((c.last_sender_type==='apoderado' ? 'Tú: ' : '')+chatApoEscapeHtml(c.last_message)) : 'Sin mensajes')+'</div>
+            '+(unread ? '<span style="background:var(--accent2,#ef4444);color:#fff;font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;">!</span>' : '')+'
+          </div>
+        </div>
+      </div>
+    </div>';
+  });
+  el.innerHTML = parts.join('');
+}
+
+function chatApoBadge() {
+  var count = (CHAT_APO.bandeja || []).filter(function(c){ return c.read_by_apoderado === false; }).length;
+  var db = document.getElementById('apo-drop-chat-badge');
+  if (db) { db.style.display = count>0 ? '' : 'none'; db.textContent = count>99 ? '99+' : String(count); }
+  var mb = document.getElementById('apo-msb-chat-badge');
+  if (mb) { mb.style.display = count>0 ? '' : 'none'; mb.textContent = count>99 ? '99+' : String(count); }
+  // Titulo de ventana
+  try { if (count>0) document.title = '('+count+') Chat — Portal Apoderado'; else document.title = 'Portal Apoderado — I.E. Nº 1049 Juana Alarco De Dammert'; } catch(e){}
+}
+
+function chatApoSuscribirBandeja() {
+  var sb = chatApoGetSB();
+  if (!sb) return;
+  try {
+    var colegio = chatApoColegioId();
+    CHAT_APO.susConv = sb
+      .channel('chat_conv_apo')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_conversaciones', filter: 'colegio_id=eq.'+colegio+'&apoderado_auth_uid=eq.'+CHAT_APO.uid },
+        function(payload){
+          var ev = payload.eventType;
+          var nr = payload.new;
+          var ol = payload.old;
+          if (ev === 'INSERT' && nr) { if (!CHAT_APO.bandeja.find(function(x){return x.id===nr.id;})) CHAT_APO.bandeja.unshift(nr); }
+          else if (ev === 'UPDATE' && nr) { var i = CHAT_APO.bandeja.findIndex(function(x){return x.id===nr.id;}); if(i>=0) CHAT_APO.bandeja[i] = nr; else CHAT_APO.bandeja.unshift(nr); }
+          else if (ev === 'DELETE' && ol) { CHAT_APO.bandeja = CHAT_APO.bandeja.filter(function(x){ return x.id !== ol.id; }); }
+          CHAT_APO.bandeja.sort(function(a,b){ return new Date(b.last_message_at||0) - new Date(a.last_message_at||0); });
+          if (ev === 'INSERT' || ev === 'UPDATE') {
+            chatApoHidratar([nr]).then(function(){
+              renderChatApoBandeja();
+              chatApoBadge();
+              if (nr && nr.id === CHAT_APO.convActualId) {
+                CHAT_APO.convActual = nr;
+                chatApoMarcarLeido();
+              }
+              if (ev === 'UPDATE' && nr && nr.read_by_apoderado === false && nr.last_sender_type === 'staff' && CHAT_APO.convActualId !== nr.id) {
+                try { toast('Nuevo mensaje de '+chatApoStaffNombre(nr.staff_user_id), 'info'); } catch(e){}
+              }
+            });
+          } else {
+            renderChatApoBandeja();
+            chatApoBadge();
+          }
+        })
+      .subscribe();
+  } catch(e) { console.error('sus conv apo', e); }
+}
+
+async function abrirConversacionApo(convId) {
+  CHAT_APO.convActualId = convId;
+  var conv = (CHAT_APO.bandeja || []).find(function(c){ return c.id === convId; }) || null;
+  CHAT_APO.convActual = conv;
+  renderChatApoBandeja();
+  var hdr = document.getElementById('apo-chat-header');
+  if (hdr && conv) {
+    var nom = chatApoStaffNombre(conv.staff_user_id);
+    var cargo = chatApoStaffCargo(conv.staff_user_id);
+    var al = chatApoAlumnoLabel(conv);
+    var scopeLabel = conv.scope_type === 'ADMIN_APOD' ? 'Canal directo' : conv.scope_type === 'ALUMNO_GENERAL' ? 'General' : 'Tutoría';
+    hdr.innerHTML = '<div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">'+
+      '<div style="width:38px;height:38px;border-radius:50%;background:#185FA5;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">'+chatApoIniciales(nom)+'</div>'+
+      '<div style="min-width:0;flex:1;">'+
+        '<div style="font-size:0.9rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+chatApoEscapeHtml(nom)+'</div>'+
+        '<div style="font-size:0.72rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+chatApoEscapeHtml(cargo || 'Personal')+' · '+scopeLabel+(al ? ' · '+chatApoEscapeHtml(al) : '')+'</div>'+
+      '</div></div>';
+  }
+  var sb = document.getElementById('apo-chat-send');
+  if (sb) sb.disabled = !conv;
+  chatApoSuscribirMensajes(convId);
+  await chatApoCargarMensajes(convId);
+  chatApoMarcarLeido();
+  setTimeout(function(){ try { document.getElementById('apo-chat-input').focus(); } catch(e){} }, 50);
+}
+
+async function chatApoCargarMensajes(convId) {
+  var sb = chatApoGetSB();
+  if (!sb || !convId) return;
+  var el = document.getElementById('apo-chat-msgs');
+  if (el) el.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:0.82rem;">Cargando...</div>';
+  try {
+    var res = await sb.from('chat_mensajes').select('*').eq('conversacion_id',convId).order('created_at',{ascending:true}).limit(400);
+    if (res.error) throw res.error;
+    CHAT_APO.mensajes = res.data || [];
+    renderChatApoMensajes();
+  } catch(e) {
+    console.error(e);
+    if (el) el.innerHTML = '<div style="padding:16px;color:#ef4444;font-size:0.82rem;">Error: '+chatApoEscapeHtml(e.message)+'</div>';
+  }
+}
+
+function renderChatApoMensajes() {
+  var el = document.getElementById('apo-chat-msgs');
+  if (!el) return;
+  var list = CHAT_APO.mensajes || [];
+  if (!list.length) {
+    el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:0.82rem;">Aún no hay mensajes en esta conversación.</div>';
+    return;
+  }
+  var lastDay = '';
+  var parts = [];
+  list.forEach(function(m){
+    var d = new Date(m.created_at);
+    var day = d.toLocaleDateString([], { weekday:'long', day:'2-digit', month:'long' });
+    if (day !== lastDay) {
+      lastDay = day;
+      parts.push('<div style="text-align:center;margin:10px 0;"><span style="background:var(--surface);border:1px solid var(--border);padding:2px 12px;border-radius:999px;font-size:0.7rem;color:var(--muted);">'+day+'</span></div>');
+    }
+    var mios = m.sender_type === 'apoderado';
+    var bg = mios ? 'background:#C9A84C;color:#0D1A3A;' : 'background:var(--surface);color:var(--text);border:1px solid var(--border);';
+    var align = mios ? 'margin-left:auto;' : 'margin-right:auto;';
+    var br = mios ? '14px 14px 2px 14px' : '14px 14px 14px 2px';
+    parts.push('<div style="max-width:78%;min-width:120px;'+align+'">'+
+      '<div style="'+bg+'border-radius:'+br+';padding:8px 12px;font-size:0.88rem;line-height:1.35;word-wrap:break-word;white-space:pre-wrap;">'+chatApoEscapeHtml(m.texto || '')+'</div>'+
+      '<div style="font-size:0.66rem;color:var(--muted);margin-top:3px;text-align:'+(mios ? 'right':'left')+';">'+chatApoFmtHora(m.created_at)+'</div>'+
+    '</div>');
+  });
+  el.innerHTML = parts.join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function chatApoSuscribirMensajes(convId) {
+  var sb = chatApoGetSB();
+  if (!sb) return;
+  if (CHAT_APO.susMsgs) { try { sb.removeChannel(CHAT_APO.susMsgs); } catch(e){} }
+  CHAT_APO.susMsgs = null;
+  if (!convId) return;
+  try {
+    CHAT_APO.susMsgs = sb
+      .channel('chat_msgs_apo_'+convId.slice(0,8))
+      .on('postgres_changes', { event:'INSERT', schema:'public', table:'chat_mensajes', filter:'conversacion_id=eq.'+convId },
+        function(payload){
+          var m = payload.new;
+          if (!m) return;
+          if (!CHAT_APO.mensajes.find(function(x){ return x.id === m.id; })) {
+            CHAT_APO.mensajes.push(m);
+            renderChatApoMensajes();
+            if (m.sender_type === 'staff') chatApoMarcarLeido();
+          }
+        })
+      .subscribe();
+  } catch(e) { console.error('sus msgs apo', e); }
+}
+
+async function chatApoMarcarLeido() {
+  var conv = CHAT_APO.convActual;
+  if (!conv || conv.read_by_apoderado === true) return;
+  var sb = chatApoGetSB();
+  if (!sb) return;
+  try {
+    var res = await sb
+      .from('chat_conversaciones')
+      .update({ read_by_apoderado: true })
+      .eq('id', conv.id)
+      .eq('colegio_id', chatApoColegioId());
+    if (!res.error) {
+      conv.read_by_apoderado = true;
+      var i = CHAT_APO.bandeja.findIndex(function(c){ return c.id === conv.id; });
+      if (i>=0) CHAT_APO.bandeja[i].read_by_apoderado = true;
+      renderChatApoBandeja();
+      chatApoBadge();
+    }
+  } catch(e) {}
+}
+
+function chatApoInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    enviarChatApoMsg();
+  }
+}
+
+async function enviarChatApoMsg() {
+  var conv = CHAT_APO.convActual;
+  if (!conv) { try { toast('Selecciona una conversación','warning'); } catch(e){} return; }
+  var inp = document.getElementById('apo-chat-input');
+  var txt = String(inp ? inp.value : '').trim();
+  if (!txt) return;
+  var sb = chatApoGetSB();
+  if (!sb) return;
+  inp.value = '';
+  inp.style.height = '';
+  try {
+    var res = await sb.from('chat_mensajes').insert({
+      colegio_id: chatApoColegioId(),
+      conversacion_id: conv.id,
+      sender_type: 'apoderado',
+      sender_id: CHAT_APO.uid,
+      texto: txt,
+    });
+    if (res.error) throw res.error;
+  } catch(e) {
+    try { toast('Error al enviar: '+e.message, 'error'); } catch(err){}
+    inp.value = txt;
+  }
+}
+
+// Responsive layout on resize
+try {
+  window.addEventListener('resize', function(){
+    var lay = document.getElementById('apo-chat-layout');
+    if (!lay) return;
+    var tab = document.getElementById('panel-chat');
+    if (tab && tab.style.display === 'none') return;
+    lay.style.gridTemplateColumns = window.innerWidth < 640 ? '1fr' : '280px 1fr';
+  });
+} catch(e) {}
+
+// Si vuelve a la pestaña y estaba en chat, refrescar badge
+try {
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden && CHAT_APO.initDone) {
+      chatApoCargarBandeja();
+    }
+  });
+} catch(e) {}
+
+// ============================================================
+// FIN CHAT APODERADO
+// ============================================================
+</script>
 </body>
 </html>
