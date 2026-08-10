@@ -22971,7 +22971,7 @@ async function chatStaffPrecargarAlumnos() {
   if (!sb) return;
   const r = _normRol(currentRol);
   try {
-    let q = sb.from('alumnos').select('id,nombres,apellidos,dni,grado,seccion,turno,apoderado_nombres,apoderado_apellidos,apoderado_telefono,correo_apoderado').eq('colegio_id', chatStaffColegioId());
+    let q = sb.from('alumnos').select('id,nombres,apellidos,dni,codigo,grado,seccion,turno,apoderado_nombres,apoderado_apellidos,apoderado_telefono,correo_apoderado').eq('colegio_id', chatStaffColegioId());
     // Si es tutor, restringir a su aula
     if (_isTutorUser() && currentTutorInfo) {
       if (currentTutorInfo.grado) q = q.eq('grado', currentTutorInfo.grado);
@@ -22995,7 +22995,7 @@ function renderChatNuevoAlumnos() {
   const q = String(document.getElementById('chat-nuevo-buscar')?.value || '').toLowerCase().trim();
   const list = (CHAT_STAFF.alumnosCache || []).filter(a => {
     if (!q) return true;
-    const texto = [a.nombres,a.apellidos,a.dni,a.grado,a.seccion,a.apoderado_nombres,a.apoderado_apellidos,a.apoderado_telefono,a.correo_apoderado].filter(Boolean).join(' ').toLowerCase();
+    const texto = [a.nombres,a.apellidos,a.dni,a.codigo,a.grado,a.seccion,a.apoderado_nombres,a.apoderado_apellidos,a.apoderado_telefono,a.correo_apoderado].filter(Boolean).join(' ').toLowerCase();
     return texto.includes(q);
   }).slice(0, 60);
   if (!list.length) {

@@ -322,6 +322,10 @@
       <div id="apo-chat-layout" style="display:grid;grid-template-columns:280px 1fr;gap:0;flex:1;min-height:0;">
         <!-- Bandeja -->
         <div id="apo-chat-band" style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;">
+          <div id="apo-chat-tutores-wrap" style="padding:10px 12px;border-bottom:1px solid var(--border);display:none;">
+            <div style="font-size:0.74rem;color:var(--muted);margin-bottom:6px;font-weight:700;">INICIAR CONVERSACIÓN CON:</div>
+            <div id="apo-chat-tutores-list" style="display:flex;flex-direction:column;gap:4px;"></div>
+          </div>
           <div style="padding:10px 12px;border-bottom:1px solid var(--border);">
             <input id="apo-chat-buscar" placeholder="Buscar..." oninput="renderChatApoBandeja()"
               style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-family:var(--font-body);font-size:0.82rem;">
@@ -582,6 +586,9 @@ const CHAT_APO = {
   alumnosCache: new Map(),
   staffCache: new Map(),
   initDone: false,
+  misAlumnos: [],
+  tutores: [],
+  tutoresLoaded: false,
 };
 
 function chatApoGetSB() {
@@ -614,9 +621,13 @@ function chatApoInitShow() {
   }
   if (!CHAT_APO.initDone) {
     CHAT_APO.initDone = true;
-    chatApoCargarBandeja().then(function(){ chatApoSuscribirBandeja(); }).catch(function(e){ console.error('chatApoInitShow', e); });
+    chatApoCargarBandeja().then(function(){
+      chatApoSuscribirBandeja();
+      chatApoCargarTutoresDeMisAlumnos().then(renderChatApoTutores).catch(function(e){ console.error('tutores', e); });
+    }).catch(function(e){ console.error('chatApoInitShow', e); });
   } else {
     renderChatApoBandeja();
+    renderChatApoTutores();
   }
   // Responsive layout móvil: apilar layout en pantallas pequeñas
   try {
@@ -744,6 +755,178 @@ function chatApoBadge() {
   if (mb) { mb.style.display = count>0 ? '' : 'none'; mb.textContent = count>99 ? '99+' : String(count); }
   // Titulo de ventana
   try { if (count>0) document.title = '('+count+') Chat — Portal Apoderado'; else document.title = 'Portal Apoderado — I.E. Nº 1049 Juana Alarco De Dammert'; } catch(e){}
+}
+
+// ---------- Apoderado: iniciar chat con tutor del aula ----------
+function chatApoRecolectarMisAlumnos() {
+  var list = [];
+  // Variable global cargada en js/portal.js (continuarCargaApoderado: alumno = snap+id)
+  try {
+    if (typeof window.alumno !== 'undefined' && window.alumno && window.alumno.id) {
+      list.push(window.alumno);
+    }
+  } catch(e) {}
+  // A futuro: múltiples alumnos por apoderado (lista window.misAlumnos)
+  try {
+    if (Array.isArray(window.misAlumnos)) {
+      window.misAlumnos.forEach(function(a){ if (a && a.id && !list.find(function(x){ return x.id === a.id; })) list.push(a); });
+    }
+  } catch(e) {}
+  CHAT_APO.misAlumnos = list;
+  return list;
+}
+
+async function chatApoCargarTutoresDeMisAlumnos() {
+  var sb = chatApoGetSB();
+  var alumnos = chatApoRecolectarMisAlumnos();
+  CHAT_APO.tutores = [];
+  if (!sb || !alumnos.length) return;
+  var pares = []; // [{grado,seccion}]
+  alumnos.forEach(function(a){
+    var g = String(a.grado || '').trim();
+    var s = String(a.seccion || '').trim();
+    if (g || s) {
+      if (!pares.find(function(p){ return p.grado===g && p.seccion===s; })) {
+        pares.push({ grado:g, seccion:s });
+      }
+    }
+  });
+  if (!pares.length) return;
+  try {
+    // Buscar todos los tutores (es_tutor=true) de las aulas de mis alumnos
+    var q = sb.from('usuarios').select('id,nombre,nombres,apellidos,cargo,rol,es_tutor,tutor_grado,tutor_seccion')
+      .eq('colegio_id', chatApoColegioId())
+      .eq('es_tutor', true);
+    var { data, error } = await q;
+    if (error) throw error;
+    var tut = [];
+    (data || []).forEach(function(u){
+      var g = String(u.tutor_grado || '').trim();
+      var s = String(u.tutor_seccion || '').trim();
+      var match = pares.find(function(p){ return p.grado===g && p.seccion===s; });
+      if (match) {
+        // Buscar el alumno de este aula
+        var al = alumnos.find(function(a){
+          return String(a.grado||'').trim()===g && String(a.seccion||'').trim()===s;
+        });
+        tut.push({
+          usuarioId: u.id,
+          nombre: (u.nombre || [u.nombres,u.apellidos].filter(Boolean).join(' ')).trim() || 'Tutor',
+          cargo: u.cargo || 'Tutor de aula',
+          grado: g,
+          seccion: s,
+          alumnoId: al ? al.id : '',
+          alumnoNombre: al ? [al.nombres, al.apellidos].filter(Boolean).join(' ') : (g+' '+s),
+        });
+        if (!CHAT_APO.staffCache.has(u.id)) CHAT_APO.staffCache.set(u.id, u);
+      }
+    });
+    CHAT_APO.tutores = tut;
+    CHAT_APO.tutoresLoaded = true;
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+function renderChatApoTutores() {
+  var wrap = document.getElementById('apo-chat-tutores-wrap');
+  var list = document.getElementById('apo-chat-tutores-list');
+  if (!wrap || !list) return;
+  if (!CHAT_APO.tutores || !CHAT_APO.tutores.length) {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = '';
+  var parts = CHAT_APO.tutores.map(function(t){
+    var aula = [t.grado,t.seccion].filter(Boolean).join(' ');
+    var label = chatApoEscapeHtml(t.nombre) + ' · Tutor ' + chatApoEscapeHtml(aula || '');
+    var sub = t.alumnoNombre ? '<div style="font-size:0.68rem;color:var(--muted);margin-top:1px;">'+chatApoEscapeHtml(t.alumnoNombre)+'</div>' : '';
+    return '<button onclick="chatApoAbrirConTutor(\''+t.usuarioId+'\',\''+(t.alumnoId||'').replace(/'/g,"\\'")+'\',\''+(t.grado||'').replace(/'/g,"\\'")+'\',\''+(t.seccion||'').replace(/'/g,"\\'")+'\')" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:9px;border:1px solid var(--border);background:var(--surface2);cursor:pointer;color:var(--text);text-align:left;font-family:var(--font-body);" onmouseover="this.style.borderColor=\'#C9A84C\'" onmouseout="this.style.borderColor=\'var(--border)\'">'+
+      '<div style="width:30px;height:30px;border-radius:50%;background:#C9A84C;color:#0D1A3A;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;">'+chatApoIniciales(t.nombre)+'</div>'+
+      '<div style="min-width:0;flex:1;">'+
+        '<div style="font-size:0.78rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+label+'</div>'+sub+
+      '</div>'+
+      '<span style="font-size:0.9rem;color:#C9A84C;">💬</span>'+
+    '</button>';
+  });
+  list.innerHTML = parts.join('');
+}
+
+async function chatApoAbrirConTutor(staffUserId, alumnoId, grado, seccion) {
+  if (!staffUserId) return;
+  var sb = chatApoGetSB();
+  if (!sb) return;
+  var colegio = chatApoColegioId();
+  if (!alumnoId) {
+    try { toast('Falta el dato del alumno','warning'); } catch(e){}
+    return;
+  }
+  // Guardar en caché el alumno
+  try {
+    if (!CHAT_APO.alumnosCache.has(alumnoId)) {
+      var a = (CHAT_APO.misAlumnos || []).find(function(x){ return x.id===alumnoId; }) || null;
+      if (a) CHAT_APO.alumnosCache.set(alumnoId, a);
+    }
+  } catch(e){}
+  // Intentar insertar (ON CONFLICT por idx_chat_conv_unique = no-op)
+  try {
+    var ins = {
+      colegio_id: colegio,
+      scope_type: 'TUTOR_ALUMNO',
+      staff_user_id: staffUserId,
+      apoderado_auth_uid: CHAT_APO.uid,
+      alumno_id: alumnoId,
+      grado: grado || '',
+      seccion: seccion || '',
+    };
+    var r = await sb.from('chat_conversaciones').insert(ins);
+    if (r.error && r.code !== '23505') throw r.error;
+  } catch(e) {
+    // 23505 = ya existe (ok), cualquier otro: advertir
+    if (e && e.code !== '23505') {
+      try { toast('No se pudo iniciar: '+e.message, 'error'); } catch(err){}
+      console.error(e);
+      return;
+    }
+  }
+  // Recuperar la conversación (recién creada o existente)
+  try {
+    var { data: lst, error: errSel } = await sb
+      .from('chat_conversaciones')
+      .select('*')
+      .eq('colegio_id', colegio)
+      .eq('scope_type', 'TUTOR_ALUMNO')
+      .eq('staff_user_id', staffUserId)
+      .eq('apoderado_auth_uid', CHAT_APO.uid)
+      .eq('alumno_id', alumnoId)
+      .order('created_at', { ascending:false })
+      .limit(1);
+    if (errSel) throw errSel;
+    var conv = lst && lst[0] ? lst[0] : null;
+    if (!conv) {
+      // Fallback: buscar sin scope (por si era ALUMNO_GENERAL)
+      var { data: lst2 } = await sb.from('chat_conversaciones').select('*')
+        .eq('colegio_id',colegio).eq('staff_user_id',staffUserId).eq('apoderado_auth_uid',CHAT_APO.uid).eq('alumno_id',alumnoId)
+        .order('created_at',{ascending:false}).limit(1);
+      conv = lst2 && lst2[0] ? lst2[0] : null;
+    }
+    if (conv) {
+      // Actualizar bandeja local si no estaba
+      if (!CHAT_APO.bandeja.find(function(x){ return x.id===conv.id; })) {
+        CHAT_APO.bandeja.unshift(conv);
+        CHAT_APO.bandeja.sort(function(a,b){ return new Date(b.last_message_at||0) - new Date(a.last_message_at||0); });
+        await chatApoHidratar([conv]);
+      }
+      abrirConversacionApo(conv.id);
+      renderChatApoBandeja();
+      chatApoBadge();
+    } else {
+      try { toast('No se encontró la conversación','error'); } catch(e){}
+    }
+  } catch(e2) {
+    console.error(e2);
+    try { toast('Error: '+e2.message,'error'); } catch(e){}
+  }
 }
 
 function chatApoSuscribirBandeja() {
