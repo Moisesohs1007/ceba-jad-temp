@@ -1029,9 +1029,21 @@ function renderChatApoMensajes() {
     var bg = mios ? 'background:#C9A84C;color:#0D1A3A;' : 'background:var(--surface);color:var(--text);border:1px solid var(--border);';
     var align = mios ? 'margin-left:auto;' : 'margin-right:auto;';
     var br = mios ? '14px 14px 2px 14px' : '14px 14px 14px 2px';
+    var statusHtml = '';
+    if (mios && CHAT_APO.convActual) {
+      // NIVEL 1: visto por conversación (read_by_staff = true => el tutor/colegio lo abrió)
+      var visto = CHAT_APO.convActual.read_by_staff === true;
+      if (visto) {
+        statusHtml = '<span style="margin-left:4px;color:#185FA5;font-weight:700;" title="Visto">✓✓</span>';
+      } else {
+        statusHtml = '<span style="margin-left:4px;color:var(--muted);opacity:0.85;" title="Enviado">✓</span>';
+      }
+    }
     parts.push('<div style="max-width:78%;min-width:120px;'+align+'">'+
       '<div style="'+bg+'border-radius:'+br+';padding:8px 12px;font-size:0.88rem;line-height:1.35;word-wrap:break-word;white-space:pre-wrap;">'+chatApoEscapeHtml(m.texto || '')+'</div>'+
-      '<div style="font-size:0.66rem;color:var(--muted);margin-top:3px;text-align:'+(mios ? 'right':'left')+';">'+chatApoFmtHora(m.created_at)+'</div>'+
+      '<div style="font-size:0.66rem;color:var(--muted);margin-top:3px;text-align:'+(mios ? 'right':'left')+';display:flex;align-items:center;justify-content:flex-'+(mios ? 'end' : 'start')+';gap:2px;">'+
+        '<span>'+chatApoFmtHora(m.created_at)+'</span>'+statusHtml+
+      '</div>'+
     '</div>');
   });
   el.innerHTML = parts.join('');

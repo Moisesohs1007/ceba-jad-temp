@@ -22863,9 +22863,21 @@ function renderChatStaffMensajes() {
     const mios = m.sender_type === 'staff';
     const bubbleBg = mios ? 'background:var(--accent);color:#fff;' : 'background:var(--surface);color:var(--text);border:1px solid var(--border);';
     const align = mios ? 'margin-left:auto;' : 'margin-right:auto;';
+    let statusHtml = '';
+    if (mios && CHAT_STAFF.convActual) {
+      // NIVEL 1: visto por conversación (read_by_apoderado = true => el otro lo abrió)
+      const visto = CHAT_STAFF.convActual.read_by_apoderado === true;
+      if (visto) {
+        statusHtml = `<span style="margin-left:4px;color:#60a5fa;font-weight:700;font-family:var(--font-body);" title="Visto">✓✓</span>`;
+      } else {
+        statusHtml = `<span style="margin-left:4px;color:var(--muted);opacity:0.85;font-family:var(--font-body);" title="Enviado">✓</span>`;
+      }
+    }
     parts.push(`<div style="max-width:78%;min-width:120px;${align}">
       <div style="${bubbleBg}border-radius:${mios ? '14px 14px 2px 14px' : '14px 14px 14px 2px'};padding:8px 12px;font-size:0.88rem;line-height:1.35;word-wrap:break-word;white-space:pre-wrap;">${escapeHtml(m.texto || '')}</div>
-      <div style="font-size:0.66rem;color:var(--muted);margin-top:3px;text-align:${mios ? 'right' : 'left'};">${chatStaffFmtHora(m.created_at)}</div>
+      <div style="font-size:0.66rem;color:var(--muted);margin-top:3px;text-align:${mios ? 'right' : 'left'};display:flex;align-items:center;justify-content:flex-${mios ? 'end' : 'start'};gap:2px;">
+        <span>${chatStaffFmtHora(m.created_at)}</span>${statusHtml}
+      </div>
     </div>`);
   });
   el.innerHTML = parts.join('');
