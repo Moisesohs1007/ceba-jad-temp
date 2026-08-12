@@ -591,6 +591,86 @@ const CHAT_APO = {
   tutoresLoaded: false,
 };
 
+function _apoCanonCiclo(c) {
+  var s = String(c || '').trim().toUpperCase();
+  if (!s) return '';
+  var map = {
+    'CICLO INICIAL':'INICIAL','INICIAL':'INICIAL','PRE ESCOLAR':'INICIAL','PREESCOLAR':'INICIAL','INICIAL 1':'INICIAL','INICIAL 2':'INICIAL','JARDIN':'INICIAL','JARDÍN':'INICIAL',
+    'CICLO INTERMEDIO':'INTERMEDIO','INTERMEDIO':'INTERMEDIO','PRIMARIA':'PRIMARIA','EBR PRIMARIA':'PRIMARIA',
+    'CICLO AVANZADO':'AVANZADO','AVANZADO':'AVANZADO','SECUNDARIA':'SECUNDARIA','EBR SECUNDARIA':'SECUNDARIA'
+  };
+  if (map[s]) return map[s];
+  for (var k in map) { if (s.indexOf(k) !== -1) return map[k]; }
+  return s;
+}
+function _apoArrAulasFromUsuario(u) {
+  var arr = [];
+  try {
+    if (u && Array.isArray(u.tutor_aulas) && u.tutor_aulas.length) arr = arr.concat(u.tutor_aulas);
+  } catch(e) {}
+  try {
+    if (u && Array.isArray(u.tutor_aulas_json) && u.tutor_aulas_json.length) arr = arr.concat(u.tutor_aulas_json);
+  } catch(e) {}
+  try {
+    var raw = u && (u.tutorAulas || u.tutor_aulas);
+    if (Array.isArray(raw)) arr = arr.concat(raw);
+    else if (typeof raw === 'string' && raw) {
+      var p = JSON.parse(raw);
+      if (Array.isArray(p)) arr = arr.concat(p);
+    }
+  } catch(e) {}
+  try {
+    if (u && Array.isArray(u.grados_asignados_json) && u.grados_asignados_json.length) arr = arr.concat(u.grados_asignados_json);
+  } catch(e) {}
+  if (!arr.length && u) {
+    var g = String(u.tutor_grado || u.tutorGrado || '').trim();
+    var s = String(u.tutor_seccion || u.tutorSeccion || '').trim();
+    if (g || s) arr.push({ ciclo:'', grado:g, seccion:s });
+  }
+  var seen = {}; var out = [];
+  arr.forEach(function(a){
+    var c = _apoCanonCiclo(a && a.ciclo);
+    var g = String((a&&a.grado)||'').trim().toUpperCase();
+    var s = String((a&&a.seccion)||'').trim().toUpperCase();
+    var k = c+'|'+g+'|'+s;
+    if (!seen[k]) { seen[k]=1; out.push({ciclo:c,grado:g,seccion:s}); }
+  });
+  return out;
+}
+function _apoArrAulasFromAlumno(a) {
+  if (!a) return [];
+  var c = _apoCanonCiclo(a.ciclo);
+  var g = String(a.grado||'').trim().toUpperCase();
+  var s = String(a.seccion||'').trim().toUpperCase();
+  if (!g && !s && !c) return [];
+  return [{ciclo:c,grado:g,seccion:s}];
+}
+function _apoAulaMatch(aulaAlumno, aulaUsuario) {
+  var cA = aulaAlumno.ciclo || '', gA = aulaAlumno.grado || '', sA = aulaAlumno.seccion || '';
+  var cU = aulaUsuario.ciclo || '', gU = aulaUsuario.grado || '', sU = aulaUsuario.seccion || '';
+  if (cU && cA && cU !== cA) return false;
+  if (gU && gA && gU !== gA) return false;
+  if (sU && sA && sU !== sA) return false;
+  return true;
+}
+function _apoAulasAnyMatch(aulasAl, aulasUs) {
+  if (!aulasAl || !aulasAl.length || !aulasUs || !aulasUs.length) return false;
+  for (var i=0;i<aulasAl.length;i++) {
+    for (var j=0;j<aulasUs.length;j++) {
+      if (_apoAulaMatch(aulasAl[i], aulasUs[j])) return true;
+    }
+  }
+  return false;
+}
+function _apoAulasListAluText(a) {
+  if (!a) return '';
+  var parts = [];
+  if (a.ciclo) parts.push(a.ciclo);
+  if (a.grado) parts.push(a.grado);
+  if (a.seccion) parts.push(a.seccion);
+  return parts.join(' ');
+}
+
 function chatApoGetSB() {
   return (window._sb && window._sb.supabase) ? window._sb.supabase : null;
 }
@@ -682,7 +762,7 @@ async function chatApoHidratar(convList) {
   }
   if (alumnoIds.length && sb) {
     try {
-      var ra = await sb.from('alumnos').select('id,nombres,apellidos,grado,seccion,apoderado_nombres,apoderado_apellidos').in('id', alumnoIds);
+      var ra = await sb.from('alumnos').select('id,nombres,apellidos,grado,seccion,ciclo,apoderado_nombres,apoderado_apellidos').in('id', alumnoIds);
       (ra.data || []).forEach(function(a){ CHAT_APO.alumnosCache.set(a.id, a); });
     } catch(e) {}
   }
@@ -703,7 +783,16 @@ function chatApoAlumnoLabel(conv) {
   if (!conv || !conv.alumno_id) return '';
   var a = CHAT_APO.alumnosCache.get(conv.alumno_id);
   if (!a) return conv.alumno_id;
-  return [a.nombres, a.apellidos].filter(Boolean).join(' ') + (a.grado ? ' · '+a.grado+(a.seccion ? ' '+a.seccion : '') : '');
+  var partsAula = [];
+  try {
+    var c = _apoCanonCiclo(conv.ciclo || a.ciclo);
+    if (c) partsAula.push(c);
+  } catch(e) {}
+  var g = conv.grado || a.grado || '';
+  var s = conv.seccion || a.seccion || '';
+  if (g) partsAula.push(g);
+  if (s) partsAula.push(s);
+  return [a.nombres, a.apellidos].filter(Boolean).join(' ') + (partsAula.length ? ' · '+partsAula.join(' ') : '');
 }
 
 function renderChatApoBandeja() {
@@ -781,45 +870,41 @@ async function chatApoCargarTutoresDeMisAlumnos() {
   var alumnos = chatApoRecolectarMisAlumnos();
   CHAT_APO.tutores = [];
   if (!sb || !alumnos.length) return;
-  var pares = []; // [{grado,seccion}]
+  var aulasAlumnos = []; // [{ciclo,grado,seccion,alumno}]
   alumnos.forEach(function(a){
-    var g = String(a.grado || '').trim();
-    var s = String(a.seccion || '').trim();
-    if (g || s) {
-      if (!pares.find(function(p){ return p.grado===g && p.seccion===s; })) {
-        pares.push({ grado:g, seccion:s });
-      }
-    }
+    var arr = _apoArrAulasFromAlumno(a);
+    arr.forEach(function(aula){ aulasAlumnos.push({ aula:aula, alumno:a }); });
   });
-  if (!pares.length) return;
+  if (!aulasAlumnos.length) return;
   try {
-    // Buscar todos los tutores (es_tutor=true) de las aulas de mis alumnos
-    var q = sb.from('usuarios').select('id,nombre,nombres,apellidos,cargo,rol,es_tutor,tutor_grado,tutor_seccion')
+    var q = sb.from('usuarios').select('id,nombre,nombres,apellidos,cargo,rol,es_tutor,tutor_grado,tutor_seccion,tutor_aulas_json,grados_asignados_json,tutor_aulas,tutorAulas,grados_asignados_json')
       .eq('colegio_id', chatApoColegioId())
       .eq('es_tutor', true);
     var { data, error } = await q;
     if (error) throw error;
     var tut = [];
     (data || []).forEach(function(u){
-      var g = String(u.tutor_grado || '').trim();
-      var s = String(u.tutor_seccion || '').trim();
-      var match = pares.find(function(p){ return p.grado===g && p.seccion===s; });
-      if (match) {
-        // Buscar el alumno de este aula
-        var al = alumnos.find(function(a){
-          return String(a.grado||'').trim()===g && String(a.seccion||'').trim()===s;
-        });
-        tut.push({
-          usuarioId: u.id,
-          nombre: (u.nombre || [u.nombres,u.apellidos].filter(Boolean).join(' ')).trim() || 'Tutor',
-          cargo: u.cargo || 'Tutor de aula',
-          grado: g,
-          seccion: s,
-          alumnoId: al ? al.id : '',
-          alumnoNombre: al ? [al.nombres, al.apellidos].filter(Boolean).join(' ') : (g+' '+s),
-        });
-        if (!CHAT_APO.staffCache.has(u.id)) CHAT_APO.staffCache.set(u.id, u);
-      }
+      var aulasUs = _apoArrAulasFromUsuario(u);
+      var matched = false;
+      aulasAlumnos.forEach(function(par){
+        if (!matched && _apoAulasAnyMatch([par.aula], aulasUs)) {
+          matched = true;
+          var al = par.alumno;
+          var aulaTexto = _apoAulasListAluText(par.aula);
+          tut.push({
+            usuarioId: u.id,
+            nombre: (u.nombre || [u.nombres,u.apellidos].filter(Boolean).join(' ')).trim() || 'Tutor',
+            cargo: u.cargo || 'Tutor de aula',
+            ciclo: par.aula.ciclo || '',
+            grado: par.aula.grado || '',
+            seccion: par.aula.seccion || '',
+            aulaTexto: aulaTexto,
+            alumnoId: al ? al.id : '',
+            alumnoNombre: al ? [al.nombres, al.apellidos].filter(Boolean).join(' ') : aulaTexto,
+          });
+        }
+      });
+      if (!CHAT_APO.staffCache.has(u.id)) CHAT_APO.staffCache.set(u.id, u);
     });
     CHAT_APO.tutores = tut;
     CHAT_APO.tutoresLoaded = true;
@@ -838,10 +923,10 @@ function renderChatApoTutores() {
   }
   wrap.style.display = '';
   var parts = CHAT_APO.tutores.map(function(t){
-    var aula = [t.grado,t.seccion].filter(Boolean).join(' ');
+    var aula = t.aulaTexto || [t.ciclo,t.grado,t.seccion].filter(Boolean).join(' ');
     var label = chatApoEscapeHtml(t.nombre) + ' · Tutor ' + chatApoEscapeHtml(aula || '');
     var sub = t.alumnoNombre ? '<div style="font-size:0.68rem;color:var(--muted);margin-top:1px;">'+chatApoEscapeHtml(t.alumnoNombre)+'</div>' : '';
-    return '<button onclick="chatApoAbrirConTutor(\''+t.usuarioId+'\',\''+(t.alumnoId||'').replace(/'/g,"\\'")+'\',\''+(t.grado||'').replace(/'/g,"\\'")+'\',\''+(t.seccion||'').replace(/'/g,"\\'")+'\')" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:9px;border:1px solid var(--border);background:var(--surface2);cursor:pointer;color:var(--text);text-align:left;font-family:var(--font-body);" onmouseover="this.style.borderColor=\'#C9A84C\'" onmouseout="this.style.borderColor=\'var(--border)\'">'+
+    return '<button onclick="chatApoAbrirConTutor(\''+t.usuarioId+'\',\''+(t.alumnoId||'').replace(/'/g,"\\'")+'\',\''+(t.grado||'').replace(/'/g,"\\'")+'\',\''+(t.seccion||'').replace(/'/g,"\\'")+'\',\''+(t.ciclo||'').replace(/'/g,"\\'")+'\')" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:9px;border:1px solid var(--border);background:var(--surface2);cursor:pointer;color:var(--text);text-align:left;font-family:var(--font-body);" onmouseover="this.style.borderColor=\'#C9A84C\'" onmouseout="this.style.borderColor=\'var(--border)\'">'+
       '<div style="width:30px;height:30px;border-radius:50%;background:#C9A84C;color:#0D1A3A;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;">'+chatApoIniciales(t.nombre)+'</div>'+
       '<div style="min-width:0;flex:1;">'+
         '<div style="font-size:0.78rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+label+'</div>'+sub+
@@ -852,7 +937,7 @@ function renderChatApoTutores() {
   list.innerHTML = parts.join('');
 }
 
-async function chatApoAbrirConTutor(staffUserId, alumnoId, grado, seccion) {
+async function chatApoAbrirConTutor(staffUserId, alumnoId, grado, seccion, ciclo) {
   if (!staffUserId) return;
   var sb = chatApoGetSB();
   if (!sb) return;
@@ -861,14 +946,12 @@ async function chatApoAbrirConTutor(staffUserId, alumnoId, grado, seccion) {
     try { toast('Falta el dato del alumno','warning'); } catch(e){}
     return;
   }
-  // Guardar en caché el alumno
   try {
     if (!CHAT_APO.alumnosCache.has(alumnoId)) {
       var a = (CHAT_APO.misAlumnos || []).find(function(x){ return x.id===alumnoId; }) || null;
       if (a) CHAT_APO.alumnosCache.set(alumnoId, a);
     }
   } catch(e){}
-  // Intentar insertar (ON CONFLICT por idx_chat_conv_unique = no-op)
   try {
     var ins = {
       colegio_id: colegio,
@@ -876,6 +959,7 @@ async function chatApoAbrirConTutor(staffUserId, alumnoId, grado, seccion) {
       staff_user_id: staffUserId,
       apoderado_auth_uid: CHAT_APO.uid,
       alumno_id: alumnoId,
+      ciclo: ciclo || '',
       grado: grado || '',
       seccion: seccion || '',
     };

@@ -192,7 +192,7 @@ function continuarCargaApoderado(user, dni) {
 function llenarDatos() {
   // Nombre completo: nombres + apellidos
   var nombre = ((alumno.nombres||'') + ' ' + (alumno.apellidos||'')).trim();
-  var grado  = (alumno.grado||'') + ' ' + (alumno.seccion||'') + (alumno.turno ? ' - ' + alumno.turno : '');
+  var grado  = (alumno.ciclo ? (alumno.ciclo + ' ') : '') + (alumno.grado||'') + ' ' + (alumno.seccion||'') + (alumno.turno ? ' - ' + alumno.turno : '');
   // Iniciales: primer nombre + primer apellido
   var partsN = (alumno.nombres||'').trim().split(' ');
   var partsA = (alumno.apellidos||'').trim().split(' ');
@@ -1004,7 +1004,7 @@ function renderCarnet() {
   });
   if(alumno.foto) { var cf = document.getElementById('carnet-foto'); if(cf) cf.src = alumno.foto; }
   document.getElementById('carnet-nombre').textContent = alumno.nombres+' '+alumno.apellidos;
-  document.getElementById('carnet-grado').textContent  = alumno.grado+' '+alumno.seccion+' - '+alumno.turno;
+  document.getElementById('carnet-grado').textContent  = (alumno.ciclo ? (alumno.ciclo + ' ') : '') + alumno.grado+' '+alumno.seccion+' - '+alumno.turno;
   document.getElementById('carnet-dni').textContent    = 'DNI: '+alumno.id;
   document.getElementById('carnet-year').textContent   = new Date().getFullYear();
   var qrEl = document.getElementById('carnet-qr');
@@ -1510,7 +1510,7 @@ function apoMsbInit() {
   // Poblar header del sidebar con datos del alumno
   if(typeof alumno !== 'undefined' && alumno) {
     var nombre = ((alumno.nombres||'') + ' ' + (alumno.apellidos||'')).trim();
-    var grado  = ((alumno.grado||'') + ' ' + (alumno.seccion||'')).trim();
+    var grado  = ((alumno.ciclo ? (alumno.ciclo + ' ') : '') + (alumno.grado||'') + ' ' + (alumno.seccion||'')).trim();
     var nEl = document.getElementById('apo-msb-nombre');
     var gEl = document.getElementById('apo-msb-grado');
     if(nEl) nEl.textContent = nombre || '—';
