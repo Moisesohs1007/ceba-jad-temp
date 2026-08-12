@@ -76,6 +76,52 @@ serve(async (req) => {
     const esTutor = !!body.esTutor;
     const tutorGrado = typeof body.tutorGrado === 'string' ? body.tutorGrado.trim() : null;
     const tutorSeccion = typeof body.tutorSeccion === 'string' ? body.tutorSeccion.trim() : null;
+    // ---- NUEVOS CAMPOS CEBA/EBR ----
+    function _canonCiclo(c: unknown): string {
+      const x = String(c ?? '').trim().toUpperCase();
+      const m: Record<string, string> = {
+        'CICLO INICIAL':'INICIAL','INICIAL':'INICIAL','PRE ESCOLAR':'INICIAL',
+        'CICLO INTERMEDIO':'INTERMEDIO','INTERMEDIO':'INTERMEDIO',
+        'CICLO AVANZADO':'AVANZADO','AVANZADO':'AVANZADO',
+        'PRIMARIA':'PRIMARIA','EBR PRIMARIA':'PRIMARIA',
+        'SECUNDARIA':'SECUNDARIA','EBR SECUNDARIA':'SECUNDARIA'
+      };
+      return m[x] || x;
+    }
+    function _normAulaArr(raw: unknown): Array<{ ciclo: string; grado: string; seccion: string }> {
+      if (!Array.isArray(raw)) return [];
+      const out: Array<{ ciclo: string; grado: string; seccion: string }> = [];
+      const seen = new Set<string>();
+      raw.forEach((a: any) => {
+        if (!a || typeof a !== 'object') return;
+        const ciclo = _canonCiclo(a.ciclo || a.nivel || '');
+        const grado = String(a.grado ?? '').trim();
+        const seccion = String(a.seccion ?? '').trim().toUpperCase();
+        if (!grado || !seccion) return;
+        const k = [ciclo, grado, seccion].join('|');
+        if (seen.has(k)) return;
+        seen.add(k);
+        out.push({ ciclo, grado, seccion });
+      });
+      return out;
+    }
+    const tutorAulasRaw = Array.isArray(body.tutorAulas) ? body.tutorAulas : body.tutor_aulas_json;
+    let tutorAulasJsonArr = _normAulaArr(tutorAulasRaw);
+    // Compatibilidad EBR legacy: si no hay array pero sí grado+seccion, agregarlos
+    if (tutorAulasJsonArr.length === 0 && (tutorGrado || tutorSeccion)) {
+      const grado = String(tutorGrado || '').trim();
+      const seccion = String(tutorSeccion || '').trim().toUpperCase();
+      if (grado && seccion) tutorAulasJsonArr = [{ ciclo: '', grado, seccion }];
+    }
+    // Si hay tutor_aulas_json y no hay legacy, completar legacy con la primera aula (backwards compat)
+    let finalTutorGrado = tutorGrado || '';
+    let finalTutorSeccion = tutorSeccion || '';
+    if (esTutor && rol === 'profesor' && tutorAulasJsonArr.length) {
+      if (!finalTutorGrado)   finalTutorGrado   = String(tutorAulasJsonArr[0].grado || '').trim();
+      if (!finalTutorSeccion) finalTutorSeccion = String(tutorAulasJsonArr[0].seccion || '').trim().toUpperCase();
+    }
+    const gradosAsignadosJsonArr = _normAulaArr(body.grados_asignados_json);
+    // ---- FIN NUEVOS CAMPOS CEBA/EBR ----
     const permisosExtra = typeof body.permisosExtra === 'object' && body.permisosExtra ? body.permisosExtra : {};
     const incidentesDiaLectura = (permisosExtra as any)?.incidentesDiaLectura !== undefined
       ? !!(permisosExtra as any)?.incidentesDiaLectura
@@ -117,8 +163,10 @@ serve(async (req) => {
       restringir,
       asignaciones,
       es_tutor: esTutor && rol === 'profesor',
-      tutor_grado: esTutor && rol === 'profesor' ? (tutorGrado || '') : '',
-      tutor_seccion: esTutor && rol === 'profesor' ? (tutorSeccion || '') : '',
+      tutor_grado: esTutor && rol === 'profesor' ? (finalTutorGrado || '') : '',
+      tutor_seccion: esTutor && rol === 'profesor' ? (finalTutorSeccion || '') : '',
+      tutor_aulas_json: (esTutor && rol === 'profesor') ? tutorAulasJsonArr : [],
+      grados_asignados_json: gradosAsignadosJsonArr,
       incidentes_dia_lectura: incidentesDiaLectura,
       permisos_extra: permisosExtra,
     };

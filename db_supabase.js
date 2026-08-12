@@ -78,22 +78,34 @@ const DB = {
     const lsData = LSC.get(cacheKey);
     if (lsData) { this._alumnosScopedCache[cacheKey] = lsData; return lsData; }
 
+    // Soporte para nuevas asignaciones con ciclo (CEBA): asignaciones es un array [{ciclo,grado,seccion}]
+    const aulasList = Array.isArray(asignaciones) ? asignaciones :
+      Object.entries(normAsig).flatMap(([g, secs]) => secs.map(s => ({ ciclo:'', grado: String(g||''), seccion: String(s||'') })));
+
     // Supabase: WHERE grado IN (...) — sin límite de 10 como Firestore
+    const gradosUnicos = [...new Set(aulasList.map(a => String(a.grado||'')).filter(Boolean))];
     const { data, error } = await supabase
       .from('alumnos')
       .select('*')
       .eq('colegio_id', COLEGIO_ID)
-      .in('grado', grados);
+      .in('grado', gradosUnicos);
 
     if (error) { console.error('[DB] getAlumnosScoped:', error.message); return []; }
 
     const result = data
       .map(_normAlumno)
       .filter(a => {
-        const seccs = asignaciones[a.grado];
-        if (!Array.isArray(seccs) || !seccs.length) return true;
-        const sec = String(a.seccion || '').trim().toUpperCase();
-        return seccs.some(x => String(x || '').trim().toUpperCase() === sec);
+        // match con cualquier aula de la lista, compatible con ciclo '' (EBR legacy match cualquier ciclo)
+        return aulasList.some(x => {
+          const cicloMatch = !x.ciclo || !a.ciclo || (String(a.ciclo||'').toUpperCase() === String(x.ciclo||'').toUpperCase());
+          const gradoOk = String(a.grado||'').trim() === String(x.grado||'').trim();
+          if (!gradoOk || !cicloMatch) return false;
+          // si la aula pide seccion '' → todas las secciones de ese grado
+          if (!x.seccion) return true;
+          const secA = String(a.seccion || '').trim().toUpperCase();
+          const secX = String(x.seccion || '').trim().toUpperCase();
+          return secA === secX;
+        });
       });
 
     this._alumnosScopedCache[cacheKey] = result;
@@ -271,6 +283,7 @@ const DB = {
       if (filtros.alumnoId) q = q.eq('alumno_id', filtros.alumnoId);
       if (filtros.grado)   q = q.eq('grado', filtros.grado);
       if (filtros.seccion) q = q.eq('seccion', filtros.seccion);
+      if (filtros.ciclo)   q = q.eq('ciclo', String(filtros.ciclo||'').trim().toUpperCase());
       if (filtros.turno)   q = q.eq('turno', filtros.turno);
       if (filtros.tipo)     q = q.eq('tipo', filtros.tipo);
       if (filtros.estado)   q = q.eq('estado', filtros.estado);
@@ -395,6 +408,7 @@ const DB = {
       nombre:         reg.nombre  || '',
       grado:          reg.grado   || '',
       seccion:        reg.seccion || '',
+      ciclo:          reg.ciclo   || '',
       turno:          reg.turno   || '',
       registrado_por: reg.registradoPor || '',
     };
@@ -599,6 +613,7 @@ function _normAlumno(row) {
     id:                  row.id,
     nombres:             row.nombres             || '',
     apellidos:           row.apellidos           || '',
+    ciclo:               String(row.ciclo||'').trim().toUpperCase(),
     grado:               row.grado               || '',
     seccion:             row.seccion             || '',
     turno:               row.turno               || '',
@@ -620,6 +635,7 @@ function _alumnoToRow(alumno) {
     id:                   alumno.id,
     nombres:              alumno.nombres             || '',
     apellidos:            alumno.apellidos           || '',
+    ciclo:                String(alumno.ciclo||'').trim().toUpperCase(),
     grado:                alumno.grado               || '',
     seccion:              alumno.seccion             || 'A',
     turno:                alumno.turno               || 'Primaria',
@@ -646,6 +662,7 @@ function _normRegistro(row) {
     nombre:        row.nombre  || '',
     grado:         row.grado   || '',
     seccion:       row.seccion || '',
+    ciclo:         String(row.ciclo||'').trim().toUpperCase(),
     turno:         row.turno   || '',
     registradoPor: row.registrado_por || '',
   };

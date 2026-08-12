@@ -3388,14 +3388,23 @@
                 <option value="" disabled selected>-- Grado --</option>
               </select>
             </div>
-            <div class="form-group" style="margin:0;">
+            <div class="form-group" style="margin:0 0 10px 0;">
               <label>Aula (Sección)</label>
               <select id="u-tutor-seccion" style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-family:var(--font-body);font-size:0.88rem;width:100%;display:block;-webkit-appearance:menulist;appearance:menulist;cursor:pointer;">
                 <option value="" disabled selected>-- Sección --</option>
               </select>
             </div>
-            <div style="font-size:0.75rem;color:var(--muted);margin-top:6px;">
-              Se usará esta aula para enviar automáticamente alertas semanales/mensuales al tutor.
+            <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:10px;">
+              <button type="button" class="btn btn-ghost" id="btn-u-tutor-agregar-aula" onclick="uTutorAgregarAula()" style="padding:8px 12px;font-size:0.82rem;flex:1;justify-content:center;">➕ Añadir esta aula</button>
+            </div>
+            <div class="form-group" style="margin:0;">
+              <label>Aulas del tutor (CEBA: varias con ciclos | EBR: 1 aula)</label>
+              <div id="u-tutor-aulas-lista" style="display:flex;flex-direction:column;gap:6px;border:1px dashed var(--border);border-radius:10px;padding:8px;min-height:42px;background:var(--surface2);">
+                <div style="font-size:0.75rem;color:var(--muted);text-align:center;padding:4px;">Aún no hay aulas agregadas</div>
+              </div>
+              <div style="font-size:0.75rem;color:var(--muted);margin-top:6px;">
+                Modo CEBA: agrega 1°A Inicial + 2°A Intermedio, etc. Modo EBR: agrega una sola aula. Se mantiene el modo antiguo (grado/sección) por compatibilidad.
+              </div>
             </div>
           </div>
         </div>
@@ -5162,8 +5171,19 @@
         </div>
         <div class="form-group">
           <label>Nivel</label>
-          <select id="f-turno" onchange="cargarGradosPorNivel()">
+          <select id="f-turno" onchange="cargarGradosPorNivel(); _syncFCicloDesdeTurno();">
             <option value="">Seleccionar</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Ciclo / Nivel pedagógico</label>
+          <select id="f-ciclo" onchange="_syncFGradosPorCiclo()">
+            <option value="">(EBR: dejar vacío | CEBA: INICIAL / INTERMEDIO / AVANZADO)</option>
+            <option value="INICIAL">CICLO INICIAL</option>
+            <option value="INTERMEDIO">CICLO INTERMEDIO</option>
+            <option value="AVANZADO">CICLO AVANZADO</option>
+            <option value="PRIMARIA">EBR PRIMARIA</option>
+            <option value="SECUNDARIA">EBR SECUNDARIA</option>
           </select>
         </div>
         <div class="form-group">
@@ -7586,6 +7606,7 @@ async function autoRegistrar(alumno) {
     const reg = {
       alumnoId: alumno.id,
       nombre, grado: alumno.grado, seccion: alumno.seccion, turno: alumno.turno,
+      ciclo: alumno.ciclo || '',
       tipo, estado,
       hora: now.toLocaleTimeString('es-PE', {hour:'2-digit', minute:'2-digit', second:'2-digit'}),
       fecha: today,
@@ -7652,6 +7673,24 @@ async function confirmRegister(tipo) {
 // ============================================================
 let editingId = null;
 
+// Sync: si el usuario selecciona Nivel (turno), pre-cargar ciclo equivalente
+function _syncFCicloDesdeTurno() {
+  try {
+    const tEl = document.getElementById('f-turno');
+    const cEl = document.getElementById('f-ciclo');
+    if(!tEl || !cEl) return;
+    if (cEl.value) return; // no sobrescribir si ya eligió
+    const raw = String(tEl.value || '').trim();
+    if(!raw) return;
+    const cand = _canonCicloJS(raw);
+    if(['INICIAL','INTERMEDIO','AVANZADO','PRIMARIA','SECUNDARIA'].includes(cand)) cEl.value = cand;
+  } catch(_) {}
+}
+function _syncFGradosPorCiclo() {
+  // Placeholder: por ahora no bloquea grados (el colegio configura según necesidad)
+  try {} catch(_) {}
+}
+
 async function openModalAlumno(id) {
   _modalLockOn();
   editingId = id || null;
@@ -7670,11 +7709,18 @@ async function openModalAlumno(id) {
     // Primero poblar el select de nivel con opciones de config
     const cfgTemp = await getConfig();
     const fTurno = document.getElementById('f-turno');
+    const fCiclo = document.getElementById('f-ciclo');
     fTurno.innerHTML = '<option value="">Seleccionar</option>';
     (cfgTemp.niveles||[]).forEach(n => {
       fTurno.innerHTML += `<option value="${n.nombre}">${n.nombre}</option>`;
     });
     fTurno.value = a.turno;
+    if (fCiclo) {
+      // Cargar ciclo desde el alumno (CEBA), si no existe inferir desde turno
+      const cicloGuardado = String(a.ciclo || '').trim().toUpperCase();
+      if (cicloGuardado) fCiclo.value = cicloGuardado;
+      else _syncFCicloDesdeTurno();
+    }
     // Luego cargar grados y secciones
     await cargarGradosPorNivel(a.turno);
     document.getElementById('f-grado').value = a.grado;
@@ -7758,11 +7804,18 @@ async function saveAlumno() {
     const alumnos = await DB.getAlumnos();
     if(alumnos.find(a => a.id === id && a.id !== editingId)){ toast('Ese DNI ya está registrado','error'); return; }
 
+    // Ciclo helper
+    const cicloEl = document.getElementById('f-ciclo');
+    const cicloRaw  = cicloEl ? String(cicloEl.value || '').trim() : '';
+    const turnoVal = document.getElementById('f-turno').value || '';
+    const cicloFinal = cicloRaw || _canonCicloJS(turnoVal || '');
+
     const alumno = {
       id, nombres, apellidos, grado,
+      ciclo: cicloFinal,
       seccion: document.getElementById('f-seccion').value,
-      turno: document.getElementById('f-turno').value,
-      limite: await getLimiteByNivel(document.getElementById('f-turno').value),
+      turno: turnoVal,
+      limite: await getLimiteByNivel(turnoVal),
       telefono: document.getElementById('f-telefono').value.trim(),
       apoderadoNombres: document.getElementById('f-apoderado-nombres').value.trim(),
       apoderadoApellidos: document.getElementById('f-apoderado-apellidos').value.trim(),
@@ -10130,10 +10183,33 @@ async function sendWhatsApp(telefono, mensaje, imageUrl = null) {
   }
 }
 
-let currentTutorInfo = { esTutor:false, tutorGrado:'', tutorSeccion:'', nombre:'', telefono:'' };
+let currentTutorInfo = { esTutor:false, tutorGrado:'', tutorSeccion:'', nombre:'', telefono:'', tutorAulas:[], gradosAsignados:[] };
+
+function _buildAulasFromUserData(d) {
+  const norm = (v) => String(v ?? '').trim().replace(/\s+/g,' ');
+  const tutorGrado = norm(d.tutorGrado || d.tutor_grado || '');
+  const tutorSeccion = norm(d.tutorSeccion || d.tutor_seccion || '').toUpperCase();
+  let aulas = Array.isArray(d.tutorAulas) ? d.tutorAulas :
+              Array.isArray(d.tutor_aulas_json) ? d.tutor_aulas_json : [];
+  aulas = aulas.map(a => ({ ciclo: _canonCicloJS(a.ciclo||''), grado: String(a.grado||'').trim(), seccion: String(a.seccion||'').trim().toUpperCase() }))
+               .filter(a => a.grado && a.seccion);
+  const seen = new Set();
+  aulas = aulas.filter(a => { const k = [a.ciclo,a.grado,a.seccion].join('|'); if(seen.has(k)) return false; seen.add(k); return true; });
+  if(!aulas.length && tutorGrado && tutorSeccion){
+    aulas = [{ ciclo:'', grado: tutorGrado, seccion: tutorSeccion }];
+  }
+  let gradosAsignados = Array.isArray(d.grados_asignados_json) ? d.grados_asignados_json : [];
+  gradosAsignados = gradosAsignados.map(a => ({ ciclo: _canonCicloJS(a.ciclo||''), grado: String(a.grado||'').trim(), seccion: String(a.seccion||'').trim().toUpperCase() }))
+                                  .filter(a => a.grado && a.seccion);
+  const asigObj = (d.asignaciones && typeof d.asignaciones === 'object') ? d.asignaciones : {};
+  if(!gradosAsignados.length && Object.keys(asigObj).length){
+    gradosAsignados = _asignacionesObjToAulasList(asigObj) || [];
+  }
+  return { tutorAulas: aulas, gradosAsignados };
+}
 
 async function cargarTutorActual(userData = null) {
-  const def = { esTutor:false, tutorGrado:'', tutorSeccion:'', nombre:'', telefono:'' };
+  const def = { esTutor:false, tutorGrado:'', tutorSeccion:'', nombre:'', telefono:'', tutorAulas:[], gradosAsignados:[] };
   if(!currentUser) { currentTutorInfo = def; matUpdateAccessUi(); return; }
   try {
     const cached = userData || _getCurrentUsuarioCache(currentUser.uid);
@@ -10144,13 +10220,16 @@ async function cargarTutorActual(userData = null) {
       const tutorSeccion = norm(d.tutorSeccion || d.tutor_seccion || '').toUpperCase();
       const hasTut = !!tutorGrado && !!tutorSeccion;
       const raw = d.esTutor !== undefined ? d.esTutor : d.es_tutor;
-      const esTutor = !!raw || hasTut;
+      const aulasData = _buildAulasFromUserData(d);
+      const esTutor = !!raw || hasTut || aulasData.tutorAulas.length > 0;
       currentTutorInfo = {
         esTutor,
         tutorGrado,
         tutorSeccion,
         nombre: norm(d.nombre || ''),
         telefono: norm(d.telefono || ''),
+        tutorAulas: aulasData.tutorAulas,
+        gradosAsignados: aulasData.gradosAsignados
       };
     } else {
       const doc = await db.collection('usuarios').doc(currentUser.uid).get();
@@ -10162,13 +10241,16 @@ async function cargarTutorActual(userData = null) {
         const tutorSeccion = norm(d.tutorSeccion || '').toUpperCase();
         const hasTut = !!tutorGrado && !!tutorSeccion;
         const raw = d.esTutor;
-        const esTutor = !!raw || hasTut;
+        const aulasData = _buildAulasFromUserData(d);
+        const esTutor = !!raw || hasTut || aulasData.tutorAulas.length > 0;
         currentTutorInfo = {
           esTutor,
           tutorGrado,
           tutorSeccion,
           nombre: norm(d.nombre || ''),
           telefono: norm(d.telefono || ''),
+          tutorAulas: aulasData.tutorAulas,
+          gradosAsignados: aulasData.gradosAsignados
         };
       } else currentTutorInfo = def;
     }
@@ -18393,6 +18475,91 @@ function toast(msg, type='success') {
 // GESTIÓN DE USUARIOS
 // ============================================================
 let editingUsuarioId = null;
+let _uTutorAulasForm = [];
+
+function _canonCicloJS(c){
+  const x = String(c||'').trim().toUpperCase();
+  const map = {
+    'CICLO INICIAL':'INICIAL','INICIAL':'INICIAL','PRE ESCOLAR':'INICIAL',
+    'CICLO INTERMEDIO':'INTERMEDIO','INTERMEDIO':'INTERMEDIO',
+    'CICLO AVANZADO':'AVANZADO','AVANZADO':'AVANZADO',
+    'PRIMARIA':'PRIMARIA','EBR PRIMARIA':'PRIMARIA',
+    'SECUNDARIA':'SECUNDARIA','EBR SECUNDARIA':'SECUNDARIA'
+  };
+  return map[x] || x;
+}
+
+function _aulaKey(ciclo, grado, seccion){
+  return [_canonCicloJS(ciclo), String(grado||'').trim(), String(seccion||'').trim().toUpperCase()].join('|');
+}
+
+function renderUTutorAulas(){
+  const wrap = document.getElementById('u-tutor-aulas-lista');
+  if(!wrap) return;
+  if(!Array.isArray(_uTutorAulasForm) || _uTutorAulasForm.length === 0){
+    wrap.innerHTML = `<div style="font-size:0.75rem;color:var(--muted);text-align:center;padding:4px;">Aún no hay aulas agregadas</div>`;
+    return;
+  }
+  wrap.innerHTML = _uTutorAulasForm.map((a, idx) => {
+    const ciclo = _canonCicloJS(a.ciclo);
+    const grado = String(a.grado||'').trim();
+    const secc  = String(a.seccion||'').trim().toUpperCase();
+    const label = [ciclo, `${grado}°${secc}`].filter(Boolean).join(' · ') || 'Aula sin datos';
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:6px 8px 6px 10px;">
+      <div style="font-size:0.82rem;font-weight:650;">${_escHtml(label)}</div>
+      <button type="button" class="btn btn-ghost" style="padding:4px 8px;font-size:0.72rem;" onclick="_uTutorAulaRemove(${idx})">✕ Quitar</button>
+    </div>`;
+  }).join('');
+}
+
+function _uTutorAulaRemove(idx){
+  if(!Array.isArray(_uTutorAulasForm)) return;
+  _uTutorAulasForm.splice(idx,1);
+  renderUTutorAulas();
+}
+
+async function uTutorAgregarAula(){
+  const nivel = String(document.getElementById('u-tutor-nivel')?.value || '').trim();
+  const grado = String(document.getElementById('u-tutor-grado')?.value || '').trim();
+  const secc  = String(document.getElementById('u-tutor-seccion')?.value || '').trim();
+  if(!nivel || nivel === 'TODOS'){ toast('Selecciona el nivel (ciclo)','warning'); return; }
+  if(!grado){ toast('Selecciona el grado','warning'); return; }
+  if(!secc){ toast('Selecciona la sección','warning'); return; }
+  const ciclo = _canonCicloJS(nivel);
+  if(!Array.isArray(_uTutorAulasForm)) _uTutorAulasForm = [];
+  const k = _aulaKey(ciclo, grado, secc);
+  if(_uTutorAulasForm.some(a => _aulaKey(a.ciclo,a.grado,a.seccion) === k)){
+    toast('Esta aula ya está agregada','warning');
+    return;
+  }
+  _uTutorAulasForm.push({ ciclo, grado, seccion: secc.toUpperCase() });
+  renderUTutorAulas();
+}
+
+function _parseTutorColumnaExcelAulas(texto){
+  // Extrae "CICLO INICIAL 1°A°-2°A° / INTERMEDIO 1°A°-2°A°-3°A°" => array de {ciclo,grado,seccion}
+  const out = [];
+  const raw = String(texto||'').trim();
+  if(!raw) return out;
+  const partes = raw.split(/\s*\/\s*/).map(s => String(s||'').trim()).filter(Boolean);
+  partes.forEach(parte => {
+    const cicloMatch = parte.match(/CICLO\s+INICIAL|CICLO\s+INTERMEDIO|CICLO\s+AVANZADO|INICIAL|INTERMEDIO|AVANZADO|PRIMARIA|SECUNDARIA/i);
+    const ciclo = _canonCicloJS(cicloMatch ? cicloMatch[0] : '');
+    const reGS = /(\d)\s*°\s*([A-Z])?/gi;
+    let m;
+    while((m = reGS.exec(parte)) !== null){
+      const grado = String(m[1]||'').trim();
+      const secc  = String(m[2]||'A').trim().toUpperCase();
+      if(grado){
+        const k = _aulaKey(ciclo, grado, secc);
+        if(!out.some(a => _aulaKey(a.ciclo,a.grado,a.seccion) === k)){
+          out.push({ ciclo, grado, seccion: secc });
+        }
+      }
+    }
+  });
+  return out;
+}
 
 async function poblarTutorAulaSelects({ grado = null, seccion = null } = {}) {
   const nEl = document.getElementById('u-tutor-nivel');
@@ -18471,12 +18638,50 @@ function toggleTutorFields(prefill) {
     if(sEl) sEl.value = '';
     _disableSelect('u-tutor-grado');
     _disableSelect('u-tutor-seccion');
+    // Si se destilda, NO limpiamos la lista _uTutorAulasForm (por si se equivoca y vuelve a tildar)
   } else {
     try {
       if(prefill && (prefill.grado || prefill.seccion)) poblarTutorAulaSelects(prefill);
       else poblarTutorAulaSelects();
     } catch(e0) {}
   }
+  renderUTutorAulas();
+}
+
+// Util: normalizar asignaciones (formato {grado:[secciones]}) a lista [{ciclo,grado,seccion}]
+function _asignacionesObjToAulasList(asigObj) {
+  const out = [];
+  if(!asigObj || typeof asigObj !== 'object') return out;
+  Object.entries(asigObj).forEach(([grado, secs]) => {
+    const secList = Array.isArray(secs) ? secs.map(s=>String(s||'').trim().toUpperCase()).filter(Boolean) : [];
+    if(!secList.length) return;
+    secList.forEach(secc => {
+      try {
+        const gStr = String(grado||'').trim();
+        if(!gStr) return;
+        out.push({ ciclo:'', grado:gStr, seccion: secc });
+      } catch(_){}
+    });
+  });
+  // Quitar duplicados
+  const seen = new Set();
+  return out.filter(a => {
+    const k = _aulaKey(a.ciclo,a.grado,a.seccion);
+    if(seen.has(k)) return false;
+    seen.add(k); return true;
+  });
+}
+function _aulasListToAsignacionesObj(listArr) {
+  const out = {};
+  if(!Array.isArray(listArr)) return out;
+  listArr.forEach(a => {
+    const g = String(a.grado||'').trim();
+    const s = String(a.seccion||'').trim().toUpperCase();
+    if(!g || !s) return;
+    if(!(g in out)) out[g] = [];
+    if(!out[g].includes(s)) out[g].push(s);
+  });
+  return out;
 }
 
 function _getPermisosEspecialesFromForm() {
@@ -18658,6 +18863,11 @@ async function openModalUsuario(uid, nombre, rol, email) {
     } catch(e0) {}
     document.getElementById('u-telefono').value = initU.telefono || '';
     document.getElementById('u-es-tutor').checked = !!initU.esTutor;
+    _uTutorAulasForm = Array.isArray(initU.tutorAulas) ? initU.tutorAulas.slice() :
+                       Array.isArray(initU.tutor_aulas_json) ? initU.tutor_aulas_json.slice() : [];
+    if (!_uTutorAulasForm.length && (initU.tutorGrado || initU.tutorSeccion)) {
+      _uTutorAulasForm = [{ ciclo:'', grado: String(initU.tutorGrado||'').trim(), seccion: String(initU.tutorSeccion||'').trim().toUpperCase() }].filter(a => a.grado && a.seccion);
+    }
     toggleTutorFields({ grado: initU.tutorGrado || null, seccion: initU.tutorSeccion || null });
     if(canSetExtras) {
       const px0 = (initU.permisosExtra && typeof initU.permisosExtra === 'object') ? initU.permisosExtra : {};
@@ -18702,6 +18912,11 @@ async function openModalUsuario(uid, nombre, rol, email) {
         actualizarResumenPermisosEspeciales();
         document.getElementById('u-telefono').value = uData.telefono || '';
         document.getElementById('u-es-tutor').checked = !!uData.esTutor;
+        _uTutorAulasForm = Array.isArray(uData.tutorAulas) ? uData.tutorAulas.slice() :
+                           Array.isArray(uData.tutor_aulas_json) ? uData.tutor_aulas_json.slice() : [];
+        if (!_uTutorAulasForm.length && (uData.tutorGrado || uData.tutorSeccion)) {
+          _uTutorAulasForm = [{ ciclo:'', grado: String(uData.tutorGrado||'').trim(), seccion: String(uData.tutorSeccion||'').trim().toUpperCase() }].filter(a => a.grado && a.seccion);
+        }
         toggleTutorFields({ grado: uData.tutorGrado || null, seccion: uData.tutorSeccion || null });
         document.getElementById('u-recuperar-msg').style.display = 'none';
         _setCargoUI(uData.cargo || '');
@@ -18726,6 +18941,7 @@ async function openModalUsuario(uid, nombre, rol, email) {
     _applyPermisosEspecialesToForm({});
     actualizarResumenPermisosEspeciales();
     tempAsignaciones = {};
+    _uTutorAulasForm = [];
     document.getElementById('u-restringir').checked = false;
     poblarTutorAulaSelects().catch(() => {});
     document.getElementById('u-es-tutor').checked = false;
@@ -18762,23 +18978,62 @@ async function saveUsuario() {
     const esProfesor = rol === 'profesor';
     const esTutor = esProfesor ? !!document.getElementById('u-es-tutor')?.checked : false;
     const telefonoVal = document.getElementById('u-telefono').value.trim();
-    const tutorNivel = (esProfesor && esTutor) ? (document.getElementById('u-tutor-nivel')?.value || '') : '';
-    const tutorGrado = (esProfesor && esTutor) ? (document.getElementById('u-tutor-grado')?.value || '') : '';
-    const tutorSeccion = (esProfesor && esTutor) ? (document.getElementById('u-tutor-seccion')?.value || '') : '';
+    let tutorNivel = (esProfesor && esTutor) ? (document.getElementById('u-tutor-nivel')?.value || '') : '';
+    let tutorGrado = (esProfesor && esTutor) ? (document.getElementById('u-tutor-grado')?.value || '') : '';
+    let tutorSeccion = (esProfesor && esTutor) ? (document.getElementById('u-tutor-seccion')?.value || '') : '';
+
+    // ---- NUEVOS CAMPOS CEBA/EBR ----
+    // 1) Normalizar la lista de aulas del tutor (EBR permite 1 sola vía selects)
+    if(!Array.isArray(_uTutorAulasForm)) _uTutorAulasForm = [];
+    if(esTutor && _uTutorAulasForm.length === 0 && tutorGrado && tutorSeccion){
+      // Modo EBR: no apretó “Añadir esta aula” pero seleccionó grado/sección → agrega 1 entrada
+      const ciclo = _canonCicloJS(tutorNivel);
+      _uTutorAulasForm = [{ ciclo, grado: tutorGrado, seccion: tutorSeccion.toUpperCase() }];
+    }
+    if(esTutor && _uTutorAulasForm.length && !tutorGrado){
+      // Modo CEBA: si la 1ra aula de la lista llena los selects legacy (para que la db antigua siga funcionando)
+      const first = _uTutorAulasForm[0] || {};
+      if(!tutorGrado)   { tutorGrado   = String(first.grado||'').trim(); }
+      if(!tutorSeccion) { tutorSeccion = String(first.seccion||'').trim().toUpperCase(); }
+      if(!tutorNivel)   { tutorNivel   = String(first.ciclo||'').trim(); }
+    }
+    // tutor_aulas_json definitivo (normalizado, sin duplicados)
+    const tutorAulasJsonFinal = (esTutor ? (Array.isArray(_uTutorAulasForm) ? _uTutorAulasForm : []) : [])
+      .map(a => ({ ciclo: _canonCicloJS(a.ciclo||''), grado: String(a.grado||'').trim(), seccion: String(a.seccion||'').trim().toUpperCase() }))
+      .filter(a => a.grado && a.seccion);
+    const unicas = new Set();
+    const tutorAulasJson = tutorAulasJsonFinal.filter(a => {
+      const k = [a.ciclo,a.grado,a.seccion].join('|');
+      if(unicas.has(k)) return false;
+      unicas.add(k); return true;
+    });
+
+    // 2) grados_asignados_json: mapea asignaciones (obj {grado:[secciones]}) a lista [ {ciclo,grado,seccion} ]
+    let gradosAsignadosJson = [];
+    if(rolScope && (asignaciones && typeof asignaciones === 'object')){
+      gradosAsignadosJson = _asignacionesObjToAulasList(asignaciones) || [];
+    }
+    // ---- FIN NUEVOS CAMPOS CEBA/EBR ----
+
     if(rol === 'psicologo') {
       if(!restringir) { toast('Activa "Restringir acceso por grados/secciones"','warning'); return; }
       if(!Object.keys(asignaciones || {}).length) { toast('Configura las asignaciones del psicólogo','warning'); return; }
     }
     if(esTutor) {
       if(!telefonoVal) { toast('Completa el teléfono del tutor','warning'); return; }
-      if(!tutorNivel) { toast('Selecciona el nivel del tutor','warning'); return; }
-      if(!tutorGrado) { toast('Selecciona el grado del tutor','warning'); return; }
-      if(!tutorSeccion) { toast('Selecciona la sección del tutor','warning'); return; }
+      // Validación flexible: si no hay aulas en JSON, pide campos legacy; si JSON tiene, ya está ok
+      if(tutorAulasJson.length === 0) {
+        if(!tutorNivel)   { toast('Selecciona el nivel del tutor','warning'); return; }
+        if(!tutorGrado)   { toast('Selecciona el grado del tutor','warning'); return; }
+        if(!tutorSeccion) { toast('Selecciona la sección del tutor','warning'); return; }
+      }
     }
     if(rolScope && restringir) {
       try {
         const cfg = await getConfig();
         asignaciones = _normalizeAsignacionesWithCfg(asignaciones || {}, cfg, tutorNivel || '') || {};
+        // Re-computar gradosAsignadosJson con la asignación NORMALIZADA
+        gradosAsignadosJson = _asignacionesObjToAulasList(asignaciones) || [];
       } catch(e0) {}
     }
 
@@ -18798,7 +19053,9 @@ async function saveUsuario() {
         incidentesDiaLectura,
         permisosExtra,
         restringir,
-        asignaciones
+        asignaciones,
+        tutor_aulas_json: tutorAulasJson,
+        grados_asignados_json: gradosAsignadosJson
       };
       if (esProfesor) {
         payloadCrear.esTutor = esTutor;
@@ -18826,7 +19083,8 @@ async function saveUsuario() {
       toast('Usuario creado correctamente','success');
     } else {
       // EDITAR usuario
-      const update1 = { nombre, rol, cargo, telefono: telefonoVal, incidentesDiaLectura, permisosExtra, restringir, asignaciones };
+      const update1 = { nombre, rol, cargo, telefono: telefonoVal, incidentesDiaLectura, permisosExtra, restringir, asignaciones,
+                        tutor_aulas_json: tutorAulasJson, grados_asignados_json: gradosAsignadosJson };
       // Solo actualizar campos de tutor si el usuario es profesor.
       // Si es profesor y NO es tutor, borrar explícitamente los valores antiguos enviando ''.
       if (esProfesor) {
@@ -19201,11 +19459,11 @@ async function downloadUsuariosTemplate() {
 
     const headers = [
       'nombre','email','password','rol','telefono','cargo',
-      'es_tutor','tutor_grado','tutor_seccion','restringir','asignaciones'
+      'es_tutor','tutor_grado','tutor_seccion','tutor','restringir','asignaciones'
     ];
     ws.addRow(headers);
     ws.getRow(1).font = { bold: true };
-    ws.columns = headers.map((h, idx) => ({ key: h, width: idx === 0 ? 26 : idx === 1 ? 28 : 16 }));
+    ws.columns = headers.map((h, idx) => ({ key: h, width: idx === 0 ? 26 : idx === 1 ? 28 : (idx === 9 ? 38 : 16) }));
 
     const exGr1 = String(gradosAll[0] || '').trim();
     const exGr2 = String(gradosAll[1] || '').trim();
@@ -19215,9 +19473,11 @@ async function downloadUsuariosTemplate() {
       exGr1 ? (exGr1 + ':' + exS1 + (exS2 ? (',' + exS2) : '')) : '',
       exGr2 ? (exGr2 + ':todas') : ''
     ].filter(Boolean).join(';');
+    // Ejemplo TUTOR (modo CEBA: varias aulas con ciclos). En EBR se puede dejar vacío y llenar tutor_grado + tutor_seccion.
+    const exTutorCEBA = 'CICLO INICIAL 1°A-2°A / CICLO INTERMEDIO 1°A-2°A-3°A';
     ws.addRow([
       'Juan Pérez','juan.perez@colegio.com','123456','profesor','987654321','Docente de aula',
-      'SI', exGr1 || '', exS1 || '', 'NO', exAsig || ''
+      'SI', exGr1 || '', exS1 || '', exTutorCEBA, 'NO', exAsig || ''
     ]);
 
     const roleFormula = `"${roles.join(',')}"`;
@@ -19229,7 +19489,7 @@ async function downloadUsuariosTemplate() {
     for(let r = 2; r <= maxRows; r++) {
       ws.getCell(`D${r}`).dataValidation = { type: 'list', allowBlank: false, formulae: [roleFormula] };
       ws.getCell(`G${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [yesNoFormula] };
-      ws.getCell(`J${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [yesNoFormula] };
+      ws.getCell(`K${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [yesNoFormula] };
       ws.getCell(`H${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$A$2:$A$${gradoEnd}`] };
       ws.getCell(`I${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$B$2:$B$${seccEnd}`] };
     }
@@ -19276,9 +19536,11 @@ async function downloadAlumnosTemplate() {
     wsl.getCell('D1').value = 'Consanguinidad';
     const consangVals = ['padre','madre','tutor_legal','abuelo','tio','otro'];
     consangVals.forEach((v, i) => { wsl.getCell(2 + i, 4).value = v; });
+    wsl.getCell('E1').value = 'Ciclos (CEBA/EBR)';
+    ['','INICIAL','INTERMEDIO','AVANZADO','PRIMARIA','SECUNDARIA'].forEach((v, i) => { wsl.getCell(2 + i, 5).value = v; });
 
     const headers = [
-      'dni','nombres','apellidos','turno','grado','seccion',
+      'dni','nombres','apellidos','turno','ciclo','grado','seccion',
       'foto','apoderadoNombres','apoderadoApellidos','telefono','correoApoderado',
       'consanguinidad','consanguinidad_detalle',
       'apoderado2Nombres','apoderado2Apellidos','telefono2','correoApoderado2',
@@ -19292,6 +19554,7 @@ async function downloadAlumnosTemplate() {
       { key: 'nombres', width: 22 },
       { key: 'apellidos', width: 22 },
       { key: 'turno', width: 14 },
+      { key: 'ciclo', width: 16 },
       { key: 'grado', width: 14 },
       { key: 'seccion', width: 10 },
       { key: 'foto', width: 34 },
@@ -19312,6 +19575,7 @@ async function downloadAlumnosTemplate() {
     ws.addRow([
       '33348249','Moises','Perez',
       nivelesFinal[0] || 'Primaria',
+      'INICIAL',
       (gradosAll[0] || '5'),
       (secciones[0] || 'B'),
       '',
@@ -19326,13 +19590,15 @@ async function downloadAlumnosTemplate() {
     const gradoEnd = Math.max(2, 1 + (gradosAll.length || 1));
     const seccEnd = Math.max(2, 1 + (secciones.length || 1));
     const consangEnd = Math.max(2, 1 + (consangVals.length || 1));
+    const cicloEnd = 7; // INICIAL..SECUNDARIA
 
     for(let r = 2; r <= maxRows; r++) {
       ws.getCell(`D${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$A$2:$A$${nivelEnd}`] };
-      ws.getCell(`E${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$B$2:$B$${gradoEnd}`] };
-      ws.getCell(`F${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$C$2:$C$${seccEnd}`] };
-      ws.getCell(`L${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
-      ws.getCell(`R${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
+      ws.getCell(`E${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$E$2:$E$${cicloEnd}`] };
+      ws.getCell(`F${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$B$2:$B$${gradoEnd}`] };
+      ws.getCell(`G${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$C$2:$C$${seccEnd}`] };
+      ws.getCell(`M${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
+      ws.getCell(`S${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
     }
 
     wsl.state = 'veryHidden';
@@ -19396,9 +19662,25 @@ async function handleImportUsuariosFile() {
       const tutorGradoRaw = String(_getRowVal(r, ['tutor_grado','grado_tutor','tutorgrado'])).trim();
       const tutorGrado = _normGradoFromCfg(tutorGradoRaw, cfg, '') || tutorGradoRaw;
       const tutorSeccion = String(_getRowVal(r, ['tutor_seccion','seccion_tutor','tutorseccion'])).trim();
+      const tutorColumnaExcel = String(_getRowVal(r, ['tutor','aulas_tutor','aulas','tutor_aulas','tutor_grado_seccion'])).trim();
+      // Parsear columna TUTOR libre (CEBA) o combinar con legacy tutor_grado + tutor_seccion
+      let tutorAulasJson = [];
+      try {
+        if(tutorColumnaExcel) tutorAulasJson = _parseTutorColumnaExcelAulas(tutorColumnaExcel);
+      } catch(_e) { tutorAulasJson = []; }
+      if(!tutorAulasJson.length && (tutorGrado || tutorSeccion)) {
+        const inferNivel = _agendaInferNivelByGrado(tutorGrado, cfg) || '';
+        tutorAulasJson = [{ ciclo: _canonCicloJS(inferNivel), grado: tutorGrado, seccion: tutorSeccion.toUpperCase() }].filter(a => a.grado && a.seccion);
+      }
+      if(esTutor && tutorAulasJson.length) {
+        // Legacy fallback: si no había tutor_grado/seccion, tomamos la primera aula como principal
+        if(!tutorGrado)   tutorGrado   = String(tutorAulasJson[0].grado||'').trim();
+        if(!tutorSeccion) tutorSeccion = String(tutorAulasJson[0].seccion||'').trim().toUpperCase();
+      }
       const restringir = _parseBool(_getRowVal(r, ['restringir','restrignir','restricto','restringido']));
       const asignacionesRaw = _parseAsignaciones(_getRowVal(r, ['asignaciones','asignaciones_json']));
       const asignaciones = _normalizeAsignacionesWithCfg(asignacionesRaw || {}, cfg, _agendaInferNivelByGrado(tutorGrado, cfg)) || {};
+      const gradosAsignadosJson = _asignacionesObjToAulasList(asignaciones) || [];
 
       const errors = [];
       if(!nombre) errors.push('Falta nombre');
@@ -19411,10 +19693,19 @@ async function handleImportUsuariosFile() {
       if(email) seenEmails.add(email);
       if(rol === 'profesor' && esTutor) {
         if(!telefono) errors.push('Tutor sin teléfono');
-        if(!tutorGrado) errors.push('Tutor sin grado');
-        if(!tutorSeccion) errors.push('Tutor sin sección');
-        if(tutorGrado && gradeSet.size && !gradeSet.has(tutorGrado)) errors.push('Tutor grado no existe');
-        if(tutorSeccion && sectionSet.size && !sectionSet.has(tutorSeccion)) errors.push('Tutor sección no existe');
+        if(!tutorAulasJson.length && (!tutorGrado || !tutorSeccion)) errors.push('Tutor sin aulas (columna TUTOR o grado+sección)');
+        if(tutorAulasJson.length === 0) {
+          if(tutorGrado && gradeSet.size && !gradeSet.has(tutorGrado)) errors.push('Tutor grado no existe');
+          if(tutorSeccion && sectionSet.size && !sectionSet.has(tutorSeccion)) errors.push('Tutor sección no existe');
+        } else {
+          // Validar cada aula
+          tutorAulasJson.forEach(a => {
+            if(!a.grado) errors.push('Aula sin grado');
+            if(!a.seccion) errors.push('Aula sin sección');
+            if(a.grado && gradeSet.size && !gradeSet.has(a.grado)) errors.push('Grado inexistente: ' + a.grado);
+            if(a.seccion && sectionSet.size && !sectionSet.has(a.seccion)) errors.push('Sección inexistente: ' + a.seccion);
+          });
+        }
       }
       if(rol === 'psicologo' && esTutor) {
         errors.push('Tutor no aplica a psicólogo');
@@ -19446,7 +19737,9 @@ async function handleImportUsuariosFile() {
         asignaciones: (rol === 'profesor' && restringir) ? (asignaciones || {}) : {},
         esTutor: rol === 'profesor' ? !!esTutor : false,
         tutorGrado: (rol === 'profesor' && esTutor) ? tutorGrado : null,
-        tutorSeccion: (rol === 'profesor' && esTutor) ? tutorSeccion : null
+        tutorSeccion: (rol === 'profesor' && esTutor) ? tutorSeccion : null,
+        tutor_aulas_json: (rol === 'profesor' && esTutor) ? tutorAulasJson : [],
+        grados_asignados_json: gradosAsignadosJson
       };
 
       return {
@@ -19905,50 +20198,57 @@ async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
   }
 }
 
-function _profesorAsignacionesEfectivas() {
-  const base = (currentPrivilegios && typeof currentPrivilegios.asignaciones === 'object' && currentPrivilegios.asignaciones) ? currentPrivilegios.asignaciones : {};
-  const merged = JSON.parse(JSON.stringify(base || {}));
+// Helper: retorna LISTA de aulas efectivas del profesor actual:
+//   [{ ciclo:'', grado:'', seccion:'' }]
+// Compatible con formato legacy asignaciones: { grado: ['A','B'] }
+function _profesorAsignacionesAulasList() {
+  const asigObj = (currentPrivilegios && typeof currentPrivilegios.asignaciones === 'object') ? currentPrivilegios.asignaciones : {};
+  let list = Array.isArray(currentTutorInfo?.gradosAsignados) ? currentTutorInfo.gradosAsignados.slice() :
+             _asignacionesObjToAulasList(asigObj);
+  // Añadir aulas del tutor CEBA (multiples) o la única legacy
   if(_isTutorUser()) {
-    const g = String(currentTutorInfo?.tutorGrado || '').trim();
-    const s = String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
-    if(g) {
-      if(!merged[g]) merged[g] = s ? [s] : [];
-      else if(Array.isArray(merged[g])) {
-        if(merged[g].length === 0) { merged[g] = s ? [s] : []; }
-        else if(s && !merged[g].includes(s)) merged[g].push(s);
-      } else merged[g] = s ? [s] : [];
-    }
+    const tutorList = Array.isArray(currentTutorInfo?.tutorAulas) && currentTutorInfo.tutorAulas.length
+      ? currentTutorInfo.tutorAulas.slice()
+      : ((currentTutorInfo?.tutorGrado && currentTutorInfo?.tutorSeccion) ? [{ ciclo:'', grado: String(currentTutorInfo.tutorGrado||'').trim(), seccion: String(currentTutorInfo.tutorSeccion||'').trim().toUpperCase() }] : []);
+    tutorList.forEach(a => {
+      if(!a || !a.grado || !a.seccion) return;
+      const k = [_canonCicloJS(a.ciclo||''), String(a.grado||'').trim(), String(a.seccion||'').trim().toUpperCase()].join('|');
+      if(!list.some(x => [_canonCicloJS(x.ciclo||''), String(x.grado||'').trim(), String(x.seccion||'').trim().toUpperCase()].join('|') === k)) list.push(a);
+    });
   }
-  return merged;
+  return list.filter(a => a && a.grado && a.seccion);
 }
 
-// Aplicar restricción a lista de alumnos
+function _profesorAsignacionesEfectivas() {
+  // Conservar legacy: convertir la lista a obj { grado: [secciones] }
+  const list = _profesorAsignacionesAulasList();
+  const out = {};
+  list.forEach(a => {
+    const g = String(a.grado||'').trim();
+    const s = String(a.seccion||'').trim().toUpperCase();
+    if(!g || !s) return;
+    if(!(g in out)) out[g] = [];
+    if(!out[g].includes(s)) out[g].push(s);
+  });
+  return out;
+}
+
+// Aplicar restricción a lista de alumnos (soporta CEBA multi-aula + ciclo y EBR legacy)
 function aplicarFiltroProfesor(alumnos) {
   const r = _normRol(currentRol);
   if(r !== 'profesor' && r !== 'psicologo') return alumnos;
   if(!!currentPerms?.verTodasAulas) return alumnos;
-  const base = ((currentPrivilegios && typeof currentPrivilegios.asignaciones === 'object' && currentPrivilegios.asignaciones) ? currentPrivilegios.asignaciones : {});
-  const asig = JSON.parse(JSON.stringify(base || {}));
-  if(_isTutorUser()) {
-    const g = String(currentTutorInfo.tutorGrado || '').trim();
-    const s = String(currentTutorInfo.tutorSeccion || '').trim().toUpperCase();
-    if(g) {
-      if(!asig[g]) asig[g] = s ? [s] : [];
-      else if(Array.isArray(asig[g])) {
-        if(asig[g].length === 0) { asig[g] = s ? [s] : []; }
-        else if(s && !asig[g].includes(s)) asig[g].push(s);
-      } else asig[g] = s ? [s] : [];
-    }
-  }
-  const shouldRestrict = true;
-  if(!Object.keys(asig).length) return [];
+  const aulasList = _profesorAsignacionesAulasList();
+  if(!aulasList.length) return [];
   return alumnos.filter(a => {
-    if(!asig[a.grado]) return false;
-    const seccs = asig[a.grado];
-    // Si no hay secciones marcadas para ese grado, ve todas las secciones de ese grado
-    if(!seccs.length) return true;
-    const sec = String(a.seccion || '').trim().toUpperCase();
-    return (seccs || []).some(x => String(x || '').trim().toUpperCase() === sec);
+    return aulasList.some(x => {
+      const cicloMatch = !x.ciclo || !a.ciclo || (String(a.ciclo||'').toUpperCase() === String(x.ciclo||'').toUpperCase());
+      const gradoMatch = String(a.grado||'').trim() === String(x.grado||'').trim();
+      if(!cicloMatch || !gradoMatch) return false;
+      const secA = String(a.seccion || '').trim().toUpperCase();
+      const secX = String(x.seccion || '').trim().toUpperCase();
+      return !secX || secA === secX;
+    });
   });
 }
 
@@ -22983,16 +23283,40 @@ async function chatStaffPrecargarAlumnos() {
   if (!sb) return;
   const r = _normRol(currentRol);
   try {
-    let q = sb.from('alumnos').select('id,nombres,apellidos,dni,codigo,grado,seccion,turno,apoderado_nombres,apoderado_apellidos,apoderado_telefono,correo_apoderado').eq('colegio_id', chatStaffColegioId());
-    // Si es tutor, restringir a su aula
+    let q = sb.from('alumnos').select('id,nombres,apellidos,dni,codigo,grado,seccion,ciclo,turno,apoderado_nombres,apoderado_apellidos,apoderado_telefono,correo_apoderado').eq('colegio_id', chatStaffColegioId());
+    // Si es tutor, restringir a sus aulas (CEBA: varias; EBR: 1 sola vía legacy)
     if (_isTutorUser() && currentTutorInfo) {
-      if (currentTutorInfo.grado) q = q.eq('grado', currentTutorInfo.grado);
-      if (currentTutorInfo.seccion) q = q.eq('seccion', currentTutorInfo.seccion);
+      const aulasTutor = Array.isArray(currentTutorInfo.tutorAulas) && currentTutorInfo.tutorAulas.length ? currentTutorInfo.tutorAulas :
+                         ((currentTutorInfo.tutorGrado && currentTutorInfo.tutorSeccion) ? [{ ciclo:'', grado: currentTutorInfo.tutorGrado, seccion: currentTutorInfo.tutorSeccion }] : []);
+      if (aulasTutor.length === 1) {
+        const a = aulasTutor[0];
+        if (a.ciclo) q = q.eq('ciclo', a.ciclo);
+        if (a.grado) q = q.eq('grado', a.grado);
+        if (a.seccion) q = q.eq('seccion', a.seccion);
+      } else if (aulasTutor.length > 1) {
+        // OR manual: construir condición para que (ciclo,grado,seccion) coincida con CUALQUIER aula.
+        // Supabase no soporta `or` complejo con tuplas nativamente → usamos filtro text de condicion:
+        //   (ciclo.eq.X1.and.grado.eq.Y1.and.seccion.eq.Z1),ciclo.eq.X2...
+        const orParts = aulasTutor.map(a => {
+          const partes = [];
+          if (a.ciclo) partes.push(`ciclo.eq.${encodeURIComponent(String(a.ciclo||''))}`);
+          else partes.push('ciclo.is.null.or.ciclo.eq.');
+          if (a.grado) partes.push(`grado.eq.${encodeURIComponent(String(a.grado))}`);
+          if (a.seccion) partes.push(`seccion.eq.${encodeURIComponent(String(a.seccion))}`);
+          return partes.join(',');
+        });
+        try { q = q.or(orParts.map(p => `and(${p})`).join(',')); }
+        catch(_e) {
+          // Fallback simple: filtrar solo por grados (menos preciso pero no rompe)
+          const gradosUnicos = [...new Set(aulasTutor.map(a => a.grado).filter(Boolean))];
+          if (gradosUnicos.length) q = q.in('grado', gradosUnicos);
+        }
+      }
     } else if (_normRol(currentRol) === 'profesor' && currentPrivilegios && currentPrivilegios.grados) {
       const gs = Object.keys(currentPrivilegios.grados || {});
       if (gs.length) q = q.in('grado', gs);
     }
-    q = q.order('grado', { ascending:true }).order('seccion', { ascending:true }).order('apellidos', { ascending:true }).limit(1500);
+    q = q.order('ciclo', { ascending:true }).order('grado', { ascending:true }).order('seccion', { ascending:true }).order('apellidos', { ascending:true }).limit(1500);
     const { data, error } = await q;
     if (error) throw error;
     CHAT_STAFF.alumnosCache = data || [];
@@ -23007,7 +23331,7 @@ function renderChatNuevoAlumnos() {
   const q = String(document.getElementById('chat-nuevo-buscar')?.value || '').toLowerCase().trim();
   const list = (CHAT_STAFF.alumnosCache || []).filter(a => {
     if (!q) return true;
-    const texto = [a.nombres,a.apellidos,a.dni,a.codigo,a.grado,a.seccion,a.apoderado_nombres,a.apoderado_apellidos,a.apoderado_telefono,a.correo_apoderado].filter(Boolean).join(' ').toLowerCase();
+    const texto = [a.nombres,a.apellidos,a.dni,a.codigo,a.ciclo,a.grado,a.seccion,a.apoderado_nombres,a.apoderado_apellidos,a.apoderado_telefono,a.correo_apoderado].filter(Boolean).join(' ').toLowerCase();
     return texto.includes(q);
   }).slice(0, 60);
   if (!list.length) {
@@ -23017,7 +23341,7 @@ function renderChatNuevoAlumnos() {
   const parts = list.map(a => {
     const nom = [a.nombres, a.apellidos].filter(Boolean).join(' ');
     const apo = [a.apoderado_nombres, a.apoderado_apellidos].filter(Boolean).join(' ') || 'Apoderado sin datos';
-    const aula = [a.grado, a.seccion].filter(Boolean).join(' ');
+    const aula = [a.ciclo, `${a.grado}°${a.seccion||''}`].filter(Boolean).join(' · ') || [a.grado, a.seccion].filter(Boolean).join(' ');
     return `<div onclick="iniciarChatStaffConAlumno('${a.id}')" style="padding:10px 12px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:10px;margin-bottom:4px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
       <div style="width:38px;height:38px;border-radius:50%;background:#185FA5;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">${chatStaffIniciales(nom)}</div>
       <div style="flex:1;min-width:0;">
@@ -23103,6 +23427,7 @@ async function iniciarChatStaffConAlumno(alumnoId) {
       alumno_id: alumnoId || '',
       grado: alumno.grado || '',
       seccion: alumno.seccion || '',
+      ciclo: alumno.ciclo || '',
     };
     const { error } = await sb.from('chat_conversaciones').insert(dataInsert);
     // Si hay error de UNIQUE, no pasa nada: ya existía. Buscamos la conversación para abrirla.
