@@ -8187,12 +8187,22 @@ let _searchAlumnosTimer = null;
 let _alumnosRenderPrep = { source: null, sorted: [], searchTextById: new Map() };
 
 function _compareAlumnoOrden(a, b) {
-  const ordenNivel = { 'Inicial':1,'Primaria':2,'Secundaria':3 };
-  const ordenGrado = { '3 años':1,'4 años':2,'5 años':3,'1er':4,'2do':5,'3er':6,'4to':7,'5to':8,'6to':9,'7mo':10,'8vo':11,'9no':12,'10mo':13,'11mo':14 };
-  const nA = ordenNivel[a.turno]||99, nB = ordenNivel[b.turno]||99;
-  const gA = ordenGrado[a.grado]||99, gB = ordenGrado[b.grado]||99;
+  const modalidad = typeof configCache !== 'undefined' ? _cfgModalidad(configCache) : '';
+  const usaCiclo = (modalidad === 'CEBA' || modalidad === 'EBA');
+  const campoNivel = usaCiclo ? 'ciclo' : 'turno';
+  const ordenNivelEBR = { 'Inicial':1,'Primaria':2,'Secundaria':3 };
+  const ordenNivelCEBA = { 'INICIAL':1, 'INTERMEDIO':2, 'AVANZADO':3 };
+  const ordenNivel = usaCiclo ? ordenNivelCEBA : ordenNivelEBR;
+  const ordenGradoEBR = { '3 años':1,'4 años':2,'5 años':3,'1er':4,'2do':5,'3er':6,'4to':7,'5to':8,'6to':9,'7mo':10,'8vo':11,'9no':12,'10mo':13,'11mo':14 };
+  const ordenGradoCEBA = { '1':1,'2':2,'3':3,'4':4,'5':5,'6':6 };
+  const ordenGrado = usaCiclo ? ordenGradoCEBA : ordenGradoEBR;
+  const valA = String((a||{})[campoNivel]||'').trim();
+  const valB = String((b||{})[campoNivel]||'').trim();
+  const nA = ordenNivel[valA]||99, nB = ordenNivel[valB]||99;
+  const gA = ordenGrado[String((a||{}).grado||'')]||Number((a||{}).grado)||99;
+  const gB = ordenGrado[String((b||{}).grado||'')]||Number((b||{}).grado)||99;
   if(nA !== nB) return nA - nB;
-  if(gA !== gB) return gA - gB;
+  if(gA !== gB) return (typeof gA === 'number' && typeof gB === 'number') ? gA - gB : String(gA).localeCompare(String(gB));
   const sComp = (a.seccion||'').localeCompare(b.seccion||'');
   if(sComp !== 0) return sComp;
   const apComp = (a.apellidos||'').localeCompare(b.apellidos||'');
@@ -8239,7 +8249,7 @@ async function renderAlumnos() {
     let alumnos = prep.sorted;
     if(grado   && grado   !== 'TODOS') alumnos = alumnos.filter(a => a.grado === grado);
     if(seccion && seccion !== 'TODOS') alumnos = alumnos.filter(a => a.seccion === seccion);
-    if(nivel   && nivel   !== 'TODOS') alumnos = alumnos.filter(a => a.turno === nivel);
+    if(nivel   && nivel   !== 'TODOS') { const _cfg = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfg)); }
     if(q) {
       const qClean = q.trim();
       alumnos = alumnos.filter(a => (prep.searchTextById.get(a.id) || '').includes(qClean));
@@ -8627,19 +8637,27 @@ async function onGradoChangeRegistro() {
   if(grado && grado !== 'TODOS') {
     // Auto-detectar nivel del grado
     const cfg = await getConfig();
+    let nivelAuto = '';
     for(const [niv, lista] of Object.entries(cfg.grados || {})) {
-      if(lista.includes(grado)) {
-        document.getElementById('filter-nivel').value = niv;
-        break;
-      }
+      if(Array.isArray(lista) && lista.includes(grado)) { nivelAuto = niv; break; }
     }
+    if(!nivelAuto) {
+      try {
+        const todos = await DB.getAlumnos();
+        const campo = _nivelFieldName(cfg);
+        const match = todos.find(a => String(a.grado||'').trim() === String(grado).trim() && String(a[campo]||'').trim());
+        if(match) nivelAuto = String(match[campo]||'').trim();
+      } catch(_) {}
+    }
+    if(nivelAuto) document.getElementById('filter-nivel').value = nivelAuto;
     await poblarFiltroSeccion('filter-seccion', grado);
   } else {
     // Grado vacío o TODOS → repoblar sección sin filtro de grado
     const nivel = document.getElementById('filter-nivel').value;
     const alumnos = await DB.getAlumnos();
+    const _cfgRF = typeof configCache !== 'undefined' ? configCache : {};
     const secs = [...new Set(alumnos
-      .filter(a => !nivel || nivel === 'TODOS' || a.turno === nivel)
+      .filter(a => !nivel || nivel === 'TODOS' || _matchNivel(a, nivel, _cfgRF))
       .map(a => a.seccion)
     )].sort();
     const el = document.getElementById('filter-seccion');
@@ -8771,7 +8789,7 @@ async function renderRegistro() {
       if(hasta && r.fecha > hasta) return false;
       return true;
     });
-    if(nivel   && nivel   !== 'TODOS') regs = regs.filter(r => r.turno === nivel);
+    if(nivel   && nivel   !== 'TODOS') { const _cfgR1 = typeof configCache !== 'undefined' ? configCache : {}; regs = regs.filter(r => _matchNivel(r, nivel, _cfgR1)); }
     if(grado   && grado   !== 'TODOS') regs = regs.filter(r => r.grado === grado);
     if(seccion && seccion !== 'TODOS') regs = regs.filter(r => r.seccion === seccion);
     if(q) regs = regs.filter(r => r.nombre.toLowerCase().includes(q.trim()) || r.alumnoId.trim().toLowerCase().includes(q.trim()));
@@ -9013,7 +9031,7 @@ async function getRegistrosFiltrados() {
       return true;
     });
   }
-  if(nivel   && nivel   !== 'TODOS') regs = regs.filter(r => r.turno === nivel);
+  if(nivel   && nivel   !== 'TODOS') { const _cfgR2 = typeof configCache !== 'undefined' ? configCache : {}; regs = regs.filter(r => _matchNivel(r, nivel, _cfgR2)); }
   if(grado   && grado   !== 'TODOS') regs = regs.filter(r => r.grado === grado);
   if(seccion && seccion !== 'TODOS') regs = regs.filter(r => r.seccion === seccion);
   if(q) regs = regs.filter(r => (r.nombre||'').toLowerCase().includes(q) || (r.alumnoId||'').includes(q));
@@ -9566,7 +9584,7 @@ async function exportPDFAlumnos() {
   const q       = (document.getElementById('search-alumnos').value||'').toLowerCase();
 
   let alumnos = await DB.getAlumnos();
-  if(nivel   && nivel   !== 'TODOS') alumnos = alumnos.filter(a => a.turno === nivel);
+  if(nivel   && nivel   !== 'TODOS') { const _cfgE1 = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfgE1)); }
   if(grado   && grado   !== 'TODOS') alumnos = alumnos.filter(a => a.grado === grado);
   if(seccion && seccion !== 'TODOS') alumnos = alumnos.filter(a => a.seccion === seccion);
   if(q) alumnos = alumnos.filter(a =>
@@ -9692,7 +9710,7 @@ async function exportExcelAlumnos() {
   const q       = (document.getElementById('search-alumnos').value||'').toLowerCase();
 
   let alumnos = await DB.getAlumnos();
-  if(nivel   && nivel   !== 'TODOS') alumnos = alumnos.filter(a => a.turno === nivel);
+  if(nivel   && nivel   !== 'TODOS') { const _cfgE1 = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfgE1)); }
   if(grado   && grado   !== 'TODOS') alumnos = alumnos.filter(a => a.grado === grado);
   if(seccion && seccion !== 'TODOS') alumnos = alumnos.filter(a => a.seccion === seccion);
   if(q) alumnos = alumnos.filter(a =>
@@ -11701,7 +11719,8 @@ function onComNivelChange() {
     renderComLista();
     return;
   }
-  const grados = [...new Set((_comAlumnos||[]).filter(a=>a.turno===nivel).map(a=>a.grado).filter(Boolean))].sort();
+  const _cfgCom = typeof configCache !== 'undefined' ? configCache : {};
+  const grados = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom)).map(a=>a.grado).filter(Boolean))].sort();
   gradoSel.innerHTML = '<option value="">Todos</option>' + grados.map(g=>`<option value="${g}">${g}</option>`).join('');
   gradoSel.disabled = false;
   gradoSel.style.opacity = '1';
@@ -11722,7 +11741,8 @@ function onComGradoChange() {
     renderComLista();
     return;
   }
-  const secciones = [...new Set((_comAlumnos||[]).filter(a=>a.turno===nivel && a.grado===grado).map(a=>a.seccion).filter(Boolean))].sort();
+  const _cfgCom2 = typeof configCache !== 'undefined' ? configCache : {};
+  const secciones = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom2) && a.grado===grado).map(a=>a.seccion).filter(Boolean))].sort();
   seccSel.innerHTML = '<option value="">Todas</option>' + secciones.map(s=>`<option value="${s}">${s}</option>`).join('');
   seccSel.disabled = false;
   seccSel.style.opacity = '1';
@@ -11736,7 +11756,8 @@ function _comFiltrados() {
   const seccion = document.getElementById('com-seccion').value;
   const q = (document.getElementById('com-search').value||'').trim().toLowerCase();
   let rows = (_comAlumnos||[]);
-  if(nivel) rows = rows.filter(a=>a.turno===nivel);
+  const _cfgCom3 = typeof configCache !== 'undefined' ? configCache : {};
+  if(nivel) rows = rows.filter(a=>_matchNivel(a, nivel, _cfgCom3));
   if(grado) rows = rows.filter(a=>a.grado===grado);
   if(seccion) rows = rows.filter(a=>a.seccion===seccion);
   if(q) rows = rows.filter(a=>{
@@ -16317,7 +16338,7 @@ async function onRepNivelChange() {
     let grados = (cfg.grados||{})[nivel] || [];
     if(isProf) {
       const alumnos = await getAlumnosFiltrados();
-      const allowed = new Set(alumnos.filter(a => a.turno === nivel).map(a => a.grado).filter(Boolean));
+      const allowed = new Set(alumnos.filter(a => _matchNivel(a, nivel, cfg)).map(a => a.grado).filter(Boolean));
       grados = grados.filter(g => allowed.has(g));
       gradoEl.innerHTML = '<option value="">Seleccionar...</option>';
     }
@@ -16900,7 +16921,7 @@ async function renderReportes(anioCompleto=false) {
 
   // Cargar alumnos — profesores restringidos usan scoped (28 lecturas vs 1,300)
   var alumnos = await getAlumnosFiltrados();
-  if(nivel)   alumnos = alumnos.filter(a => a.turno   === nivel);
+  if(nivel)   { const _cfgRep = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfgRep)); }
   if(grado)   alumnos = alumnos.filter(a => a.grado   === grado);
   if(seccion) alumnos = alumnos.filter(a => a.seccion === seccion);
   if(q)       alumnos = alumnos.filter(a =>
@@ -17750,7 +17771,7 @@ async function _repGetAlumnosActuales(prefix = 'rep') {
   const seccion = _norm(document.getElementById(prefix + '-seccion')?.value);
   const q       = (document.getElementById(prefix + '-search')?.value || '').toLowerCase().trim();
   let alumnos = await getAlumnosFiltrados();
-  if(nivel)   alumnos = alumnos.filter(a => a.turno   === nivel);
+  if(nivel)   { const _cfgPre = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfgPre)); }
   if(grado)   alumnos = alumnos.filter(a => a.grado   === grado);
   if(seccion) alumnos = alumnos.filter(a => a.seccion === seccion);
   if(q)       alumnos = alumnos.filter(a =>
@@ -20385,16 +20406,28 @@ async function poblarFiltroNivel(selectId, onchangeFn, options = {}) {
   const cfg = options.cfg || await getConfig();
   const el = document.getElementById(selectId);
   if(!el) return;
-  const niveles = (cfg.niveles||[]).map(n => n.nombre);
-  let nivelesVisibles = niveles;
   const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
-  if(isProf) {
-    const alumnos = Array.isArray(options.alumnos) ? options.alumnos : await getAlumnosFiltrados();
-    const turnos = new Set(alumnos.map(a => a.turno).filter(Boolean));
-    nivelesVisibles = niveles.filter(n => turnos.has(n));
+  // Base: niveles desde config si es EBR; desde alumnos reales si es CEBA/EBA
+  let nivelesBase = [];
+  const alumnosBase = Array.isArray(options.alumnos) ? options.alumnos : null;
+  if (isProf) {
+    const alumnos = alumnosBase || await getAlumnosFiltrados();
+    nivelesBase = _nivelesDesdeAlumnos(alumnos, cfg);
+  } else {
+    if (alumnosBase && alumnosBase.length) {
+      nivelesBase = _nivelesDesdeAlumnos(alumnosBase, cfg);
+    } else {
+      try {
+        const alumnos = await DB.getAlumnos();
+        nivelesBase = _nivelesDesdeAlumnos(alumnos, cfg);
+      } catch(e) {}
+    }
+    if (!nivelesBase.length) {
+      nivelesBase = ((cfg||{}).niveles||[]).map(n => (typeof n === 'string' ? n : n.nombre)).filter(Boolean);
+    }
   }
   el.innerHTML = `<option value="" disabled selected>-- Nivel --</option>${isProf ? '' : '<option value="TODOS">Todos</option>'}`;
-  nivelesVisibles.forEach(n => { el.innerHTML += `<option value="${n}">${n}</option>`; });
+  nivelesBase.forEach(n => { el.innerHTML += `<option value="${n}">${n}</option>`; });
   try {
     const opts = new Set(Array.from(el.options).map(o => o.value));
     if(el.value && !opts.has(el.value)) el.value = '';
@@ -20468,7 +20501,7 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
 
   const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
   const alumnos = Array.isArray(options.alumnos) ? options.alumnos : (isProf ? await getAlumnosFiltrados() : await DB.getAlumnos());
-  const alumnosFiltrados = alumnos.filter(a => !nivel || nivel === 'TODOS' || a.turno === nivel);
+  const alumnosFiltrados = _filtrarPorNivel(alumnos, nivel, cfg);
   const gradosConAlumnos = new Set(alumnosFiltrados.map(a => a.grado).filter(Boolean));
 
   // Intentar obtener grados ordenados desde config; si no hay, usar los de alumnos directamente
@@ -20476,10 +20509,16 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
     ? (cfg.grados||{})[nivel] || []
     : [...new Set(Object.values(cfg.grados||{}).flat())];
 
-  // Si config no tiene grados configurados para este nivel, caer al set de alumnos
-  let grados = gradosCfg.length > 0
-    ? gradosCfg.filter(g => gradosConAlumnos.has(g))
-    : [...gradosConAlumnos].sort();
+  // Si config no tiene grados para este nivel, caer al set de alumnos
+  // (siempre: si los grados de config no coinciden con alumnos, usar los del set)
+  const desdeCfg = gradosCfg.filter(g => gradosConAlumnos.has(g));
+  const grados = desdeCfg.length > 0
+    ? desdeCfg
+    : [...gradosConAlumnos].sort((a,b) => {
+        const na = Number(a), nb = Number(b);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return String(a).localeCompare(String(b));
+      });
 
   el.innerHTML = `<option value="" disabled selected>-- Grado --</option>${isProf ? '' : '<option value="TODOS">Todos</option>'}`;
   grados.forEach(g => { el.innerHTML += `<option value="${g}">${g}</option>`; });
@@ -20545,16 +20584,28 @@ async function onGradoChangeAlumnos() {
   if(grado && grado !== 'TODOS') {
     // Auto-detectar nivel
     const cfg = await getConfig();
+    let nivelAuto = '';
     for(const [niv, lista] of Object.entries(cfg.grados || {})) {
-      if(lista.includes(grado)) { document.getElementById('fa-nivel').value = niv; break; }
+      if(Array.isArray(lista) && lista.includes(grado)) { nivelAuto = niv; break; }
     }
+    if(!nivelAuto) {
+      // Fallback CEBA/EBA: buscar ciclo real en alumnos que tienen este grado
+      try {
+        const todos = await DB.getAlumnos();
+        const campo = _nivelFieldName(cfg);
+        const match = todos.find(a => String(a.grado||'').trim() === String(grado).trim() && String(a[campo]||'').trim());
+        if(match) nivelAuto = String(match[campo]||'').trim();
+      } catch(_) {}
+    }
+    if(nivelAuto) document.getElementById('fa-nivel').value = nivelAuto;
     await poblarFiltroSeccion('fa-seccion', grado);
     _enableSelect('fa-seccion');
   } else {
     const nivel = document.getElementById('fa-nivel').value;
     const alumnos = await DB.getAlumnos();
+    const cfg = typeof configCache !== 'undefined' ? configCache : await getConfig();
     const secs = [...new Set(alumnos
-      .filter(a => !nivel || nivel === 'TODOS' || a.turno === nivel)
+      .filter(a => !nivel || nivel === 'TODOS' || _matchNivel(a, nivel, cfg))
       .map(a => a.seccion)
     )].sort();
     const el = document.getElementById('fa-seccion');
@@ -20683,6 +20734,45 @@ function _cfgVal(cfg, k1, k2, fallback) {
   return fallback;
 }
 
+// ============================================================
+// Helpers dinámicos NIVEL según modalidad educativa (CEBA/EBA vs EBR)
+//   EBR  → "Nivel" = Inicial/Primaria/Secundaria  → campo `turno`
+//   CEBA/EBA → "Nivel" = INICIAL/INTERMEDIO/AVANZADO → campo `ciclo`
+// ============================================================
+function _cfgModalidad(cfg) {
+  return String(_cfgVal(cfg, 'modalidadEducativa', 'modalidad_educativa', '') || '').trim().toUpperCase();
+}
+function _nivelFieldName(cfg) {
+  const m = _cfgModalidad(cfg);
+  return (m === 'CEBA' || m === 'EBA') ? 'ciclo' : 'turno';
+}
+function _matchNivel(obj, nivelSel, cfg) {
+  if (!nivelSel || nivelSel === 'TODOS') return true;
+  const f = _nivelFieldName(cfg);
+  return String(obj && obj[f] || '').trim() === String(nivelSel).trim();
+}
+function _nivelesDesdeAlumnos(alumnosArr, cfg) {
+  const alumnos = Array.isArray(alumnosArr) ? alumnosArr : [];
+  const f = _nivelFieldName(cfg);
+  const set = new Set(alumnos.map(a => String(a[f] || '').trim()).filter(Boolean));
+  const ordenCEBA = ['INICIAL','INTERMEDIO','AVANZADO'];
+  if (ordenCEBA.some(c => set.has(c))) {
+    return ordenCEBA.filter(c => set.has(c)).concat([...set].filter(v => !ordenCEBA.includes(v))));
+  }
+  const cfgNiveles = ((cfg||{}).niveles||[]);
+  const ordenCfg = cfgNiveles.map(n => (typeof n === 'string' ? n : n.nombre)).filter(Boolean);
+  if (ordenCfg.length) {
+    return ordenCfg.filter(v => set.has(v)).concat([...set].filter(v => !ordenCfg.includes(v)));
+  }
+  return [...set].sort();
+}
+function _filtrarPorNivel(arr, nivelSel, cfg) {
+  if (!Array.isArray(arr)) return [];
+  if (!nivelSel || nivelSel === 'TODOS') return arr.slice();
+  const f = _nivelFieldName(cfg);
+  const nS = String(nivelSel).trim();
+  return arr.filter(o => String(o && o[f] || '').trim() === nS);
+}
 async function getConfig() {
   if(configCache) return configCache;
   // Intentar desde localStorage
