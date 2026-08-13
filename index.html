@@ -19,6 +19,15 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="compat.js?v=124"></script>
 <script src="db_supabase.js?v=124"></script>
+<script>
+(function(){
+  var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
+  for (var i=0;i<stubs.length;i++) {
+    var k = stubs[i];
+    if (typeof window[k] !== 'function') window[k] = function(){ return function(){}; }();
+  }
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <style>
@@ -5375,10 +5384,16 @@ function getLogo() {
 // ============================================================
 // ORDENAMIENTO ESTÁNDAR: nivel → grado (numérico) → sección → apellido
 // ============================================================
-const _NIVEL_ORDEN = { 'Inicial': 0, 'Primaria': 1, 'Secundaria': 2 };
+const _NIVEL_ORDEN_EBR = { 'Inicial': 0, 'Primaria': 1, 'Secundaria': 2 };
+const _NIVEL_ORDEN_CEBA = { 'INICIAL': 0, 'INTERMEDIO': 1, 'AVANZADO': 2, 'CICLO INICIAL': 0, 'CICLO INTERMEDIO': 1, 'CICLO AVANZADO': 2 };
 
 function _nivelIdx(turno) {
-  return _NIVEL_ORDEN[turno] !== undefined ? _NIVEL_ORDEN[turno] : 99;
+  const k = String(turno || '').trim();
+  if(_NIVEL_ORDEN_CEBA[k] !== undefined) return _NIVEL_ORDEN_CEBA[k];
+  if(_NIVEL_ORDEN_EBR[k] !== undefined) return _NIVEL_ORDEN_EBR[k];
+  const ku = k.toUpperCase();
+  if(_NIVEL_ORDEN_CEBA[ku] !== undefined) return _NIVEL_ORDEN_CEBA[ku];
+  return 99;
 }
 
 // Extrae el primer número de un string: "3 años"→3, "10mo"→10, "1er"→1
@@ -5387,9 +5402,19 @@ function _gradoNum(g) {
   return m ? parseInt(m[0], 10) : 999;
 }
 
+function _campoNivelAlumno(a, cfg) {
+  try {
+    if (cfg && typeof _nivelFieldName === 'function') return _nivelFieldName(cfg, (typeof window !== 'undefined' ? window.alumnosCache : null) || null);
+  } catch(_) {}
+  if (a && (a.ciclo || a.ciclo === '')) return 'ciclo';
+  return 'turno';
+}
+
 // Comparador principal: nivel → grado numérico → sección → nombre/apellido
 function _cmpFilaReporte(a, b) {
-  const nd = _nivelIdx(a.turno) - _nivelIdx(b.turno);
+  const ca = a ? (_campoNivelAlumno(a, null)) : 'turno';
+  const cb = b ? (_campoNivelAlumno(b, null)) : 'turno';
+  const nd = _nivelIdx(a[ca]) - _nivelIdx(b[cb]);
   if(nd !== 0) return nd;
   const gd = _gradoNum(a.grado) - _gradoNum(b.grado);
   if(gd !== 0) return gd;
@@ -5399,7 +5424,9 @@ function _cmpFilaReporte(a, b) {
 }
 
 function _cmpAlumnoReporte(a, b) {
-  const nd = _nivelIdx(a.turno) - _nivelIdx(b.turno);
+  const ca = a ? (_campoNivelAlumno(a, null)) : 'turno';
+  const cb = b ? (_campoNivelAlumno(b, null)) : 'turno';
+  const nd = _nivelIdx(a[ca]) - _nivelIdx(b[cb]);
   if(nd !== 0) return nd;
   const gd = _gradoNum(a.grado) - _gradoNum(b.grado);
   if(gd !== 0) return gd;
@@ -5418,6 +5445,65 @@ function _cfgVal(cfg, k1, k2, fallback) {
     if(k2 && Object.prototype.hasOwnProperty.call(cfg, k2)) return cfg[k2];
   }
   return fallback;
+}
+
+function _nivelesPorModalidad(m) {
+  let modal;
+  try {
+    modal = String((typeof m === 'object' && typeof _cfgModalidadConInferencia === 'function' ? _cfgModalidadConInferencia(m, (typeof window !== 'undefined' ? window.alumnosCache : null) || null) : (String(m || '').toUpperCase()))).toUpperCase();
+  } catch(_e) {
+    modal = String(m || '').toUpperCase();
+  }
+  const esEBR = modal === 'EBR';
+  if (esEBR) {
+    return ['Inicial', 'Primaria', 'Secundaria'];
+  }
+  return ['INICIAL', 'INTERMEDIO', 'AVANZADO'];
+}
+
+function _gradosPorModalidad(m) {
+  let modal;
+  try {
+    modal = String((typeof m === 'object' && typeof _cfgModalidadConInferencia === 'function' ? _cfgModalidadConInferencia(m, (typeof window !== 'undefined' ? window.alumnosCache : null) || null) : (String(m || '').toUpperCase()))).toUpperCase();
+  } catch(_e) {
+    modal = String(m || '').toUpperCase();
+  }
+  const esEBR = modal === 'EBR';
+  if (esEBR) {
+    return {
+      'Inicial':    ['3 años','4 años','5 años'],
+      'Primaria':   ['1er','2do','3er','4to','5to','6to'],
+      'Secundaria': ['7mo','8vo','9no','10mo','11mo'],
+    };
+  }
+  return {
+    'INICIAL':     ['1','2','3','4'],
+    'INTERMEDIO':  ['1','2','3','4','5','6'],
+    'AVANZADO':    ['1','2','3','4','5','6'],
+  };
+}
+
+function _horariosPorModalidad(m) {
+  let modal;
+  try {
+    modal = String((typeof m === 'object' && typeof _cfgModalidadConInferencia === 'function' ? _cfgModalidadConInferencia(m, (typeof window !== 'undefined' ? window.alumnosCache : null) || null) : (String(m || '').toUpperCase()))).toUpperCase();
+  } catch(_e) {
+    modal = String(m || '').toUpperCase();
+  }
+  const esEBR = modal === 'EBR';
+  const horasDefault = { apertura: '07:00', limite: '08:00', corte: '10:30', salida: '13:00' };
+  if (esEBR) {
+    return [
+      { nombre: 'Inicial',    horaApertura: horasDefault.apertura, horaLimite: horasDefault.limite, horaCorte: horasDefault.corte, horaSalida: horasDefault.salida },
+      { nombre: 'Primaria',   horaApertura: horasDefault.apertura, horaLimite: horasDefault.limite, horaCorte: horasDefault.corte, horaSalida: horasDefault.salida },
+      { nombre: 'Secundaria', horaApertura: '06:30', horaLimite: '07:45', horaCorte: '10:00', horaSalida: horasDefault.salida },
+    ];
+  }
+  return [
+    { nombre: 'INICIAL',    horaApertura: horasDefault.apertura, horaLimite: horasDefault.limite, horaCorte: horasDefault.corte, horaSalida: horasDefault.salida },
+    { nombre: 'INTERMEDIO', horaApertura: horasDefault.apertura, horaLimite: horasDefault.limite, horaCorte: horasDefault.corte, horaSalida: horasDefault.salida },
+    { nombre: 'AVANZADO',    horaApertura: horasDefault.apertura, horaLimite: horasDefault.limite, horaCorte: horasDefault.corte, horaSalida: horasDefault.salida },
+  ];
 }
 
 // Aplica nombre, eslogan, logo y año del colegio en toda la app (fuente: config/general)
@@ -5479,7 +5565,14 @@ function _aplicarConfigColegio(cfg) {
   if (yearTag) yearTag.textContent = 'Año Escolar ' + (anio || '');
 
   const modalidadRaw = String(_cfgVal(cfg, 'modalidadEducativa', 'modalidad_educativa', '') || '').trim().toUpperCase();
-  const modalidad = ['CEBA','EBR','EBA'].includes(modalidadRaw) ? modalidadRaw : '';
+  const modalidadExpl = ['CEBA','EBR','EBA'].includes(modalidadRaw) ? modalidadRaw : '';
+  let modalidad = modalidadExpl;
+  if (!modalidad) {
+    try {
+      const alumnosArr = (typeof window.alumnosCache !== 'undefined') ? (window.alumnosCache || []) : [];
+      modalidad = _cfgModalidadConInferencia(cfg, alumnosArr);
+    } catch(_e) { modalidad = ''; }
+  }
   window.COLEGIO_MODALIDAD = modalidad;
   const cfgModSel = document.getElementById('cfg-colegio-modalidad');
   if (cfgModSel) cfgModSel.value = modalidad;
@@ -6254,7 +6347,7 @@ async function guardarMisDatos() {
     document.getElementById('avatar-initials-menu').textContent = iniciales;
     document.getElementById('menu-user-name').textContent = nombre;
     document.getElementById('user-name-display').textContent = nombre;
-    setTimeout(() => msbUpdateUser && msbUpdateUser(), 100);
+    setTimeout(() => { if(typeof msbUpdateUser === 'function') msbUpdateUser(); }, 100);
     okEl.textContent = 'Datos actualizados correctamente'; okEl.style.display = 'block';
     setTimeout(() => { document.getElementById('modal-mis-datos').style.display = 'none'; }, 1500);
   } catch(e) {
@@ -6490,7 +6583,7 @@ auth.onAuthStateChanged(async user => {
     document.getElementById('menu-user-name').textContent = nombre;
     document.getElementById('menu-user-rol').textContent = _rolLabel(currentRol);
     document.getElementById('avatar-btn').style.display = 'inline-flex';
-    setTimeout(() => msbUpdateUser && msbUpdateUser(), 200);
+    setTimeout(() => { if(typeof msbUpdateUser === 'function') msbUpdateUser(); }, 200);
 
     // Aplicar permisos y restaurar la última sección ANTES de cargar datos pesados,
     // para evitar que se vea "Inicio" por unos segundos al refrescar.
@@ -6589,7 +6682,7 @@ auth.onAuthStateChanged(async user => {
 });
 
 function aplicarPermisos(rol) {
-  setTimeout(renderBottomNav, 100);
+  setTimeout(() => { if(typeof renderBottomNav === 'function') renderBottomNav(); }, 100);
   currentRol = _normRol(rol);
 
   const ids = {
@@ -6983,7 +7076,20 @@ async function cargarDashboardInicio() {
         DB.getRegistros({fecha:_hoy}),
         getConfig()
       ]);
-      const niveles = (cfg.niveles||[]).map(n=>n.nombre).filter(Boolean);
+      try { if (typeof window !== 'undefined') window.alumnosCache = alumnos; } catch(_) {}
+      const cfgNivelesRaw = (cfg.niveles||[]).map(n=> (typeof n === 'string' ? n : (n && n.nombre ? n.nombre : '')) ).filter(Boolean);
+      const alumnosNiveles = _nivelesDesdeAlumnos(alumnos, cfg);
+      const nombresEsperados = _nivelesPorModalidad(cfg);
+      let niveles = [];
+      const seen = new Set();
+      const push = v => { if(!v || seen.has(v)) return; seen.add(v); niveles.push(v); };
+      nombresEsperados.forEach(push);
+      cfgNivelesRaw.forEach(push);
+      alumnosNiveles.forEach(push);
+      if (!niveles.length) niveles = cfgNivelesRaw.length ? cfgNivelesRaw : (alumnosNiveles.length ? alumnosNiveles : nombresEsperados);
+      const modalidad = _cfgModalidadConInferencia(cfg, alumnos);
+      const usaCiclo = (modalidad === 'CEBA' || modalidad === 'EBA');
+      const campoNivel = usaCiclo ? 'ciclo' : 'turno';
       const alumnosPorNivel = new Map();
       const presentesPorNivel = new Map();
       const tardanzasPorNivel = new Map();
@@ -6991,7 +7097,8 @@ async function cargarDashboardInicio() {
       const ingresos = [];
 
       alumnos.forEach(a => {
-        const niv = a.turno || '';
+        const niv = String((a||{})[campoNivel] || a.turno || '').trim();
+        if (!niv) return;
         alumnosPorNivel.set(niv, (alumnosPorNivel.get(niv) || 0) + 1);
       });
 
@@ -6999,10 +7106,10 @@ async function cargarDashboardInicio() {
         if(r.tipo !== 'INGRESO') return;
         ingresos.push(r);
         const alumnoId = r.alumnoId;
-        const niv = r.turno || '';
+        const niv = String(r && (usaCiclo ? (r.ciclo || '') : '') || r.turno || '').trim();
         if(!presentesSet.has(alumnoId)) {
           presentesSet.add(alumnoId);
-          presentesPorNivel.set(niv, (presentesPorNivel.get(niv) || 0) + 1);
+          if(niv) presentesPorNivel.set(niv, (presentesPorNivel.get(niv) || 0) + 1);
         }
         if(String(r.estado || '').includes('Tardanza')) {
           const key = niv + '|' + alumnoId;
@@ -7014,7 +7121,7 @@ async function cargarDashboardInicio() {
       const presentes = presentesSet.size;
       const ausentes = Math.max(0, total - presentes);
       const pct = total ? Math.round(presentes/total*100) : 0;
-      const aulas = new Set(alumnos.map(a => (a.turno || '') + '|' + (a.grado || '') + '|' + (a.seccion || '')));
+      const aulas = new Set(alumnos.map(a => (String((a||{})[campoNivel] || a.turno || '').trim()) + '|' + (a.grado || '') + '|' + (a.seccion || '')));
 
       const nivelesHtml = !niveles.length
         ? '<div style="color:var(--muted);font-size:0.82rem;text-align:center;padding:10px 0;">Sin niveles configurados</div>'
@@ -8187,12 +8294,24 @@ let _searchAlumnosTimer = null;
 let _alumnosRenderPrep = { source: null, sorted: [], searchTextById: new Map() };
 
 function _compareAlumnoOrden(a, b) {
-  const ordenNivel = { 'Inicial':1,'Primaria':2,'Secundaria':3 };
-  const ordenGrado = { '3 años':1,'4 años':2,'5 años':3,'1er':4,'2do':5,'3er':6,'4to':7,'5to':8,'6to':9,'7mo':10,'8vo':11,'9no':12,'10mo':13,'11mo':14 };
-  const nA = ordenNivel[a.turno]||99, nB = ordenNivel[b.turno]||99;
-  const gA = ordenGrado[a.grado]||99, gB = ordenGrado[b.grado]||99;
+  const modalidad = typeof configCache !== 'undefined'
+    ? _cfgModalidadConInferencia(configCache, [a, b])
+    : _inferirModalidad({}, [a, b]);
+  const usaCiclo = (modalidad === 'CEBA' || modalidad === 'EBA');
+  const campoNivel = usaCiclo ? 'ciclo' : 'turno';
+  const ordenNivelEBR = { 'Inicial':1,'Primaria':2,'Secundaria':3 };
+  const ordenNivelCEBA = { 'INICIAL':1, 'INTERMEDIO':2, 'AVANZADO':3 };
+  const ordenNivel = usaCiclo ? ordenNivelCEBA : ordenNivelEBR;
+  const ordenGradoEBR = { '3 años':1,'4 años':2,'5 años':3,'1er':4,'2do':5,'3er':6,'4to':7,'5to':8,'6to':9,'7mo':10,'8vo':11,'9no':12,'10mo':13,'11mo':14 };
+  const ordenGradoCEBA = { '1':1,'2':2,'3':3,'4':4,'5':5,'6':6 };
+  const ordenGrado = usaCiclo ? ordenGradoCEBA : ordenGradoEBR;
+  const valA = String((a||{})[campoNivel]||'').trim();
+  const valB = String((b||{})[campoNivel]||'').trim();
+  const nA = ordenNivel[valA]||99, nB = ordenNivel[valB]||99;
+  const gA = ordenGrado[String((a||{}).grado||'')]||Number((a||{}).grado)||99;
+  const gB = ordenGrado[String((b||{}).grado||'')]||Number((b||{}).grado)||99;
   if(nA !== nB) return nA - nB;
-  if(gA !== gB) return gA - gB;
+  if(gA !== gB) return (typeof gA === 'number' && typeof gB === 'number') ? gA - gB : String(gA).localeCompare(String(gB));
   const sComp = (a.seccion||'').localeCompare(b.seccion||'');
   if(sComp !== 0) return sComp;
   const apComp = (a.apellidos||'').localeCompare(b.apellidos||'');
@@ -8239,7 +8358,7 @@ async function renderAlumnos() {
     let alumnos = prep.sorted;
     if(grado   && grado   !== 'TODOS') alumnos = alumnos.filter(a => a.grado === grado);
     if(seccion && seccion !== 'TODOS') alumnos = alumnos.filter(a => a.seccion === seccion);
-    if(nivel   && nivel   !== 'TODOS') alumnos = alumnos.filter(a => a.turno === nivel);
+    if(nivel   && nivel   !== 'TODOS') { const _cfg = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfg)); }
     if(q) {
       const qClean = q.trim();
       alumnos = alumnos.filter(a => (prep.searchTextById.get(a.id) || '').includes(qClean));
@@ -8264,13 +8383,22 @@ async function renderAlumnos() {
   } catch(e) { console.error('renderAlumnos:', e); toast('Error al cargar alumnos','error'); }
 }
 
+function _alumnoNivelText(a, cfg) {
+  const campo = _nivelFieldName(cfg || configCache || {}, [a]);
+  const valor = String((a||{})[campo] || '').trim();
+  if(valor) return valor;
+  const fallbackCEBA = String((a||{}).ciclo || '').trim();
+  if(fallbackCEBA) return fallbackCEBA;
+  return String((a||{}).turno || '').trim();
+}
+
 function _filaAlumno(a) {
   return `<tr>
     <td class="td-id">${a.id}</td>
     <td class="td-name">${a.nombres} ${a.apellidos}</td>
     <td>${a.grado}</td>
     <td>${a.seccion}</td>
-    <td>${a.turno}</td>
+    <td>${_alumnoNivelText(a)}</td>
     <td style="display:flex;gap:6px;flex-wrap:wrap;">
       <button class="btn btn-ghost btn-accion-alumno" style="padding:5px 10px;font-size:0.78rem;" onclick="showQR('${a.id}')">QR</button>
       <button class="btn btn-ghost btn-accion-alumno" style="padding:5px 10px;font-size:0.78rem;" onclick="openModalAlumno('${a.id}')">✏</button>
@@ -8627,19 +8755,27 @@ async function onGradoChangeRegistro() {
   if(grado && grado !== 'TODOS') {
     // Auto-detectar nivel del grado
     const cfg = await getConfig();
+    let nivelAuto = '';
     for(const [niv, lista] of Object.entries(cfg.grados || {})) {
-      if(lista.includes(grado)) {
-        document.getElementById('filter-nivel').value = niv;
-        break;
-      }
+      if(Array.isArray(lista) && lista.includes(grado)) { nivelAuto = niv; break; }
     }
+    if(!nivelAuto) {
+      try {
+        const todos = await DB.getAlumnos();
+        const campo = _nivelFieldName(cfg);
+        const match = todos.find(a => String(a.grado||'').trim() === String(grado).trim() && String(a[campo]||'').trim());
+        if(match) nivelAuto = String(match[campo]||'').trim();
+      } catch(_) {}
+    }
+    if(nivelAuto) document.getElementById('filter-nivel').value = nivelAuto;
     await poblarFiltroSeccion('filter-seccion', grado);
   } else {
     // Grado vacío o TODOS → repoblar sección sin filtro de grado
     const nivel = document.getElementById('filter-nivel').value;
     const alumnos = await DB.getAlumnos();
+    const _cfgRF = typeof configCache !== 'undefined' ? configCache : {};
     const secs = [...new Set(alumnos
-      .filter(a => !nivel || nivel === 'TODOS' || a.turno === nivel)
+      .filter(a => !nivel || nivel === 'TODOS' || _matchNivel(a, nivel, _cfgRF))
       .map(a => a.seccion)
     )].sort();
     const el = document.getElementById('filter-seccion');
@@ -8771,7 +8907,7 @@ async function renderRegistro() {
       if(hasta && r.fecha > hasta) return false;
       return true;
     });
-    if(nivel   && nivel   !== 'TODOS') regs = regs.filter(r => r.turno === nivel);
+    if(nivel   && nivel   !== 'TODOS') { const _cfgR1 = typeof configCache !== 'undefined' ? configCache : {}; regs = regs.filter(r => _matchNivel(r, nivel, _cfgR1)); }
     if(grado   && grado   !== 'TODOS') regs = regs.filter(r => r.grado === grado);
     if(seccion && seccion !== 'TODOS') regs = regs.filter(r => r.seccion === seccion);
     if(q) regs = regs.filter(r => r.nombre.toLowerCase().includes(q.trim()) || r.alumnoId.trim().toLowerCase().includes(q.trim()));
@@ -9013,7 +9149,7 @@ async function getRegistrosFiltrados() {
       return true;
     });
   }
-  if(nivel   && nivel   !== 'TODOS') regs = regs.filter(r => r.turno === nivel);
+  if(nivel   && nivel   !== 'TODOS') { const _cfgR2 = typeof configCache !== 'undefined' ? configCache : {}; regs = regs.filter(r => _matchNivel(r, nivel, _cfgR2)); }
   if(grado   && grado   !== 'TODOS') regs = regs.filter(r => r.grado === grado);
   if(seccion && seccion !== 'TODOS') regs = regs.filter(r => r.seccion === seccion);
   if(q) regs = regs.filter(r => (r.nombre||'').toLowerCase().includes(q) || (r.alumnoId||'').includes(q));
@@ -9566,7 +9702,7 @@ async function exportPDFAlumnos() {
   const q       = (document.getElementById('search-alumnos').value||'').toLowerCase();
 
   let alumnos = await DB.getAlumnos();
-  if(nivel   && nivel   !== 'TODOS') alumnos = alumnos.filter(a => a.turno === nivel);
+  if(nivel   && nivel   !== 'TODOS') { const _cfgE1 = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfgE1)); }
   if(grado   && grado   !== 'TODOS') alumnos = alumnos.filter(a => a.grado === grado);
   if(seccion && seccion !== 'TODOS') alumnos = alumnos.filter(a => a.seccion === seccion);
   if(q) alumnos = alumnos.filter(a =>
@@ -9692,7 +9828,7 @@ async function exportExcelAlumnos() {
   const q       = (document.getElementById('search-alumnos').value||'').toLowerCase();
 
   let alumnos = await DB.getAlumnos();
-  if(nivel   && nivel   !== 'TODOS') alumnos = alumnos.filter(a => a.turno === nivel);
+  if(nivel   && nivel   !== 'TODOS') { const _cfgE1 = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfgE1)); }
   if(grado   && grado   !== 'TODOS') alumnos = alumnos.filter(a => a.grado === grado);
   if(seccion && seccion !== 'TODOS') alumnos = alumnos.filter(a => a.seccion === seccion);
   if(q) alumnos = alumnos.filter(a =>
@@ -11624,12 +11760,47 @@ async function initComunicado() {
   }
   if(!_comInit) {
     const cfg = await getConfig();
-    const nivelSel = document.getElementById('com-nivel');
-    const nivelesCfg = (cfg.niveles||[]).map(n=>n.nombre).filter(Boolean);
-    const nivelesDatos = [...new Set((_comAlumnos||[]).map(a=>a.turno).filter(Boolean))];
-    const niveles = nivelesCfg.length ? nivelesCfg : nivelesDatos;
-    nivelSel.innerHTML = '<option value="">Todos</option>' + niveles.map(n=>`<option value="${n}">${n}</option>`).join('');
-    document.getElementById('com-enviar-a').value = 'tel1';
+    if (typeof window !== 'undefined') {
+      if (!window.alumnosCache || !window.alumnosCache.length) {
+        try { window.alumnosCache = _comAlumnos || []; } catch(_) {}
+      }
+    }
+    await poblarFiltroNivel('com-nivel', null, { cfg, alumnos: _comAlumnos || [] });
+    let nivelSel = document.getElementById('com-nivel');
+    if (nivelSel && nivelSel.options && nivelSel.options.length) {
+      const oldVal = nivelSel.value;
+      const arrOpts = Array.from(nivelSel.options).map(o => ({ v: o.value, t: o.textContent }));
+      const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Nivel --' || o.t === '-- Nivel --'));
+      nivelSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+      if (oldVal) {
+        const vals = new Set(Array.from(nivelSel.options).map(o => o.value));
+        if (vals.has(oldVal)) nivelSel.value = oldVal;
+      }
+    }
+    await poblarFiltroGrado('com-grado', null, { cfg, alumnos: _comAlumnos || [] });
+    let gSel = document.getElementById('com-grado');
+    if (gSel) {
+      if (gSel.options && gSel.options.length) {
+        const arrOpts = Array.from(gSel.options).map(o => ({ v: o.value, t: o.textContent }));
+        const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Grado --' || o.t === '-- Grado --'));
+        gSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+      }
+      gSel.disabled = true;
+      gSel.style.opacity = '0.45';
+    }
+    await poblarFiltroSeccion('com-seccion', null, { cfg, alumnos: _comAlumnos || [] });
+    let sSel = document.getElementById('com-seccion');
+    if (sSel) {
+      if (sSel.options && sSel.options.length) {
+        const arrOpts = Array.from(sSel.options).map(o => ({ v: o.value, t: o.textContent }));
+        const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Sección --' || o.t === '-- Sección --'));
+        sSel.innerHTML = '<option value="">Todas</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+      }
+      sSel.disabled = true;
+      sSel.style.opacity = '0.45';
+    }
+    const sendAEl = document.getElementById('com-enviar-a');
+    if (sendAEl) sendAEl.value = 'tel1';
     onComEnviarAChange();
     _comInit = true;
   }
@@ -11701,7 +11872,8 @@ function onComNivelChange() {
     renderComLista();
     return;
   }
-  const grados = [...new Set((_comAlumnos||[]).filter(a=>a.turno===nivel).map(a=>a.grado).filter(Boolean))].sort();
+  const _cfgCom = typeof configCache !== 'undefined' ? configCache : {};
+  const grados = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom)).map(a=>a.grado).filter(Boolean))].sort();
   gradoSel.innerHTML = '<option value="">Todos</option>' + grados.map(g=>`<option value="${g}">${g}</option>`).join('');
   gradoSel.disabled = false;
   gradoSel.style.opacity = '1';
@@ -11722,7 +11894,8 @@ function onComGradoChange() {
     renderComLista();
     return;
   }
-  const secciones = [...new Set((_comAlumnos||[]).filter(a=>a.turno===nivel && a.grado===grado).map(a=>a.seccion).filter(Boolean))].sort();
+  const _cfgCom2 = typeof configCache !== 'undefined' ? configCache : {};
+  const secciones = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom2) && a.grado===grado).map(a=>a.seccion).filter(Boolean))].sort();
   seccSel.innerHTML = '<option value="">Todas</option>' + secciones.map(s=>`<option value="${s}">${s}</option>`).join('');
   seccSel.disabled = false;
   seccSel.style.opacity = '1';
@@ -11736,7 +11909,8 @@ function _comFiltrados() {
   const seccion = document.getElementById('com-seccion').value;
   const q = (document.getElementById('com-search').value||'').trim().toLowerCase();
   let rows = (_comAlumnos||[]);
-  if(nivel) rows = rows.filter(a=>a.turno===nivel);
+  const _cfgCom3 = typeof configCache !== 'undefined' ? configCache : {};
+  if(nivel) rows = rows.filter(a=>_matchNivel(a, nivel, _cfgCom3));
   if(grado) rows = rows.filter(a=>a.grado===grado);
   if(seccion) rows = rows.filter(a=>a.seccion===seccion);
   if(q) rows = rows.filter(a=>{
@@ -16317,7 +16491,7 @@ async function onRepNivelChange() {
     let grados = (cfg.grados||{})[nivel] || [];
     if(isProf) {
       const alumnos = await getAlumnosFiltrados();
-      const allowed = new Set(alumnos.filter(a => a.turno === nivel).map(a => a.grado).filter(Boolean));
+      const allowed = new Set(alumnos.filter(a => _matchNivel(a, nivel, cfg)).map(a => a.grado).filter(Boolean));
       grados = grados.filter(g => allowed.has(g));
       gradoEl.innerHTML = '<option value="">Seleccionar...</option>';
     }
@@ -16428,20 +16602,44 @@ function repExportCostAudit() {
 
 async function iniciarFiltrosReportes() {
   const cfg = await getConfig();
-  const nivEl = document.getElementById('rep-nivel');
+  let nivEl = document.getElementById('rep-nivel');
   if(!nivEl) return;
   const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
-  if(isProf) {
-    const alumnos = await getAlumnosFiltrados();
-    const turnos = new Set(alumnos.map(a => a.turno).filter(Boolean));
-    nivEl.innerHTML = '<option value="">Seleccionar...</option>';
-    (cfg.niveles||[]).map(n => n.nombre).filter(n => turnos.has(n)).forEach(n => {
-      nivEl.innerHTML += `<option value="${n}">${n}</option>`;
-    });
-  } else {
-    nivEl.innerHTML = '<option value="">Todos</option>';
-    (cfg.niveles||[]).forEach(n => { nivEl.innerHTML += `<option value="${n.nombre}">${n.nombre}</option>`; });
+  let alumnosArr = null;
+  try { alumnosArr = (typeof window !== 'undefined') ? (window.alumnosCache || []) : []; } catch(_) { alumnosArr = []; }
+  if (!alumnosArr || !alumnosArr.length) {
+    try {
+      alumnosArr = await (isProf ? getAlumnosFiltrados() : DB.getAlumnos());
+      if (Array.isArray(alumnosArr) && alumnosArr.length && typeof window !== 'undefined') {
+        window.alumnosCache = alumnosArr;
+      }
+    } catch(_e) { alumnosArr = []; }
   }
+  await poblarFiltroNivel('rep-nivel', null, { cfg, alumnos: alumnosArr });
+  nivEl = document.getElementById('rep-nivel');
+  if (nivEl && nivEl.options && nivEl.options.length) {
+    const first = nivEl.options[0];
+    if (first && first.value === '') {
+      if (isProf) first.textContent = 'Seleccionar...';
+      else first.textContent = 'Todos';
+    }
+  }
+  await poblarFiltroGrado('rep-grado', null, { cfg, alumnos: alumnosArr });
+  const gEl = document.getElementById('rep-grado');
+  if (gEl && gEl.options && gEl.options.length) {
+    const first = gEl.options[0];
+    if (first && first.value === '') first.textContent = 'Todos';
+  }
+  await poblarFiltroSeccion('rep-seccion', null, { cfg, alumnos: alumnosArr });
+  const sEl = document.getElementById('rep-seccion');
+  if (sEl && sEl.options && sEl.options.length) {
+    const first = sEl.options[0];
+    if (first && first.value === '') first.textContent = 'Todas';
+  }
+  const gradoEl = document.getElementById('rep-grado');
+  const secEl   = document.getElementById('rep-seccion');
+  if (gradoEl) { gradoEl.disabled = true; gradoEl.style.opacity = '0.45'; }
+  if (secEl)   { secEl.disabled = true; secEl.style.opacity = '0.45'; }
   await _autoSelectTutoria('rep-nivel', 'rep-grado', 'rep-seccion');
 }
 
@@ -16900,7 +17098,7 @@ async function renderReportes(anioCompleto=false) {
 
   // Cargar alumnos — profesores restringidos usan scoped (28 lecturas vs 1,300)
   var alumnos = await getAlumnosFiltrados();
-  if(nivel)   alumnos = alumnos.filter(a => a.turno   === nivel);
+  if(nivel)   { const _cfgRep = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfgRep)); }
   if(grado)   alumnos = alumnos.filter(a => a.grado   === grado);
   if(seccion) alumnos = alumnos.filter(a => a.seccion === seccion);
   if(q)       alumnos = alumnos.filter(a =>
@@ -17388,13 +17586,27 @@ async function renderReportes(anioCompleto=false) {
       const cfg2 = await getConfig();
       // Aulas a mostrar según filtros
       let aulasList = [];
-      const niveles = nivel ? [nivel] : (cfg2.niveles||[]).map(n=>n.nombre);
+      const modalidadMapa = _cfgModalidadConInferencia(cfg2, alumnos);
+      const usaCicloMapa = (modalidadMapa === 'CEBA' || modalidadMapa === 'EBA');
+      const campoNivelMapa = usaCicloMapa ? 'ciclo' : 'turno';
+      const nombresEsperadosMapa = _nivelesPorModalidad(modalidadMapa || 'EBR');
+      const cfgNivelesRawMapa = (cfg2.niveles||[]).map(n=> (typeof n === 'string' ? n : (n && n.nombre ? n.nombre : '')) ).filter(Boolean);
+      const alumnosNivelesMapa = _nivelesDesdeAlumnos(alumnos, cfg2);
+      const nivelesSetMapa = new Set();
+      let nivelesArrMapa = [];
+      const pushMapa = v => { if(!v || nivelesSetMapa.has(v)) return; nivelesSetMapa.add(v); nivelesArrMapa.push(v); };
+      nombresEsperadosMapa.forEach(pushMapa);
+      cfgNivelesRawMapa.forEach(pushMapa);
+      alumnosNivelesMapa.forEach(pushMapa);
+      if(!nivelesArrMapa.length) nivelesArrMapa = cfgNivelesRawMapa.length ? cfgNivelesRawMapa : (alumnosNivelesMapa.length ? alumnosNivelesMapa : nombresEsperadosMapa);
+      const niveles = nivel ? [nivel] : nivelesArrMapa;
       niveles.forEach(niv => {
         const grados2 = grado ? [grado] : ((cfg2.grados||{})[niv]||[]);
-        grados2.forEach(g => {
+        const gradosConDatos = grados2 && grados2.length ? grados2 : [...new Set(alumnos.filter(function(a){ return String((a||{})[campoNivelMapa] || a.turno || '').trim() === niv; }).map(function(a){ return (a.grado||'').toString().trim(); }).filter(Boolean))];
+        (gradosConDatos.length ? gradosConDatos : (grados2||[])).forEach(g => {
           const secs = seccion
             ? [seccion]
-            : [...new Set(alumnos.filter(a=>a.turno===niv&&a.grado===g).map(a=>a.seccion))].sort();
+            : [...new Set(alumnos.filter(function(a){ return (String((a||{})[campoNivelMapa] || a.turno || '').trim() === niv) && (String(a.grado||'').toString().trim() === g); }).map(function(a){ return String(a.seccion||'A').trim(); }).filter(Boolean))].sort();
           secs.forEach(s => {
             const aulaKey = `${niv}|${g}|${s}`;
             const aula = aulasMap.get(aulaKey);
@@ -17750,7 +17962,7 @@ async function _repGetAlumnosActuales(prefix = 'rep') {
   const seccion = _norm(document.getElementById(prefix + '-seccion')?.value);
   const q       = (document.getElementById(prefix + '-search')?.value || '').toLowerCase().trim();
   let alumnos = await getAlumnosFiltrados();
-  if(nivel)   alumnos = alumnos.filter(a => a.turno   === nivel);
+  if(nivel)   { const _cfgPre = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfgPre)); }
   if(grado)   alumnos = alumnos.filter(a => a.grado   === grado);
   if(seccion) alumnos = alumnos.filter(a => a.seccion === seccion);
   if(q)       alumnos = alumnos.filter(a =>
@@ -19486,10 +19698,15 @@ async function downloadUsuariosTemplate() {
   try {
     const ExcelJS = await ensureExcelJS();
     const cfg = await getConfig();
+    let alumnosRef = null;
+    try { alumnosRef = (typeof window !== 'undefined') ? (window.alumnosCache || []) : []; } catch(_) { alumnosRef = []; }
+    if (!alumnosRef || !alumnosRef.length) {
+      try { alumnosRef = await DB.getAlumnos(); if(Array.isArray(alumnosRef) && alumnosRef.length && typeof window !== 'undefined') window.alumnosCache = alumnosRef; } catch(_) {}
+    }
     const gradosAll = [...new Set(Object.values(cfg.grados || {}).flat().map(x => String(x || '').trim()).filter(Boolean))];
     const secciones = (cfg.secciones || []).map(x => String(x || '').trim()).filter(Boolean);
     const roles = ['admin','director','coordinador','profesor','psicologo','auxiliar'];
-    const modalidad = String(_cfgVal(cfg, 'modalidadEducativa', 'modalidad_educativa', '') || '').trim().toUpperCase();
+    const modalidad = _cfgModalidadConInferencia(cfg, alumnosRef || []);
     const esEBR = modalidad === 'EBR';
 
     const wb = new ExcelJS.Workbook();
@@ -19500,6 +19717,9 @@ async function downloadUsuariosTemplate() {
     gradosAll.forEach((g, i) => { wsl.getCell(2 + i, 1).value = g; });
     wsl.getCell('B1').value = 'Secciones';
     secciones.forEach((s, i) => { wsl.getCell(2 + i, 2).value = s; });
+    const nombresNiveles = _nivelesPorModalidad(cfg);
+    wsl.getCell('C1').value = 'Niveles';
+    nombresNiveles.forEach((n, i) => { wsl.getCell(2 + i, 3).value = n; });
 
     const headers = [
       'nombre','email','password','rol','telefono','cargo',
@@ -19559,15 +19779,22 @@ async function downloadAlumnosTemplate() {
   try {
     const ExcelJS = await ensureExcelJS();
     const cfg = await getConfig();
-    const gradosAll = [...new Set(Object.values(cfg.grados || {}).flat().map(x => String(x || '').trim()).filter(Boolean))];
-    const secciones = (cfg.secciones || []).map(x => String(x || '').trim()).filter(Boolean);
-    const niveles = [...new Set([
-      ...Object.keys(cfg.grados || {}).map(x => String(x || '').trim()).filter(Boolean),
-      ...((cfg.niveles || []).map ? (cfg.niveles || []).map(x => String(x || '').trim()) : [])
-    ])].filter(Boolean);
-    const nivelesFinal = niveles.length ? niveles : ['Inicial','Primaria','Secundaria'];
-    const modalidad = String(_cfgVal(cfg, 'modalidadEducativa', 'modalidad_educativa', '') || '').trim().toUpperCase();
+    let alumnosRef = null;
+    try { alumnosRef = (typeof window !== 'undefined') ? (window.alumnosCache || []) : []; } catch(_) { alumnosRef = []; }
+    if (!alumnosRef || !alumnosRef.length) {
+      try { alumnosRef = await DB.getAlumnos(); if(Array.isArray(alumnosRef) && alumnosRef.length && typeof window !== 'undefined') window.alumnosCache = alumnosRef; } catch(_) {}
+    }
+    const modalidad = _cfgModalidadConInferencia(cfg, alumnosRef || []);
     const esEBR = modalidad === 'EBR';
+    const nombresNiveles = _nivelesPorModalidad(cfg);
+    const gradosMapa = _gradosPorModalidad(cfg);
+    Object.keys(gradosMapa).forEach(niv => {
+      const existente = (cfg.grados && cfg.grados[niv]) ? cfg.grados[niv] : [];
+      if (Array.isArray(existente) && existente.length) gradosMapa[niv] = existente;
+    });
+    const gradosAll = [...new Set(Object.values(gradosMapa).flat().map(x => String(x || '').trim()).filter(Boolean))];
+    const secciones = (cfg.secciones || []).map(x => String(x || '').trim()).filter(Boolean);
+    const nivelesFinal = nombresNiveles.length ? nombresNiveles : (_cfgModalidad(cfg) === 'EBR' ? ['Inicial','Primaria','Secundaria'] : ['INICIAL','INTERMEDIO','AVANZADO']);
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('alumnos');
@@ -20385,16 +20612,28 @@ async function poblarFiltroNivel(selectId, onchangeFn, options = {}) {
   const cfg = options.cfg || await getConfig();
   const el = document.getElementById(selectId);
   if(!el) return;
-  const niveles = (cfg.niveles||[]).map(n => n.nombre);
-  let nivelesVisibles = niveles;
   const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
-  if(isProf) {
-    const alumnos = Array.isArray(options.alumnos) ? options.alumnos : await getAlumnosFiltrados();
-    const turnos = new Set(alumnos.map(a => a.turno).filter(Boolean));
-    nivelesVisibles = niveles.filter(n => turnos.has(n));
+  // Base: niveles desde config si es EBR; desde alumnos reales si es CEBA/EBA
+  let nivelesBase = [];
+  const alumnosBase = Array.isArray(options.alumnos) ? options.alumnos : null;
+  if (isProf) {
+    const alumnos = alumnosBase || await getAlumnosFiltrados();
+    nivelesBase = _nivelesDesdeAlumnos(alumnos, cfg);
+  } else {
+    if (alumnosBase && alumnosBase.length) {
+      nivelesBase = _nivelesDesdeAlumnos(alumnosBase, cfg);
+    } else {
+      try {
+        const alumnos = await DB.getAlumnos();
+        nivelesBase = _nivelesDesdeAlumnos(alumnos, cfg);
+      } catch(e) {}
+    }
+    if (!nivelesBase.length) {
+      nivelesBase = ((cfg||{}).niveles||[]).map(n => (typeof n === 'string' ? n : n.nombre)).filter(Boolean);
+    }
   }
   el.innerHTML = `<option value="" disabled selected>-- Nivel --</option>${isProf ? '' : '<option value="TODOS">Todos</option>'}`;
-  nivelesVisibles.forEach(n => { el.innerHTML += `<option value="${n}">${n}</option>`; });
+  nivelesBase.forEach(n => { el.innerHTML += `<option value="${n}">${n}</option>`; });
   try {
     const opts = new Set(Array.from(el.options).map(o => o.value));
     if(el.value && !opts.has(el.value)) el.value = '';
@@ -20468,7 +20707,7 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
 
   const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
   const alumnos = Array.isArray(options.alumnos) ? options.alumnos : (isProf ? await getAlumnosFiltrados() : await DB.getAlumnos());
-  const alumnosFiltrados = alumnos.filter(a => !nivel || nivel === 'TODOS' || a.turno === nivel);
+  const alumnosFiltrados = _filtrarPorNivel(alumnos, nivel, cfg);
   const gradosConAlumnos = new Set(alumnosFiltrados.map(a => a.grado).filter(Boolean));
 
   // Intentar obtener grados ordenados desde config; si no hay, usar los de alumnos directamente
@@ -20476,10 +20715,16 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
     ? (cfg.grados||{})[nivel] || []
     : [...new Set(Object.values(cfg.grados||{}).flat())];
 
-  // Si config no tiene grados configurados para este nivel, caer al set de alumnos
-  let grados = gradosCfg.length > 0
-    ? gradosCfg.filter(g => gradosConAlumnos.has(g))
-    : [...gradosConAlumnos].sort();
+  // Si config no tiene grados para este nivel, caer al set de alumnos
+  // (siempre: si los grados de config no coinciden con alumnos, usar los del set)
+  const desdeCfg = gradosCfg.filter(g => gradosConAlumnos.has(g));
+  const grados = desdeCfg.length > 0
+    ? desdeCfg
+    : [...gradosConAlumnos].sort((a,b) => {
+        const na = Number(a), nb = Number(b);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return String(a).localeCompare(String(b));
+      });
 
   el.innerHTML = `<option value="" disabled selected>-- Grado --</option>${isProf ? '' : '<option value="TODOS">Todos</option>'}`;
   grados.forEach(g => { el.innerHTML += `<option value="${g}">${g}</option>`; });
@@ -20545,16 +20790,28 @@ async function onGradoChangeAlumnos() {
   if(grado && grado !== 'TODOS') {
     // Auto-detectar nivel
     const cfg = await getConfig();
+    let nivelAuto = '';
     for(const [niv, lista] of Object.entries(cfg.grados || {})) {
-      if(lista.includes(grado)) { document.getElementById('fa-nivel').value = niv; break; }
+      if(Array.isArray(lista) && lista.includes(grado)) { nivelAuto = niv; break; }
     }
+    if(!nivelAuto) {
+      // Fallback CEBA/EBA: buscar ciclo real en alumnos que tienen este grado
+      try {
+        const todos = await DB.getAlumnos();
+        const campo = _nivelFieldName(cfg);
+        const match = todos.find(a => String(a.grado||'').trim() === String(grado).trim() && String(a[campo]||'').trim());
+        if(match) nivelAuto = String(match[campo]||'').trim();
+      } catch(_) {}
+    }
+    if(nivelAuto) document.getElementById('fa-nivel').value = nivelAuto;
     await poblarFiltroSeccion('fa-seccion', grado);
     _enableSelect('fa-seccion');
   } else {
     const nivel = document.getElementById('fa-nivel').value;
     const alumnos = await DB.getAlumnos();
+    const cfg = typeof configCache !== 'undefined' ? configCache : await getConfig();
     const secs = [...new Set(alumnos
-      .filter(a => !nivel || nivel === 'TODOS' || a.turno === nivel)
+      .filter(a => !nivel || nivel === 'TODOS' || _matchNivel(a, nivel, cfg))
       .map(a => a.seccion)
     )].sort();
     const el = document.getElementById('fa-seccion');
@@ -20604,6 +20861,20 @@ async function inicializarFiltros(options = {}) {
   const cfg = options.cfg || await getConfig();
   const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
   const alumnos = Array.isArray(options.alumnos) ? options.alumnos : (isProf ? await getAlumnosFiltrados() : await DB.getAlumnos());
+  try {
+    const infM = _inferirModalidad(cfg, alumnos);
+    if(infM && !_cfgModalidad(cfg)) {
+      if(!configCache) configCache = {};
+      if(typeof configCache === 'object') {
+        configCache.modalidadEducativa = infM;
+        if(!Object.prototype.hasOwnProperty.call(configCache,'modalidad_educativa')) configCache.modalidad_educativa = infM;
+      }
+      if(typeof cfg === 'object') { cfg.modalidadEducativa = infM; if(!cfg.modalidad_educativa) cfg.modalidad_educativa = infM; }
+    }
+  } catch(_inferr) {}
+  try {
+    if (typeof window !== 'undefined') window.alumnosCache = alumnos;
+  } catch(_) {}
 
   await Promise.all([
     poblarFiltroNivel('fa-nivel', 'onNivelChangeAlumnos', { cfg, alumnos }),
@@ -20645,24 +20916,19 @@ async function inicializarFiltros(options = {}) {
 // ============================================================
 
 // Config defaults
-const CONFIG_DEFAULTS = {
-  nombreColegio: COLEGIO_NOMBRE,
-  esloganColegio: COLEGIO_ESLOGAN || '',
-  logoColegio: COLEGIO_LOGO || '',
-  anio: COLEGIO_ANIO || '2026',
-  rolExamenesConfig: {},
-  niveles: [
-    { nombre: 'Inicial',    horaApertura: '07:00', horaLimite: '08:00', horaCorte: '10:30', horaSalida: '13:00' },
-    { nombre: 'Primaria',   horaApertura: '07:00', horaLimite: '08:00', horaCorte: '10:30', horaSalida: '13:00' },
-    { nombre: 'Secundaria', horaApertura: '06:30', horaLimite: '07:45', horaCorte: '10:00', horaSalida: '13:00' },
-  ],
-  grados: {
-    'Inicial':    ['3 años','4 años','5 años'],
-    'Primaria':   ['1er','2do','3er','4to','5to','6to'],
-    'Secundaria': ['7mo','8vo','9no','10mo','11mo'],
-  },
-  secciones: ['A','B','C','D'],
-};
+function _construirConfigDefaults() {
+  return {
+    nombreColegio: COLEGIO_NOMBRE,
+    esloganColegio: COLEGIO_ESLOGAN || '',
+    logoColegio: COLEGIO_LOGO || '',
+    anio: COLEGIO_ANIO || '2026',
+    rolExamenesConfig: {},
+    niveles: _horariosPorModalidad('EBR'),
+    grados: _gradosPorModalidad('EBR'),
+    secciones: ['A','B','C','D'],
+  };
+}
+const CONFIG_DEFAULTS = _construirConfigDefaults();
 
 let configCache = null;
 
@@ -20683,6 +20949,69 @@ function _cfgVal(cfg, k1, k2, fallback) {
   return fallback;
 }
 
+// ============================================================
+// Helpers dinámicos NIVEL según modalidad educativa (CEBA/EBA vs EBR)
+//   EBR  → "Nivel" = Inicial/Primaria/Secundaria  → campo `turno`
+//   CEBA/EBA → "Nivel" = INICIAL/INTERMEDIO/AVANZADO → campo `ciclo`
+// ============================================================
+function _cfgModalidad(cfg) {
+  return String(_cfgVal(cfg, 'modalidadEducativa', 'modalidad_educativa', '') || '').trim().toUpperCase();
+}
+function _inferirModalidad(cfg, alumnosArr) {
+  const expl = _cfgModalidad(cfg);
+  if(expl) return expl;
+  const CEBA_CICLOS = ['INICIAL','INTERMEDIO','AVANZADO'];
+  const EBR_TURNOS = ['Inicial','Primaria','Secundaria','INICIAL','PRIMARIA','SECUNDARIA'];
+  const alumnos = Array.isArray(alumnosArr) ? alumnosArr.slice(0, 200) : [];
+  let cicloSet = 0, turnoSet = 0;
+  for(var i=0;i<alumnos.length;i++){
+    const c = String((alumnos[i]||{}).ciclo||'').trim().toUpperCase();
+    const t = String((alumnos[i]||{}).turno||'').trim();
+    if(c && CEBA_CICLOS.indexOf(c)>=0) cicloSet++;
+    if(t && EBR_TURNOS.indexOf(t)>=0) turnoSet++;
+  }
+  if(!cicloSet && !turnoSet){
+    if(((cfg||{}).grados||{}).INICIAL || ((cfg||{}).grados||{}).INTERMEDIO || ((cfg||{}).grados||{}).AVANZADO) return 'CEBA';
+  }
+  if(cicloSet >= turnoSet) return cicloSet ? 'CEBA' : (turnoSet ? 'EBR' : 'CEBA');
+  return 'EBR';
+}
+function _cfgModalidadConInferencia(cfg, alumnosArr) {
+  const m = _cfgModalidad(cfg);
+  if(m) return m;
+  return _inferirModalidad(cfg, alumnosArr);
+}
+function _nivelFieldName(cfg, alumnosArr) {
+  const m = _cfgModalidadConInferencia(cfg, alumnosArr);
+  return (m === 'CEBA' || m === 'EBA') ? 'ciclo' : 'turno';
+}
+function _matchNivel(obj, nivelSel, cfg, alumnosArr) {
+  if (!nivelSel || nivelSel === 'TODOS') return true;
+  const f = _nivelFieldName(cfg, alumnosArr);
+  return String(obj && obj[f] || '').trim() === String(nivelSel).trim();
+}
+function _nivelesDesdeAlumnos(alumnosArr, cfg) {
+  const alumnos = Array.isArray(alumnosArr) ? alumnosArr : [];
+  const f = _nivelFieldName(cfg, alumnos);
+  const set = new Set(alumnos.map(a => String(a[f] || '').trim()).filter(Boolean));
+  const ordenCEBA = ['INICIAL','INTERMEDIO','AVANZADO'];
+  if (ordenCEBA.some(c => set.has(c))) {
+    return ordenCEBA.filter(c => set.has(c)).concat([...set].filter(v => !ordenCEBA.includes(v)));
+  }
+  const cfgNiveles = ((cfg||{}).niveles||[]);
+  const ordenCfg = cfgNiveles.map(n => (typeof n === 'string' ? n : n.nombre)).filter(Boolean);
+  if (ordenCfg.length) {
+    return ordenCfg.filter(v => set.has(v)).concat([...set].filter(v => !ordenCfg.includes(v)));
+  }
+  return [...set].sort();
+}
+function _filtrarPorNivel(arr, nivelSel, cfg) {
+  if (!Array.isArray(arr)) return [];
+  if (!nivelSel || nivelSel === 'TODOS') return arr.slice();
+  const f = _nivelFieldName(cfg, arr);
+  const nS = String(nivelSel).trim();
+  return arr.filter(o => String(o && o[f] || '').trim() === nS);
+}
 async function getConfig() {
   if(configCache) return configCache;
   // Intentar desde localStorage
@@ -21115,6 +21444,73 @@ function cerrarConfigAvanzada() {
 
 async function renderConfig() {
   const cfg = await getConfig();
+  let alumnosArr = null;
+  try {
+    alumnosArr = (typeof window.alumnosCache !== 'undefined') ? (window.alumnosCache || []) : null;
+    if (!alumnosArr || !alumnosArr.length) {
+      try {
+        const fetched = await (typeof DB !== 'undefined' && typeof DB.getAlumnos === 'function' ? DB.getAlumnos() : Promise.resolve([]));
+        if (Array.isArray(fetched) && fetched.length) {
+          alumnosArr = fetched;
+          if (typeof window !== 'undefined') window.alumnosCache = fetched;
+        }
+      } catch(_) {}
+    }
+  } catch(_) {}
+  const modalActual = _cfgModalidadConInferencia(cfg, alumnosArr);
+  const nombresEsperados = _nivelesPorModalidad(modalActual || 'EBR');
+  const cfgNivelesOld = Array.isArray(cfg.niveles) ? cfg.niveles : [];
+  const horariosBase = (cfgNivelesOld.length && nombresEsperados.every(n => cfgNivelesOld.some(o => o && String(o.nombre || '') === n)))
+    ? cfgNivelesOld
+    : _horariosPorModalidad(modalActual || 'EBR').map(h => {
+        const existente = cfgNivelesOld.find(x => x && String(x.nombre || '') === h.nombre);
+        return existente ? Object.assign({}, h, {
+          horaApertura: existente.horaApertura || h.horaApertura,
+          horaLimite:   existente.horaLimite   || h.horaLimite,
+          horaCorte:    existente.horaCorte    || h.horaCorte,
+          horaSalida:   existente.horaSalida   || h.horaSalida,
+        }) : h;
+      });
+  const gradosMapEsperado = _gradosPorModalidad(modalActual || 'EBR');
+  const cfgGrados = (cfg.grados && typeof cfg.grados === 'object') ? cfg.grados : {};
+  const gradosMapFinal = {};
+  nombresEsperados.forEach(niv => {
+    const g = cfgGrados[niv] || gradosMapEsperado[niv] || [];
+    gradosMapFinal[niv] = Array.isArray(g) ? g : (String(g || '').split(',').map(x => x.trim()).filter(Boolean));
+  });
+  const modalidadExpl = _cfgModalidad(cfg);
+  if (!modalidadExpl && modalActual) {
+    try {
+      if (!configCache) configCache = {};
+      if (typeof configCache === 'object') {
+        configCache.modalidadEducativa = modalActual;
+        if (!Object.prototype.hasOwnProperty.call(configCache,'modalidad_educativa')) configCache.modalidad_educativa = modalActual;
+      }
+      if (typeof cfg === 'object') {
+        cfg.modalidadEducativa = modalActual;
+        if (!cfg.modalidad_educativa) cfg.modalidad_educativa = modalActual;
+      }
+    } catch(_) {}
+  }
+  try {
+    const cfgModSel = document.getElementById('cfg-colegio-modalidad');
+    if (cfgModSel && !cfgModSel.value) cfgModSel.value = modalActual || '';
+  } catch(_) {}
+  if ((!cfgNivelesOld.length || !nombresEsperados.every(n => cfgNivelesOld.some(o => String(o && o.nombre || '') === n)))) {
+    try {
+      if (!configCache) configCache = {};
+      if (typeof configCache === 'object') {
+        configCache.niveles = horariosBase.slice();
+        if (!configCache.grados || typeof configCache.grados !== 'object') configCache.grados = {};
+        Object.keys(gradosMapFinal).forEach(k => { configCache.grados[k] = gradosMapFinal[k]; });
+      }
+      if (typeof cfg === 'object') {
+        cfg.niveles = horariosBase.slice();
+        if (!cfg.grados || typeof cfg.grados !== 'object') cfg.grados = {};
+        Object.keys(gradosMapFinal).forEach(k => { cfg.grados[k] = gradosMapFinal[k]; });
+      }
+    } catch(_) {}
+  }
 
   // Info colegio — encabezado visible en sección configuración
   const schLogo   = document.getElementById('cfg-school-logo');
@@ -21138,7 +21534,7 @@ async function renderConfig() {
 
   // Niveles y horarios
   const nivelesEl = document.getElementById('cfg-niveles-list');
-  nivelesEl.innerHTML = (cfg.niveles||[]).map((n,i) => `
+  nivelesEl.innerHTML = horariosBase.map((n,i) => `
     <div style="margin-bottom:16px;padding:12px 14px;background:rgba(255,255,255,0.03);border-radius:10px;border:1px solid rgba(255,255,255,0.07);">
       <div style="font-weight:700;font-size:0.95rem;margin-bottom:10px;color:var(--accent);">${n.nombre}</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -21164,8 +21560,8 @@ async function renderConfig() {
 
   // Grados
   const gradosEl = document.getElementById('cfg-grados-list');
-  gradosEl.innerHTML = (cfg.niveles||[]).map((n,i) => {
-    const grados = (cfg.grados||{})[n.nombre] || [];
+  gradosEl.innerHTML = horariosBase.map((n,i) => {
+    const grados = gradosMapFinal[n.nombre] || [];
     return `
       <div style="margin-bottom:14px;">
         <div style="font-weight:600;font-size:0.9rem;margin-bottom:6px;">${n.nombre}</div>
@@ -21346,18 +21742,54 @@ async function guardarInfoColegio() {
     const anio = document.getElementById('cfg-colegio-anio')?.value?.trim() || '';
     const modalidad = String(document.getElementById('cfg-colegio-modalidad')?.value || '').trim().toUpperCase();
     if(!nombre) { toast('Completa el nombre del colegio','warning'); return; }
+    const modalidadValida = ['CEBA','EBR','EBA'].includes(modalidad);
     const payload = {
       nombreColegio: nombre,
       eslogan: eslogan,
       esloganColegio: eslogan,
       anio: anio || (cfg.anio || COLEGIO_ANIO || ''),
-      modalidadEducativa: modalidad,
     };
+    if (modalidadValida || modalidad === '') {
+      payload.modalidadEducativa = modalidad;
+      payload.modalidad_educativa = modalidad;
+    }
+    if (modalidadValida) {
+      const nivelesBase = _horariosPorModalidad(modalidad);
+      const cfgNivelesOld = Array.isArray(cfg.niveles) ? cfg.niveles : [];
+      payload.niveles = nivelesBase.map(h => {
+        const existente = cfgNivelesOld.find(x => x && String(x.nombre || '') === h.nombre);
+        return existente ? Object.assign({}, h, {
+          horaApertura: existente.horaApertura || h.horaApertura,
+          horaLimite:   existente.horaLimite   || h.horaLimite,
+          horaCorte:    existente.horaCorte    || h.horaCorte,
+          horaSalida:   existente.horaSalida   || h.horaSalida,
+        }) : h;
+      });
+      const gradosMapEsperado = _gradosPorModalidad(modalidad);
+      const cfgGrados = (cfg.grados && typeof cfg.grados === 'object') ? cfg.grados : {};
+      const gradosPayload = {};
+      Object.keys(gradosMapEsperado).forEach(niv => {
+        const g = cfgGrados[niv] || gradosMapEsperado[niv] || [];
+        gradosPayload[niv] = Array.isArray(g) ? g : (String(g || '').split(',').map(x => x.trim()).filter(Boolean));
+      });
+      payload.grados = gradosPayload;
+    }
     if(_colegioLogoTmp) payload.logoColegio = _colegioLogoTmp;
     await db.collection('config').doc('general').set(payload, { merge: true });
     invalidateConfig();
     const newCfg = await getConfig();
+    try {
+      const alumnosArr = (typeof window !== 'undefined') ? (window.alumnosCache || []) : [];
+      if (alumnosArr.length) {
+        const infM = _cfgModalidadConInferencia(newCfg, alumnosArr);
+        if (infM && !_cfgModalidad(newCfg) && typeof configCache === 'object') {
+          configCache.modalidadEducativa = infM;
+          if(!Object.prototype.hasOwnProperty.call(configCache,'modalidad_educativa')) configCache.modalidad_educativa = infM;
+        }
+      }
+    } catch(_e) {}
     _aplicarConfigColegio(newCfg);
+    renderConfig();
     toast('Datos del colegio guardados','success');
   } catch(e) {
     toast('Error al guardar: ' + (e?.message || ''),'error');
@@ -21366,7 +21798,23 @@ async function guardarInfoColegio() {
 
 async function guardarHorarios() {
   const cfg = await getConfig();
-  const niveles = (cfg.niveles||[]).map((n,i) => {
+  let alumnosArr = null;
+  try { alumnosArr = (typeof window !== 'undefined') ? (window.alumnosCache || []) : null; } catch(_) {}
+  const modalActual = _cfgModalidadConInferencia(cfg, alumnosArr);
+  const nombresEsperados = _nivelesPorModalidad(modalActual || 'EBR');
+  const cfgNivelesOld = Array.isArray(cfg.niveles) ? cfg.niveles : [];
+  const base = (cfgNivelesOld.length && nombresEsperados.every(n => cfgNivelesOld.some(o => o && String(o.nombre || '') === n)))
+    ? cfgNivelesOld
+    : _horariosPorModalidad(modalActual || 'EBR').map(h => {
+        const existente = cfgNivelesOld.find(x => x && String(x.nombre || '') === h.nombre);
+        return existente ? Object.assign({}, h, {
+          horaApertura: existente.horaApertura || h.horaApertura,
+          horaLimite:   existente.horaLimite   || h.horaLimite,
+          horaCorte:    existente.horaCorte    || h.horaCorte,
+          horaSalida:   existente.horaSalida   || h.horaSalida,
+        }) : h;
+      });
+  const niveles = base.map((n,i) => {
     const apertura = document.getElementById('cfg-apertura-'+i)?.value || '07:00';
     const limite   = document.getElementById('cfg-hora-'+i)?.value    || '08:00';
     const corte    = document.getElementById('cfg-corte-'+i)?.value   || '10:30';
@@ -21387,8 +21835,16 @@ async function guardarHorarios() {
 
 async function guardarGrados() {
   const cfg = await getConfig();
+  let alumnosArr = null;
+  try { alumnosArr = (typeof window !== 'undefined') ? (window.alumnosCache || []) : null; } catch(_) {}
+  const modalActual = _cfgModalidadConInferencia(cfg, alumnosArr);
+  const nombresEsperados = _nivelesPorModalidad(modalActual || 'EBR');
+  const cfgNivelesOld = Array.isArray(cfg.niveles) ? cfg.niveles : [];
+  const base = (cfgNivelesOld.length && nombresEsperados.every(n => cfgNivelesOld.some(o => o && String(o.nombre || '') === n)))
+    ? cfgNivelesOld
+    : _horariosPorModalidad(modalActual || 'EBR');
   const grados = {};
-  (cfg.niveles||[]).forEach((n,i) => {
+  base.forEach((n,i) => {
     const val = document.getElementById('cfg-grados-'+i)?.value || '';
     grados[n.nombre] = val.split(',').map(x => x.trim()).filter(Boolean);
   });
