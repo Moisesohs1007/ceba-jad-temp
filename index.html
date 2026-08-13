@@ -7735,7 +7735,7 @@ async function autoRegistrar(alumno) {
   const now   = new Date();
   const today = hoy();
   const nombre = (alumno.apellidos + ' ' + alumno.nombres).trim();
-  const grado  = alumno.grado + ' ' + alumno.seccion + ' — ' + alumno.turno;
+  const grado  = alumno.grado + ' ' + alumno.seccion + ' — ' + _labelNivelLargoAlumno(alumno);
 
   try {
     if(_scanIsInFlight(alumno.id)) {
@@ -7838,15 +7838,16 @@ async function autoRegistrar(alumno) {
     if(alumno.telefono) {
       const enc = _waEncabezado();
       const pie = _waPie();
+      const nivLabel = _labelNivelLargoAlumno(alumno);
       let msg = '';
       if(tipo === 'INGRESO' && estado === 'A tiempo') {
-        msg = `✅ *INGRESO REGISTRADO*\n${enc}\n\n👤 *Alumno:* ${nombre}\n🏫 *Grado:* ${alumno.grado} ${alumno.seccion} — ${alumno.turno}\n🕐 *Hora:* ${reg.hora}\n📅 *Fecha:* ${reg.fecha}\n\n✔️ Su hijo/a ingresó *puntualmente* al colegio.${pie}`;
+        msg = `✅ *INGRESO REGISTRADO*\n${enc}\n\n👤 *Alumno:* ${nombre}\n🏫 *Grado:* ${alumno.grado} ${alumno.seccion} — ${nivLabel}\n🕐 *Hora:* ${reg.hora}\n📅 *Fecha:* ${reg.fecha}\n\n✔️ Su hijo/a ingresó *puntualmente* al colegio.${pie}`;
       } else if(tipo === 'INGRESO' && estado === 'Tardanza') {
-        msg = `⚠️ *TARDANZA REGISTRADA*\n${enc}\n\n👤 *Alumno:* ${nombre}\n🏫 *Grado:* ${alumno.grado} ${alumno.seccion} — ${alumno.turno}\n🕐 *Hora:* ${reg.hora}\n📅 *Fecha:* ${reg.fecha}\n\n⏰ Su hijo/a ingresó *con tardanza* al colegio.${pie}`;
+        msg = `⚠️ *TARDANZA REGISTRADA*\n${enc}\n\n👤 *Alumno:* ${nombre}\n🏫 *Grado:* ${alumno.grado} ${alumno.seccion} — ${nivLabel}\n🕐 *Hora:* ${reg.hora}\n📅 *Fecha:* ${reg.fecha}\n\n⏰ Su hijo/a ingresó *con tardanza* al colegio.${pie}`;
       } else if(tipo === 'SALIDA' && sinIngresoPrevio) {
-        msg = `⚠️ *SALIDA SIN INGRESO PREVIO*\n${enc}\n\n👤 *Alumno:* ${nombre}\n🏫 *Grado:* ${alumno.grado} ${alumno.seccion} — ${alumno.turno}\n🕐 *Hora de salida:* ${reg.hora}\n📅 *Fecha:* ${reg.fecha}\n\n⚠️ Su hijo/a registró salida pero *no tiene ingreso registrado* hoy. Por favor comuníquese con el colegio.${pie}`;
+        msg = `⚠️ *SALIDA SIN INGRESO PREVIO*\n${enc}\n\n👤 *Alumno:* ${nombre}\n🏫 *Grado:* ${alumno.grado} ${alumno.seccion} — ${nivLabel}\n🕐 *Hora de salida:* ${reg.hora}\n📅 *Fecha:* ${reg.fecha}\n\n⚠️ Su hijo/a registró salida pero *no tiene ingreso registrado* hoy. Por favor comuníquese con el colegio.${pie}`;
       } else if(tipo === 'SALIDA') {
-        msg = `🚪 *SALIDA REGISTRADA*\n${enc}\n\n👤 *Alumno:* ${nombre}\n🏫 *Grado:* ${alumno.grado} ${alumno.seccion} — ${alumno.turno}\n🕐 *Hora:* ${reg.hora}\n📅 *Fecha:* ${reg.fecha}\n\n🏠 Su hijo/a ha salido del colegio.${pie}`;
+        msg = `🚪 *SALIDA REGISTRADA*\n${enc}\n\n👤 *Alumno:* ${nombre}\n🏫 *Grado:* ${alumno.grado} ${alumno.seccion} — ${nivLabel}\n🕐 *Hora:* ${reg.hora}\n📅 *Fecha:* ${reg.fecha}\n\n🏠 Su hijo/a ha salido del colegio.${pie}`;
       }
       if(msg) {
         sendWhatsApp(alumno.telefono, msg);
@@ -7909,23 +7910,35 @@ async function openModalAlumno(id) {
     document.getElementById('f-id').title = '';
     document.getElementById('f-nombres').value = a.nombres;
     document.getElementById('f-apellidos').value = a.apellidos;
-    // Primero poblar el select de nivel con opciones de config
+    // Primero poblar el select de nivel/modalidad con opciones según modalidad educativa
     const cfgTemp = await getConfig();
+    let alumnosRefTemp = [];
+    try { alumnosRefTemp = (typeof window !== 'undefined') ? (window.alumnosCache || []) : []; } catch(_) {}
+    const modalidadTemp = _cfgModalidadConInferencia(cfgTemp, alumnosRefTemp || [a]);
+    const esEBRTemp = modalidadTemp === 'EBR';
     const fTurno = document.getElementById('f-turno');
     const fCiclo = document.getElementById('f-ciclo');
+    // f-turno: EBR = Niveles (Inicial/Primaria/Secundaria) ; CEBA = Modalidades Atención
+    const optsFTurno = esEBRTemp
+      ? ((cfgTemp.niveles && cfgTemp.niveles.length ? _nivelesPorModalidad(cfgTemp) : ['Inicial','Primaria','Secundaria']))
+      : _MODALIDADES_ATENCION.slice();
     fTurno.innerHTML = '<option value="">Seleccionar</option>';
-    (cfgTemp.niveles||[]).forEach(n => {
-      fTurno.innerHTML += `<option value="${n.nombre}">${n.nombre}</option>`;
-    });
-    fTurno.value = a.turno;
+    optsFTurno.forEach(n => { fTurno.innerHTML += `<option value="${n}">${_MODALIDAD_ATENCION_LABEL[n] || n}</option>`; });
+    // Setear valor turno desde el alumno, normalizando CEBA
+    const turnoRaw = String(a.turno || '').trim();
+    fTurno.value = (esEBRTemp ? turnoRaw : _normModAtencion(turnoRaw) || turnoRaw) || '';
     if (fCiclo) {
       // Cargar ciclo desde el alumno (CEBA), si no existe inferir desde turno
       const cicloGuardado = String(a.ciclo || '').trim().toUpperCase();
       if (cicloGuardado) fCiclo.value = cicloGuardado;
       else _syncFCicloDesdeTurno();
     }
-    // Luego cargar grados y secciones
-    await cargarGradosPorNivel(a.turno);
+    // Luego cargar grados y secciones — key depende de modalidad
+    const keyGrados = esEBRTemp
+      ? (fTurno.value || turnoRaw)
+      : ((a.ciclo ? String(a.ciclo).trim().toUpperCase() : '') || (fCiclo?.value || ''));
+    if (keyGrados) await cargarGradosPorNivel(keyGrados);
+    else await cargarGradosPorNivel(fTurno.value || '');
     document.getElementById('f-grado').value = a.grado;
     await cargarSeccionesPorGrado();
     document.getElementById('f-seccion').value = a.seccion;
@@ -8445,6 +8458,21 @@ function _alumnoNivelText(a, cfg) {
   if(fallbackCEBA) return fallbackCEBA;
   return String((a||{}).turno || '').trim();
 }
+function _labelNivelLargoAlumno(a, cfg) {
+  const _cfg = cfg || configCache || {};
+  const alumnosArr = (typeof window !== 'undefined') ? (window.alumnosCache || [a]) : [a];
+  let m;
+  try { m = _cfgModalidadConInferencia(_cfg, alumnosArr); }
+  catch(_) { m = ''; }
+  const esEBR = (m || '').toUpperCase() === 'EBR';
+  const nivel = _alumnoNivelText(a, _cfg);
+  if (esEBR) return nivel || String((a||{}).turno || '');
+  const mod = _normModAtencion((a||{}).turno || '');
+  const modLabel = mod ? (_MODALIDAD_ATENCION_LABEL[mod] || mod) : '';
+  if (!nivel) return modLabel || String((a||{}).turno || '');
+  if (!modLabel) return nivel;
+  return `${nivel} · ${modLabel}`;
+}
 
 function _filaAlumno(a) {
   return `<tr>
@@ -8550,7 +8578,7 @@ async function showQR(id) {
   nameEl.innerHTML = l2 ? `${l1}<br>${l2}` : l1;
   nameEl.style.fontSize = fullName.length > 36 ? '9px' : fullName.length > 28 ? '10.5px' : '12px';
 
-  document.getElementById('carnet-grade').textContent = `${a.grado}  ·  Sección ${a.seccion}  ·  ${a.turno}`;
+  document.getElementById('carnet-grade').textContent = `${a.grado}  ·  Sección ${a.seccion}  ·  ${_labelNivelLargoAlumno(a)||a.turno}`;
   document.getElementById('carnet-dni').textContent = a.id;
   document.getElementById('carnet-vigencia').textContent = `VIGENCIA 31 DE DICIEMBRE DEL ${anio}`;
 
@@ -9021,10 +9049,20 @@ async function renderRegistro() {
 
       // Alumnos que coinciden con la búsqueda
       const todosAlumnos = await getAlumnosFiltrados();
+      const _cfgRReg2 = typeof configCache !== 'undefined' ? configCache : {};
       const qn = q.trim();
       const alumnosFiltrados = todosAlumnos.filter(a => {
-        const nombre = ((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || (a.nombre||'');
-        return (nombre||'').toLowerCase().includes(qn) || (a.id||'').toLowerCase().includes(qn);
+        if(nivel && nivel !== 'TODOS' && !_matchNivel(a, nivel, _cfgRReg2, todosAlumnos)) return false;
+        if(grado && grado !== 'TODOS' && (a.grado||'') !== grado) return false;
+        if(seccion && seccion !== 'TODOS' && (a.seccion||'') !== seccion) return false;
+        if (qn) {
+          const nombre = ((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || (a.nombre||'');
+          const _nQ = (nombre||'').toLowerCase();
+          const _iQ = (a.id||'').toLowerCase();
+          const _hay = _nQ.includes(qn) || _iQ.includes(qn);
+          if (!_hay) return false;
+        }
+        return true;
       });
 
       const fechasHabiles = [];
@@ -9041,7 +9079,7 @@ async function renderRegistro() {
           fechasHabiles.forEach(fecha => {
             const key = a.id + '_' + fecha;
             if(!grupos[key]) {
-              filas.push({ alumnoId: a.id, nombre: ((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '', grado: a.grado, seccion: a.seccion, turno: a.turno||'-', fecha, ingreso: null, salida: null, estadoIngreso: 'Sin registro' });
+              filas.push({ alumnoId: a.id, nombre: ((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '', grado: a.grado, seccion: a.seccion, turno: _alumnoNivelText(a,_cfgRReg2)||a.turno||'-', nivel: _alumnoNivelText(a,_cfgRReg2)||a.turno||'-', fecha, ingreso: null, salida: null, estadoIngreso: 'Sin registro' });
             }
           });
         });
@@ -9068,8 +9106,9 @@ async function renderRegistro() {
       }
 
       const todosAlumnos = await getAlumnosFiltrados();
+      const _cfgRReg = typeof configCache !== 'undefined' ? configCache : {};
       const alumnosFilt = todosAlumnos.filter(a => {
-        if(nivel && nivel !== 'TODOS' && (a.turno||'') !== nivel) return false;
+        if(nivel && nivel !== 'TODOS' && !_matchNivel(a, nivel, _cfgRReg, todosAlumnos)) return false;
         if(grado && grado !== 'TODOS' && (a.grado||'') !== grado) return false;
         if(seccion && seccion !== 'TODOS' && (a.seccion||'') !== seccion) return false;
         return true;
@@ -9089,7 +9128,7 @@ async function renderRegistro() {
           fechasHabiles.forEach(fecha => {
             const key = a.id + '_' + fecha;
             if(!grupos[key]) {
-              filas.push({ alumnoId: a.id, nombre: ((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '', grado: a.grado, seccion: a.seccion, turno: a.turno||'-', fecha, ingreso: null, salida: null, estadoIngreso: 'Sin registro' });
+              filas.push({ alumnoId: a.id, nombre: ((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '', grado: a.grado, seccion: a.seccion, turno: _alumnoNivelText(a, _cfgRReg)||a.turno||'-', nivel: _alumnoNivelText(a, _cfgRReg)||a.turno||'-', fecha, ingreso: null, salida: null, estadoIngreso: 'Sin registro' });
             }
           });
         });
@@ -9263,12 +9302,13 @@ async function getRegistrosFiltrados() {
     })();
 
     const todosAlumnos = await DB.getAlumnos();
+    const _cfgRPd = typeof configCache !== 'undefined' ? configCache : {};
     const alumnosFiltrados = todosAlumnos.filter(a => {
       if(q && !(
         (a.nombre||'').toLowerCase().includes(q.trim()) ||
         (a.id||'').toLowerCase().includes(q.trim())
       )) return false;
-      if(nivel   && nivel   !== 'TODOS' && (a.turno||'') !== nivel)   return false;
+      if(nivel   && nivel   !== 'TODOS' && !_matchNivel(a, nivel, _cfgRPd, todosAlumnos)) return false;
       if(grado   && grado   !== 'TODOS' && (a.grado||'') !== grado)   return false;
       if(seccion && seccion !== 'TODOS' && (a.seccion||'') !== seccion) return false;
       return true;
@@ -9287,7 +9327,8 @@ async function getRegistrosFiltrados() {
       fechasHabiles.forEach(fecha => {
         const key = a.id + '_' + fecha;
         if(!grupos[key]) {
-          filasPDF.push({ fecha, dni: a.id, nombre: ((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '', turno: a.turno||'-', nivel: a.turno||'-', grado: a.grado, seccion: a.seccion, ingreso: null, salida: null, estado: 'Sin registro' });
+          const nivTxt = _alumnoNivelText(a,_cfgRPd);
+          filasPDF.push({ fecha, dni: a.id, nombre: ((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '', turno: nivTxt||a.turno||'-', nivel: nivTxt||a.turno||'-', grado: a.grado, seccion: a.seccion, ingreso: null, salida: null, estado: 'Sin registro' });
         }
       });
     });
@@ -12029,7 +12070,7 @@ function renderComLista() {
       <td style="font-weight:700;color:var(--text);">${nombre}</td>
       <td>${a.grado||''}</td>
       <td>${a.seccion||''}</td>
-      <td>${a.turno||''}</td>
+      <td>${_alumnoNivelText(a)||a.turno||''}</td>
       <td style="color:var(--muted);">${tel || '—'}</td>
     </tr>`;
   }).join('') || '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Sin resultados</td></tr>';
@@ -12351,7 +12392,7 @@ function _comMsg(tpl, a) {
     .replaceAll('{alumno}', nombre)
     .replaceAll('{grado}', String(a.grado||''))
     .replaceAll('{seccion}', String(a.seccion||''))
-    .replaceAll('{nivel}', String(a.turno||''));
+    .replaceAll('{nivel}', String(_labelNivelLargoAlumno(a) || a.turno || ''));
 }
 
 async function _publicarComunicadosPortal(rows, titulo, tpl) {
@@ -16029,7 +16070,7 @@ async function imprimirCarnetsMasivo() {
 
     doc.setTextColor(...GOLD);
     doc.setFontSize(6.2); doc.setFont('helvetica','bold');
-    doc.text(`${alumno.grado}  ·  Sección ${alumno.seccion}  ·  ${alumno.turno}`, contCX, footerY+4.5, {align:'center', maxWidth: W - BORDER*2 - 4});
+    doc.text(`${alumno.grado}  ·  Sección ${alumno.seccion}  ·  ${_labelNivelLargoAlumno(alumno)||alumno.turno}`, contCX, footerY+4.5, {align:'center', maxWidth: W - BORDER*2 - 4});
   }
 
   // Dibujar carnets paginados
@@ -16188,7 +16229,8 @@ async function exportarReportePDF() {
   const partes = [];
   if(ctx.alumno && (ctx.alumno.id || ctx.alumno.nombre)) {
     const pAlumno = [];
-    if(ctx.alumno.turno) pAlumno.push(ctx.alumno.turno);
+    const nivLbl = _labelNivelLargoAlumno(ctx.alumno) || ctx.alumno.turno;
+    if(nivLbl) pAlumno.push(nivLbl);
     if(ctx.alumno.grado) pAlumno.push(ctx.alumno.grado + ' Grado');
     if(ctx.alumno.seccion) pAlumno.push('Sección ' + ctx.alumno.seccion);
     partes.push((pAlumno.length ? pAlumno.join(' · ') : '—'));
@@ -18165,7 +18207,7 @@ async function generarAlertasAsistencia() {
             nombre: (a.apellidos+' '+a.nombres).trim(),
             grado: a.grado,
             seccion: a.seccion,
-            nivel: a.turno,
+            nivel: _alumnoNivelText(a, typeof configCache !== 'undefined' ? configCache : {}) || a.turno,
             dias: dias.map(_diaLabel).filter(Boolean).join(', ') || '-',
             ausencias: '-',
             tardanzas: (tardCount[a.id] || 0) || '-'
@@ -18205,7 +18247,7 @@ async function generarAlertasAsistencia() {
             nombre: ((a.apellidos||'')+' '+(a.nombres||'')).trim() || id,
             grado: a.grado,
             seccion: a.seccion,
-            nivel: a.turno,
+            nivel: _alumnoNivelText(a, typeof configCache !== 'undefined' ? configCache : {}) || a.turno,
             dias: _compact(faltas.map(_diaLabel).filter(Boolean), 12) || '-',
             ausencias: faltas.length || '-',
             tardanzas: '-'
@@ -18268,7 +18310,7 @@ async function generarAlertasAsistencia() {
             nombre: ((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || alumnoId,
             grado: a.grado,
             seccion: a.seccion,
-            nivel: a.turno,
+            nivel: _alumnoNivelText(a, typeof configCache !== 'undefined' ? configCache : {}) || a.turno,
             dias: dias.map(_diaLabel).filter(Boolean).join(', ') || '-',
             ausencias: '-',
             tardanzas: (tardSemanaMap[key] || 0) || '-'
@@ -18309,7 +18351,7 @@ async function generarAlertasAsistencia() {
             nombre: ((a.apellidos||'')+' '+(a.nombres||'')).trim() || id,
             grado: a.grado,
             seccion: a.seccion,
-            nivel: a.turno,
+            nivel: _alumnoNivelText(a, typeof configCache !== 'undefined' ? configCache : {}) || a.turno,
             dias: _compact(faltas.map(_diaLabel).filter(Boolean), 12) || '-',
             ausencias: faltas.length || '-',
             tardanzas: '-'
@@ -19871,6 +19913,8 @@ async function downloadAlumnosTemplate() {
     consangVals.forEach((v, i) => { wsl.getCell(2 + i, 4).value = v; });
     wsl.getCell('E1').value = 'Ciclos (CEBA/EBR)';
     ['','INICIAL','INTERMEDIO','AVANZADO','PRIMARIA','SECUNDARIA'].forEach((v, i) => { wsl.getCell(2 + i, 5).value = v; });
+    wsl.getCell('F1').value = 'ModalidadAtencion';
+    _MODALIDADES_ATENCION.forEach((v, i) => { wsl.getCell(2 + i, 6).value = v; });
 
     // EBR: columna ciclo oculta / vacía, sin dropdown ni campo en header ejemplo
     const headers = esEBR
@@ -19951,7 +19995,7 @@ async function downloadAlumnosTemplate() {
         ]
       : [
           '33348249','Moises','Perez',
-          nivelesFinal[0] || 'Primaria',
+          'PRESENCIAL',
           'INICIAL',
           (gradosAll[0] || '5'),
           (secciones[0] || 'B'),
@@ -19969,6 +20013,7 @@ async function downloadAlumnosTemplate() {
     const seccEnd = Math.max(2, 1 + (secciones.length || 1));
     const consangEnd = Math.max(2, 1 + (consangVals.length || 1));
     const cicloEnd = 7; // INICIAL..SECUNDARIA
+    const modAtEnd = Math.max(2, 1 + (_MODALIDADES_ATENCION.length || 1));
 
     if (esEBR) {
       for(let r = 2; r <= maxRows; r++) {
@@ -19980,8 +20025,8 @@ async function downloadAlumnosTemplate() {
       }
     } else {
       for(let r = 2; r <= maxRows; r++) {
-        ws.getCell(`D${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$A$2:$A$${nivelEnd}`] };
-        ws.getCell(`E${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$E$2:$E$${cicloEnd}`] };
+        ws.getCell(`D${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$F$2:$F$${modAtEnd}`] }; // turno = MODALIDAD ATENCION
+        ws.getCell(`E${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$E$2:$E$${cicloEnd}`] };   // ciclo = INICIAL/INTER/AVANZADO/EBR
         ws.getCell(`F${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$B$2:$B$${gradoEnd}`] };
         ws.getCell(`G${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$C$2:$C$${seccEnd}`] };
         ws.getCell(`M${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
@@ -20673,24 +20718,39 @@ async function poblarFiltroNivel(selectId, onchangeFn, options = {}) {
   const el = document.getElementById(selectId);
   if(!el) return;
   const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
-  // Base: niveles desde config si es EBR; desde alumnos reales si es CEBA/EBA
-  let nivelesBase = [];
+  // 1) Niveles OFICIALES según modalidad elegida por Admin (prevalece sobre inferencia de alumnos)
+  let nivelesOficiales = [];
+  try {
+    nivelesOficiales = _nivelesPorModalidad(cfg).map(n => String(n || '').trim()).filter(Boolean);
+  } catch(_) { nivelesOficiales = []; }
+  // 2) Niveles REALES desde alumnos (para detectar valores históricos cuando Admin cambió modalidad)
+  let nivelesDesdeAlumnos = [];
   const alumnosBase = Array.isArray(options.alumnos) ? options.alumnos : null;
-  if (isProf) {
-    const alumnos = alumnosBase || await getAlumnosFiltrados();
-    nivelesBase = _nivelesDesdeAlumnos(alumnos, cfg);
-  } else {
-    if (alumnosBase && alumnosBase.length) {
-      nivelesBase = _nivelesDesdeAlumnos(alumnosBase, cfg);
+  try {
+    if (isProf) {
+      const alumnos = alumnosBase || await getAlumnosFiltrados();
+      nivelesDesdeAlumnos = _nivelesDesdeAlumnos(alumnos, cfg);
     } else {
-      try {
-        const alumnos = await DB.getAlumnos();
-        nivelesBase = _nivelesDesdeAlumnos(alumnos, cfg);
-      } catch(e) {}
+      if (alumnosBase && alumnosBase.length) {
+        nivelesDesdeAlumnos = _nivelesDesdeAlumnos(alumnosBase, cfg);
+      } else {
+        try {
+          const alumnos = await DB.getAlumnos();
+          nivelesDesdeAlumnos = _nivelesDesdeAlumnos(alumnos, cfg);
+        } catch(e) {}
+      }
+      if (!nivelesDesdeAlumnos.length) {
+        nivelesDesdeAlumnos = ((cfg||{}).niveles||[]).map(n => (typeof n === 'string' ? n : n.nombre)).filter(Boolean);
+      }
     }
-    if (!nivelesBase.length) {
-      nivelesBase = ((cfg||{}).niveles||[]).map(n => (typeof n === 'string' ? n : n.nombre)).filter(Boolean);
-    }
+  } catch(_) {}
+  // 3) Merge: primero oficiales, luego niveles de alumnos que NO estén ya en oficiales (sin duplicados)
+  const seen = new Set();
+  const nivelesBase = [];
+  nivelesOficiales.forEach(n => { if(n && !seen.has(n)) { seen.add(n); nivelesBase.push(n); } });
+  nivelesDesdeAlumnos.forEach(n => { if(n && !seen.has(n)) { seen.add(n); nivelesBase.push(n); } });
+  if (!nivelesBase.length) {
+    nivelesBase.push(...nivelesOficiales);
   }
   el.innerHTML = `<option value="" disabled selected>-- Nivel --</option>${isProf ? '' : '<option value="TODOS">Todos</option>'}`;
   nivelesBase.forEach(n => { el.innerHTML += `<option value="${n}">${n}</option>`; });
