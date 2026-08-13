@@ -19,6 +19,15 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="compat.js?v=124"></script>
 <script src="db_supabase.js?v=124"></script>
+<script>
+(function(){
+  var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
+  for (var i=0;i<stubs.length;i++) {
+    var k = stubs[i];
+    if (typeof window[k] !== 'function') window[k] = function(){ return function(){}; }();
+  }
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <style>
@@ -6254,7 +6263,7 @@ async function guardarMisDatos() {
     document.getElementById('avatar-initials-menu').textContent = iniciales;
     document.getElementById('menu-user-name').textContent = nombre;
     document.getElementById('user-name-display').textContent = nombre;
-    setTimeout(() => msbUpdateUser && msbUpdateUser(), 100);
+    setTimeout(() => { if(typeof msbUpdateUser === 'function') msbUpdateUser(); }, 100);
     okEl.textContent = 'Datos actualizados correctamente'; okEl.style.display = 'block';
     setTimeout(() => { document.getElementById('modal-mis-datos').style.display = 'none'; }, 1500);
   } catch(e) {
@@ -6490,7 +6499,7 @@ auth.onAuthStateChanged(async user => {
     document.getElementById('menu-user-name').textContent = nombre;
     document.getElementById('menu-user-rol').textContent = _rolLabel(currentRol);
     document.getElementById('avatar-btn').style.display = 'inline-flex';
-    setTimeout(() => msbUpdateUser && msbUpdateUser(), 200);
+    setTimeout(() => { if(typeof msbUpdateUser === 'function') msbUpdateUser(); }, 200);
 
     // Aplicar permisos y restaurar la última sección ANTES de cargar datos pesados,
     // para evitar que se vea "Inicio" por unos segundos al refrescar.
@@ -6589,7 +6598,7 @@ auth.onAuthStateChanged(async user => {
 });
 
 function aplicarPermisos(rol) {
-  setTimeout(renderBottomNav, 100);
+  setTimeout(() => { if(typeof renderBottomNav === 'function') renderBottomNav(); }, 100);
   currentRol = _normRol(rol);
 
   const ids = {
@@ -20757,7 +20766,7 @@ function _nivelesDesdeAlumnos(alumnosArr, cfg) {
   const set = new Set(alumnos.map(a => String(a[f] || '').trim()).filter(Boolean));
   const ordenCEBA = ['INICIAL','INTERMEDIO','AVANZADO'];
   if (ordenCEBA.some(c => set.has(c))) {
-    return ordenCEBA.filter(c => set.has(c)).concat([...set].filter(v => !ordenCEBA.includes(v))));
+    return ordenCEBA.filter(c => set.has(c)).concat([...set].filter(v => !ordenCEBA.includes(v)));
   }
   const cfgNiveles = ((cfg||{}).niveles||[]);
   const ordenCfg = cfgNiveles.map(n => (typeof n === 'string' ? n : n.nombre)).filter(Boolean);
