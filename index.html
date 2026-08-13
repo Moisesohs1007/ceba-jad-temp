@@ -3084,6 +3084,15 @@
           <input type="text" id="cfg-colegio-anio" placeholder="2026" inputmode="numeric">
         </div>
         <div class="form-group">
+          <label>Modalidad educativa</label>
+          <select id="cfg-colegio-modalidad" onchange="_applyUiByModalidad(this.value)">
+            <option value="">(no configurada)</option>
+            <option value="CEBA">CEBA — Ciclos (Inicial / Intermedio / Avanzado)</option>
+            <option value="EBR">EBR — Educación Básica Regular (Primaria / Secundaria)</option>
+            <option value="EBA">EBA — Educación Básica Alternativa</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label>Logo (PNG/JPG &lt; 300KB)</label>
           <input type="file" id="cfg-colegio-logo-file" accept="image/*" onchange="previsualizarLogoColegio(this)">
         </div>
@@ -5468,6 +5477,39 @@ function _aplicarConfigColegio(cfg) {
   if (schAnio2) schAnio2.textContent = anio || '';
   const yearTag = document.getElementById('banner-year-tag');
   if (yearTag) yearTag.textContent = 'Año Escolar ' + (anio || '');
+
+  const modalidadRaw = String(_cfgVal(cfg, 'modalidadEducativa', 'modalidad_educativa', '') || '').trim().toUpperCase();
+  const modalidad = ['CEBA','EBR','EBA'].includes(modalidadRaw) ? modalidadRaw : '';
+  window.COLEGIO_MODALIDAD = modalidad;
+  const cfgModSel = document.getElementById('cfg-colegio-modalidad');
+  if (cfgModSel) cfgModSel.value = modalidad;
+  _applyUiByModalidad(modalidad);
+}
+
+// ── Cambia toda la UI según la modalidad educativa del colegio ──
+// CEBA → mostrar campo CICLO
+// EBR  → ocultar campo CICLO (ciclo vacío por defecto, coincide TODOS los niveles)
+// EBA  → mostrar campo CICLO (mismo comportamiento que CEBA)
+function _colegioEsEBR(m){ return (String(m||window.COLEGIO_MODALIDAD||'')).toUpperCase() === 'EBR'; }
+function _applyUiByModalidad(modalidad){
+  const m = String(modalidad || '').toUpperCase();
+  const esEBR = _colegioEsEBR(m);
+  const fCiclo = document.getElementById('f-ciclo');
+  if (fCiclo) {
+    const wrap = fCiclo.closest('.form-group');
+    if (wrap) wrap.style.display = esEBR ? 'none' : '';
+  }
+  const uTutorNivel = document.getElementById('u-tutor-nivel');
+  if (uTutorNivel) {
+    const wrap = uTutorNivel.closest('.form-group');
+    if (wrap) wrap.style.display = esEBR ? 'none' : '';
+  }
+  try {
+    const allCycleLabels = document.querySelectorAll('[data-modalidad="ciclo"]');
+    allCycleLabels.forEach(el => { el.style.display = esEBR ? 'none' : ''; });
+    const allEbrOnlyLabels = document.querySelectorAll('[data-modalidad="ebr"]');
+    allEbrOnlyLabels.forEach(el => { el.style.display = esEBR ? '' : 'none'; });
+  } catch(_) {}
 }
 const firebaseConfig = {
   apiKey: "AIzaSyBLI0I41vWjMK2q1ZjH1c1BK4SAFno7sfY",
@@ -19447,6 +19489,8 @@ async function downloadUsuariosTemplate() {
     const gradosAll = [...new Set(Object.values(cfg.grados || {}).flat().map(x => String(x || '').trim()).filter(Boolean))];
     const secciones = (cfg.secciones || []).map(x => String(x || '').trim()).filter(Boolean);
     const roles = ['admin','director','coordinador','profesor','psicologo','auxiliar'];
+    const modalidad = String(_cfgVal(cfg, 'modalidadEducativa', 'modalidad_educativa', '') || '').trim().toUpperCase();
+    const esEBR = modalidad === 'EBR';
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('usuarios');
@@ -19473,11 +19517,11 @@ async function downloadUsuariosTemplate() {
       exGr1 ? (exGr1 + ':' + exS1 + (exS2 ? (',' + exS2) : '')) : '',
       exGr2 ? (exGr2 + ':todas') : ''
     ].filter(Boolean).join(';');
-    // Ejemplo TUTOR (modo CEBA: varias aulas con ciclos). En EBR se puede dejar vacío y llenar tutor_grado + tutor_seccion.
-    const exTutorCEBA = 'CICLO INICIAL 1°A-2°A / CICLO INTERMEDIO 1°A-2°A-3°A';
+    // Ejemplo columna TUTOR: según modalidad
+    const exTutor = esEBR ? '' : 'CICLO INICIAL 1°A-2°A / CICLO INTERMEDIO 1°A-2°A-3°A';
     ws.addRow([
       'Juan Pérez','juan.perez@colegio.com','123456','profesor','987654321','Docente de aula',
-      'SI', exGr1 || '', exS1 || '', exTutorCEBA, 'NO', exAsig || ''
+      'SI', exGr1 || '', exS1 || '', exTutor, 'NO', exAsig || ''
     ]);
 
     const roleFormula = `"${roles.join(',')}"`;
@@ -19522,6 +19566,8 @@ async function downloadAlumnosTemplate() {
       ...((cfg.niveles || []).map ? (cfg.niveles || []).map(x => String(x || '').trim()) : [])
     ])].filter(Boolean);
     const nivelesFinal = niveles.length ? niveles : ['Inicial','Primaria','Secundaria'];
+    const modalidad = String(_cfgVal(cfg, 'modalidadEducativa', 'modalidad_educativa', '') || '').trim().toUpperCase();
+    const esEBR = modalidad === 'EBR';
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('alumnos');
@@ -19539,51 +19585,96 @@ async function downloadAlumnosTemplate() {
     wsl.getCell('E1').value = 'Ciclos (CEBA/EBR)';
     ['','INICIAL','INTERMEDIO','AVANZADO','PRIMARIA','SECUNDARIA'].forEach((v, i) => { wsl.getCell(2 + i, 5).value = v; });
 
-    const headers = [
-      'dni','nombres','apellidos','turno','ciclo','grado','seccion',
-      'foto','apoderadoNombres','apoderadoApellidos','telefono','correoApoderado',
-      'consanguinidad','consanguinidad_detalle',
-      'apoderado2Nombres','apoderado2Apellidos','telefono2','correoApoderado2',
-      'consanguinidad2','consanguinidad_detalle2'
-    ];
+    // EBR: columna ciclo oculta / vacía, sin dropdown ni campo en header ejemplo
+    const headers = esEBR
+      ? [
+          'dni','nombres','apellidos','turno','grado','seccion',
+          'foto','apoderadoNombres','apoderadoApellidos','telefono','correoApoderado',
+          'consanguinidad','consanguinidad_detalle',
+          'apoderado2Nombres','apoderado2Apellidos','telefono2','correoApoderado2',
+          'consanguinidad2','consanguinidad_detalle2'
+        ]
+      : [
+          'dni','nombres','apellidos','turno','ciclo','grado','seccion',
+          'foto','apoderadoNombres','apoderadoApellidos','telefono','correoApoderado',
+          'consanguinidad','consanguinidad_detalle',
+          'apoderado2Nombres','apoderado2Apellidos','telefono2','correoApoderado2',
+          'consanguinidad2','consanguinidad_detalle2'
+        ];
     ws.addRow(headers);
     ws.getRow(1).font = { bold: true };
     ws.views = [{ state: 'frozen', ySplit: 1 }];
-    ws.columns = [
-      { key: 'dni', width: 14, style: { numFmt: '@' } },
-      { key: 'nombres', width: 22 },
-      { key: 'apellidos', width: 22 },
-      { key: 'turno', width: 14 },
-      { key: 'ciclo', width: 16 },
-      { key: 'grado', width: 14 },
-      { key: 'seccion', width: 10 },
-      { key: 'foto', width: 34 },
-      { key: 'apoderadoNombres', width: 20 },
-      { key: 'apoderadoApellidos', width: 20 },
-      { key: 'telefono', width: 16, style: { numFmt: '@' } },
-      { key: 'correoApoderado', width: 28 },
-      { key: 'consanguinidad', width: 16 },
-      { key: 'consanguinidad_detalle', width: 22 },
-      { key: 'apoderado2Nombres', width: 20 },
-      { key: 'apoderado2Apellidos', width: 20 },
-      { key: 'telefono2', width: 16, style: { numFmt: '@' } },
-      { key: 'correoApoderado2', width: 28 },
-      { key: 'consanguinidad2', width: 16 },
-      { key: 'consanguinidad_detalle2', width: 22 },
-    ];
+    const colCiclo = { key: 'ciclo', width: 16 };
+    ws.columns = esEBR
+      ? [
+          { key: 'dni', width: 14, style: { numFmt: '@' } },
+          { key: 'nombres', width: 22 },
+          { key: 'apellidos', width: 22 },
+          { key: 'turno', width: 14 },
+          { key: 'grado', width: 14 },
+          { key: 'seccion', width: 10 },
+          { key: 'foto', width: 34 },
+          { key: 'apoderadoNombres', width: 20 },
+          { key: 'apoderadoApellidos', width: 20 },
+          { key: 'telefono', width: 16, style: { numFmt: '@' } },
+          { key: 'correoApoderado', width: 28 },
+          { key: 'consanguinidad', width: 16 },
+          { key: 'consanguinidad_detalle', width: 22 },
+          { key: 'apoderado2Nombres', width: 20 },
+          { key: 'apoderado2Apellidos', width: 20 },
+          { key: 'telefono2', width: 16, style: { numFmt: '@' } },
+          { key: 'correoApoderado2', width: 28 },
+          { key: 'consanguinidad2', width: 16 },
+          { key: 'consanguinidad_detalle2', width: 22 },
+        ]
+      : [
+          { key: 'dni', width: 14, style: { numFmt: '@' } },
+          { key: 'nombres', width: 22 },
+          { key: 'apellidos', width: 22 },
+          { key: 'turno', width: 14 },
+          colCiclo,
+          { key: 'grado', width: 14 },
+          { key: 'seccion', width: 10 },
+          { key: 'foto', width: 34 },
+          { key: 'apoderadoNombres', width: 20 },
+          { key: 'apoderadoApellidos', width: 20 },
+          { key: 'telefono', width: 16, style: { numFmt: '@' } },
+          { key: 'correoApoderado', width: 28 },
+          { key: 'consanguinidad', width: 16 },
+          { key: 'consanguinidad_detalle', width: 22 },
+          { key: 'apoderado2Nombres', width: 20 },
+          { key: 'apoderado2Apellidos', width: 20 },
+          { key: 'telefono2', width: 16, style: { numFmt: '@' } },
+          { key: 'correoApoderado2', width: 28 },
+          { key: 'consanguinidad2', width: 16 },
+          { key: 'consanguinidad_detalle2', width: 22 },
+        ];
 
-    ws.addRow([
-      '33348249','Moises','Perez',
-      nivelesFinal[0] || 'Primaria',
-      'INICIAL',
-      (gradosAll[0] || '5'),
-      (secciones[0] || 'B'),
-      '',
-      'Rosa','Perez','999888777','',
-      'madre','',
-      '','','','',
-      '',''
-    ]);
+    const filaEj = esEBR
+      ? [
+          '33348249','Moises','Perez',
+          nivelesFinal[0] || 'Primaria',
+          (gradosAll[0] || '5'),
+          (secciones[0] || 'B'),
+          '',
+          'Rosa','Perez','999888777','',
+          'madre','',
+          '','','','',
+          '',''
+        ]
+      : [
+          '33348249','Moises','Perez',
+          nivelesFinal[0] || 'Primaria',
+          'INICIAL',
+          (gradosAll[0] || '5'),
+          (secciones[0] || 'B'),
+          '',
+          'Rosa','Perez','999888777','',
+          'madre','',
+          '','','','',
+          '',''
+        ];
+    ws.addRow(filaEj);
 
     const maxRows = 1000;
     const nivelEnd = Math.max(2, 1 + (nivelesFinal.length || 1));
@@ -19592,13 +19683,23 @@ async function downloadAlumnosTemplate() {
     const consangEnd = Math.max(2, 1 + (consangVals.length || 1));
     const cicloEnd = 7; // INICIAL..SECUNDARIA
 
-    for(let r = 2; r <= maxRows; r++) {
-      ws.getCell(`D${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$A$2:$A$${nivelEnd}`] };
-      ws.getCell(`E${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$E$2:$E$${cicloEnd}`] };
-      ws.getCell(`F${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$B$2:$B$${gradoEnd}`] };
-      ws.getCell(`G${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$C$2:$C$${seccEnd}`] };
-      ws.getCell(`M${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
-      ws.getCell(`S${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
+    if (esEBR) {
+      for(let r = 2; r <= maxRows; r++) {
+        ws.getCell(`D${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$A$2:$A$${nivelEnd}`] };
+        ws.getCell(`E${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$B$2:$B$${gradoEnd}`] };
+        ws.getCell(`F${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$C$2:$C$${seccEnd}`] };
+        ws.getCell(`L${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
+        ws.getCell(`R${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
+      }
+    } else {
+      for(let r = 2; r <= maxRows; r++) {
+        ws.getCell(`D${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$A$2:$A$${nivelEnd}`] };
+        ws.getCell(`E${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$E$2:$E$${cicloEnd}`] };
+        ws.getCell(`F${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$B$2:$B$${gradoEnd}`] };
+        ws.getCell(`G${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$C$2:$C$${seccEnd}`] };
+        ws.getCell(`M${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
+        ws.getCell(`S${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
+      }
     }
 
     wsl.state = 'veryHidden';
@@ -21243,12 +21344,14 @@ async function guardarInfoColegio() {
     const nombre = document.getElementById('cfg-colegio-nombre')?.value?.trim() || '';
     const eslogan = document.getElementById('cfg-colegio-eslogan')?.value?.trim() || '';
     const anio = document.getElementById('cfg-colegio-anio')?.value?.trim() || '';
+    const modalidad = String(document.getElementById('cfg-colegio-modalidad')?.value || '').trim().toUpperCase();
     if(!nombre) { toast('Completa el nombre del colegio','warning'); return; }
     const payload = {
       nombreColegio: nombre,
       eslogan: eslogan,
       esloganColegio: eslogan,
       anio: anio || (cfg.anio || COLEGIO_ANIO || ''),
+      modalidadEducativa: modalidad,
     };
     if(_colegioLogoTmp) payload.logoColegio = _colegioLogoTmp;
     await db.collection('config').doc('general').set(payload, { merge: true });

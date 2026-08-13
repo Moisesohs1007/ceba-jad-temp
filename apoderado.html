@@ -784,9 +784,11 @@ function chatApoAlumnoLabel(conv) {
   var a = CHAT_APO.alumnosCache.get(conv.alumno_id);
   if (!a) return conv.alumno_id;
   var partsAula = [];
+  var esEBR = false;
+  try { esEBR = String(window.COLEGIO_MODALIDAD || '').toUpperCase() === 'EBR'; } catch(e){}
   try {
     var c = _apoCanonCiclo(conv.ciclo || a.ciclo);
-    if (c) partsAula.push(c);
+    if (c && !esEBR) partsAula.push(c);
   } catch(e) {}
   var g = conv.grado || a.grado || '';
   var s = conv.seccion || a.seccion || '';

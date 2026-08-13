@@ -297,13 +297,13 @@ async function _getConfig(docId) {
   if (error || !data) {
     ({ data, error } = await _sb
       .from('colegios')
-      .select('id,nombre,anio,eslogan,logo_url,apo_domain,niveles,grados,secciones,banner_imagenes,rol_examenes_config')
+      .select('id,nombre,anio,eslogan,logo_url,apo_domain,niveles,grados,secciones,banner_imagenes,rol_examenes_config,modalidad_educativa')
       .eq('id', COLEGIO_ID)
       .single());
     if (error && String(error.message || '').includes('rol_examenes_config')) {
       ({ data, error } = await _sb
         .from('colegios')
-        .select('id,nombre,anio,eslogan,logo_url,apo_domain,niveles,grados,secciones,banner_imagenes')
+        .select('id,nombre,anio,eslogan,logo_url,apo_domain,niveles,grados,secciones,banner_imagenes,modalidad_educativa')
         .eq('id', COLEGIO_ID)
         .single());
     }
@@ -314,6 +314,11 @@ async function _getConfig(docId) {
     const d = String(data.apo_domain || '').trim().toLowerCase();
     if(d) window.APO_DOMAIN = '@' + d.replace(/^@+/, '');
   } catch(e) {}
+  try {
+    const m = String(data.modalidad_educativa || '').trim().toUpperCase();
+    if (m) window.COLEGIO_MODALIDAD = m;
+    else window.COLEGIO_MODALIDAD = '';
+  } catch(e) { window.COLEGIO_MODALIDAD = ''; }
   return {
     exists: true,
     data: () => ({
@@ -329,6 +334,7 @@ async function _getConfig(docId) {
       rolExamenesConfig: (data.rol_examenes_config && typeof data.rol_examenes_config === 'object')
         ? data.rol_examenes_config
         : (data.rol_examenes_config ? JSON.parse(data.rol_examenes_config || '{}') : {}),
+      modalidadEducativa: String(data.modalidad_educativa || '').trim().toUpperCase(),
     })
   };
 }
@@ -352,6 +358,7 @@ async function _setConfig(docId, data, options = {}) {
     if (data.logoUrl !== undefined) update.logo_url = data.logoUrl;
     if (data.apoDomain !== undefined) update.apo_domain = data.apoDomain;
     if (data.rolExamenesConfig !== undefined) update.rol_examenes_config = data.rolExamenesConfig;
+    if (data.modalidadEducativa !== undefined) update.modalidad_educativa = String(data.modalidadEducativa || '').trim().toUpperCase();
   }
   if (!Object.keys(update).length) return;
   let res = await _sb.from('colegios').update(update).eq('id', COLEGIO_ID);

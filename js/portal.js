@@ -192,7 +192,10 @@ function continuarCargaApoderado(user, dni) {
 function llenarDatos() {
   // Nombre completo: nombres + apellidos
   var nombre = ((alumno.nombres||'') + ' ' + (alumno.apellidos||'')).trim();
-  var grado  = (alumno.ciclo ? (alumno.ciclo + ' ') : '') + (alumno.grado||'') + ' ' + (alumno.seccion||'') + (alumno.turno ? ' - ' + alumno.turno : '');
+  var esEBR = false;
+  try { esEBR = String(window.COLEGIO_MODALIDAD || '').toUpperCase() === 'EBR'; } catch(e){}
+  var cicloPart = (alumno.ciclo && !esEBR) ? (String(alumno.ciclo).trim() + ' ') : '';
+  var grado  = cicloPart + (alumno.grado||'') + ' ' + (alumno.seccion||'') + (alumno.turno ? ' - ' + alumno.turno : '');
   // Iniciales: primer nombre + primer apellido
   var partsN = (alumno.nombres||'').trim().split(' ');
   var partsA = (alumno.apellidos||'').trim().split(' ');
@@ -1004,7 +1007,12 @@ function renderCarnet() {
   });
   if(alumno.foto) { var cf = document.getElementById('carnet-foto'); if(cf) cf.src = alumno.foto; }
   document.getElementById('carnet-nombre').textContent = alumno.nombres+' '+alumno.apellidos;
-  document.getElementById('carnet-grado').textContent  = (alumno.ciclo ? (alumno.ciclo + ' ') : '') + alumno.grado+' '+alumno.seccion+' - '+alumno.turno;
+  {
+    var esEBR2 = false;
+    try { esEBR2 = String(window.COLEGIO_MODALIDAD || '').toUpperCase() === 'EBR'; } catch(e){}
+    var cicloPart2 = (alumno.ciclo && !esEBR2) ? (String(alumno.ciclo).trim() + ' ') : '';
+    document.getElementById('carnet-grado').textContent = cicloPart2 + alumno.grado+' '+alumno.seccion+' - '+alumno.turno;
+  }
   document.getElementById('carnet-dni').textContent    = 'DNI: '+alumno.id;
   document.getElementById('carnet-year').textContent   = new Date().getFullYear();
   var qrEl = document.getElementById('carnet-qr');
@@ -1510,7 +1518,10 @@ function apoMsbInit() {
   // Poblar header del sidebar con datos del alumno
   if(typeof alumno !== 'undefined' && alumno) {
     var nombre = ((alumno.nombres||'') + ' ' + (alumno.apellidos||'')).trim();
-    var grado  = ((alumno.ciclo ? (alumno.ciclo + ' ') : '') + (alumno.grado||'') + ' ' + (alumno.seccion||'')).trim();
+    var esEBR3 = false;
+    try { esEBR3 = String(window.COLEGIO_MODALIDAD || '').toUpperCase() === 'EBR'; } catch(e){}
+    var cicloPart3 = (alumno.ciclo && !esEBR3) ? (String(alumno.ciclo).trim() + ' ') : '';
+    var grado  = (cicloPart3 + (alumno.grado||'') + ' ' + (alumno.seccion||'')).trim();
     var nEl = document.getElementById('apo-msb-nombre');
     var gEl = document.getElementById('apo-msb-grado');
     if(nEl) nEl.textContent = nombre || '—';
