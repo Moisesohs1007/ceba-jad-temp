@@ -5575,8 +5575,15 @@ function _aplicarConfigColegio(cfg) {
   }
   window.COLEGIO_MODALIDAD = modalidad;
   const cfgModSel = document.getElementById('cfg-colegio-modalidad');
-  if (cfgModSel) cfgModSel.value = modalidad;
-  _applyUiByModalidad(modalidad);
+  if (cfgModSel) cfgModSel.value = (modalidadExpl || modalidad || '');
+  try {
+    if (cfgModSel) {
+      if (!Array.from(cfgModSel.options || []).some(o => String(o.value || '') === String(cfgModSel.value || ''))) {
+        cfgModSel.value = '';
+      }
+    }
+  } catch(_e) {}
+  _applyUiByModalidad(modalidadExpl || modalidad || '');
 }
 
 // ── Cambia toda la UI según la modalidad educativa del colegio ──
@@ -21494,7 +21501,13 @@ async function renderConfig() {
   }
   try {
     const cfgModSel = document.getElementById('cfg-colegio-modalidad');
-    if (cfgModSel && !cfgModSel.value) cfgModSel.value = modalActual || '';
+    if (cfgModSel) {
+      const v = (modalidadExpl || modalActual || '');
+      cfgModSel.value = v;
+      if (!Array.from(cfgModSel.options || []).some(o => String(o.value || '') === String(v || ''))) {
+        cfgModSel.value = '';
+      }
+    }
   } catch(_) {}
   if ((!cfgNivelesOld.length || !nombresEsperados.every(n => cfgNivelesOld.some(o => String(o && o.nombre || '') === n)))) {
     try {
@@ -21740,18 +21753,19 @@ async function guardarInfoColegio() {
     const nombre = document.getElementById('cfg-colegio-nombre')?.value?.trim() || '';
     const eslogan = document.getElementById('cfg-colegio-eslogan')?.value?.trim() || '';
     const anio = document.getElementById('cfg-colegio-anio')?.value?.trim() || '';
-    const modalidad = String(document.getElementById('cfg-colegio-modalidad')?.value || '').trim().toUpperCase();
+    const modalidadSel = String(document.getElementById('cfg-colegio-modalidad')?.value || '').trim().toUpperCase();
     if(!nombre) { toast('Completa el nombre del colegio','warning'); return; }
-    const modalidadValida = ['CEBA','EBR','EBA'].includes(modalidad);
+    const modalidadValida = ['CEBA','EBR','EBA'].includes(modalidadSel);
+    const modalidad = modalidadValida ? modalidadSel : '';
     const payload = {
       nombreColegio: nombre,
       eslogan: eslogan,
       esloganColegio: eslogan,
       anio: anio || (cfg.anio || COLEGIO_ANIO || ''),
     };
-    if (modalidadValida || modalidad === '') {
-      payload.modalidadEducativa = modalidad;
-      payload.modalidad_educativa = modalidad;
+    if (modalidadValida || modalidadSel === '') {
+      payload.modalidadEducativa = modalidadSel;
+      payload.modalidad_educativa = modalidadSel;
     }
     if (modalidadValida) {
       const nivelesBase = _horariosPorModalidad(modalidad);
@@ -21777,16 +21791,27 @@ async function guardarInfoColegio() {
     if(_colegioLogoTmp) payload.logoColegio = _colegioLogoTmp;
     await db.collection('config').doc('general').set(payload, { merge: true });
     invalidateConfig();
-    const newCfg = await getConfig();
+    let newCfg;
+    try { newCfg = await getConfig(); } catch(_e) { newCfg = { ...(configCache || {}), ...payload }; }
+    // IMPORTANTE: La decisión del ADMIN siempre PRIMA sobre la inferencia.
+    // Actualizamos en memoria configCache y newCfg con la modalidad que eligió, sin importar alumnos.
     try {
-      const alumnosArr = (typeof window !== 'undefined') ? (window.alumnosCache || []) : [];
-      if (alumnosArr.length) {
-        const infM = _cfgModalidadConInferencia(newCfg, alumnosArr);
-        if (infM && !_cfgModalidad(newCfg) && typeof configCache === 'object') {
-          configCache.modalidadEducativa = infM;
-          if(!Object.prototype.hasOwnProperty.call(configCache,'modalidad_educativa')) configCache.modalidad_educativa = infM;
+      if (!newCfg || typeof newCfg !== 'object') newCfg = {};
+      if (modalidadValida || modalidadSel === '') {
+        newCfg.modalidadEducativa = modalidadSel;
+        newCfg.modalidad_educativa = modalidadSel;
+        if (payload.niveles) newCfg.niveles = payload.niveles;
+        if (payload.grados)  newCfg.grados  = payload.grados;
+      }
+      if (typeof configCache === 'object') {
+        if (modalidadValida || modalidadSel === '') {
+          configCache.modalidadEducativa = modalidadSel;
+          configCache.modalidad_educativa = modalidadSel;
+          if (payload.niveles) configCache.niveles = payload.niveles;
+          if (payload.grados)  configCache.grados  = payload.grados;
         }
       }
+      try { LSC.set('config', configCache || newCfg, LSC.TTL_CONFIG); } catch(_eLSC) {}
     } catch(_e) {}
     _aplicarConfigColegio(newCfg);
     renderConfig();
