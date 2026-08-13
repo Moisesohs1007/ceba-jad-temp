@@ -8196,7 +8196,9 @@ let _searchAlumnosTimer = null;
 let _alumnosRenderPrep = { source: null, sorted: [], searchTextById: new Map() };
 
 function _compareAlumnoOrden(a, b) {
-  const modalidad = typeof configCache !== 'undefined' ? _cfgModalidad(configCache) : '';
+  const modalidad = typeof configCache !== 'undefined'
+    ? _cfgModalidadConInferencia(configCache, [a, b])
+    : _inferirModalidad({}, [a, b]);
   const usaCiclo = (modalidad === 'CEBA' || modalidad === 'EBA');
   const campoNivel = usaCiclo ? 'ciclo' : 'turno';
   const ordenNivelEBR = { 'Inicial':1,'Primaria':2,'Secundaria':3 };
@@ -8283,13 +8285,22 @@ async function renderAlumnos() {
   } catch(e) { console.error('renderAlumnos:', e); toast('Error al cargar alumnos','error'); }
 }
 
+function _alumnoNivelText(a, cfg) {
+  const campo = _nivelFieldName(cfg || configCache || {}, [a]);
+  const valor = String((a||{})[campo] || '').trim();
+  if(valor) return valor;
+  const fallbackCEBA = String((a||{}).ciclo || '').trim();
+  if(fallbackCEBA) return fallbackCEBA;
+  return String((a||{}).turno || '').trim();
+}
+
 function _filaAlumno(a) {
   return `<tr>
     <td class="td-id">${a.id}</td>
     <td class="td-name">${a.nombres} ${a.apellidos}</td>
     <td>${a.grado}</td>
     <td>${a.seccion}</td>
-    <td>${a.turno}</td>
+    <td>${_alumnoNivelText(a)}</td>
     <td style="display:flex;gap:6px;flex-wrap:wrap;">
       <button class="btn btn-ghost btn-accion-alumno" style="padding:5px 10px;font-size:0.78rem;" onclick="showQR('${a.id}')">QR</button>
       <button class="btn btn-ghost btn-accion-alumno" style="padding:5px 10px;font-size:0.78rem;" onclick="openModalAlumno('${a.id}')">✏</button>
@@ -20664,6 +20675,17 @@ async function inicializarFiltros(options = {}) {
   const cfg = options.cfg || await getConfig();
   const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
   const alumnos = Array.isArray(options.alumnos) ? options.alumnos : (isProf ? await getAlumnosFiltrados() : await DB.getAlumnos());
+  try {
+    const infM = _inferirModalidad(cfg, alumnos);
+    if(infM && !_cfgModalidad(cfg)) {
+      if(!configCache) configCache = {};
+      if(typeof configCache === 'object') {
+        configCache.modalidadEducativa = infM;
+        if(!Object.prototype.hasOwnProperty.call(configCache,'modalidad_educativa')) configCache.modalidad_educativa = infM;
+      }
+      if(typeof cfg === 'object') { cfg.modalidadEducativa = infM; if(!cfg.modalidad_educativa) cfg.modalidad_educativa = infM; }
+    }
+  } catch(_inferr) {}
 
   await Promise.all([
     poblarFiltroNivel('fa-nivel', 'onNivelChangeAlumnos', { cfg, alumnos }),
@@ -20751,18 +20773,42 @@ function _cfgVal(cfg, k1, k2, fallback) {
 function _cfgModalidad(cfg) {
   return String(_cfgVal(cfg, 'modalidadEducativa', 'modalidad_educativa', '') || '').trim().toUpperCase();
 }
-function _nivelFieldName(cfg) {
+function _inferirModalidad(cfg, alumnosArr) {
+  const expl = _cfgModalidad(cfg);
+  if(expl) return expl;
+  const CEBA_CICLOS = ['INICIAL','INTERMEDIO','AVANZADO'];
+  const EBR_TURNOS = ['Inicial','Primaria','Secundaria','INICIAL','PRIMARIA','SECUNDARIA'];
+  const alumnos = Array.isArray(alumnosArr) ? alumnosArr.slice(0, 200) : [];
+  let cicloSet = 0, turnoSet = 0;
+  for(var i=0;i<alumnos.length;i++){
+    const c = String((alumnos[i]||{}).ciclo||'').trim().toUpperCase();
+    const t = String((alumnos[i]||{}).turno||'').trim();
+    if(c && CEBA_CICLOS.indexOf(c)>=0) cicloSet++;
+    if(t && EBR_TURNOS.indexOf(t)>=0) turnoSet++;
+  }
+  if(!cicloSet && !turnoSet){
+    if(((cfg||{}).grados||{}).INICIAL || ((cfg||{}).grados||{}).INTERMEDIO || ((cfg||{}).grados||{}).AVANZADO) return 'CEBA';
+  }
+  if(cicloSet >= turnoSet) return cicloSet ? 'CEBA' : (turnoSet ? 'EBR' : 'CEBA');
+  return 'EBR';
+}
+function _cfgModalidadConInferencia(cfg, alumnosArr) {
   const m = _cfgModalidad(cfg);
+  if(m) return m;
+  return _inferirModalidad(cfg, alumnosArr);
+}
+function _nivelFieldName(cfg, alumnosArr) {
+  const m = _cfgModalidadConInferencia(cfg, alumnosArr);
   return (m === 'CEBA' || m === 'EBA') ? 'ciclo' : 'turno';
 }
-function _matchNivel(obj, nivelSel, cfg) {
+function _matchNivel(obj, nivelSel, cfg, alumnosArr) {
   if (!nivelSel || nivelSel === 'TODOS') return true;
-  const f = _nivelFieldName(cfg);
+  const f = _nivelFieldName(cfg, alumnosArr);
   return String(obj && obj[f] || '').trim() === String(nivelSel).trim();
 }
 function _nivelesDesdeAlumnos(alumnosArr, cfg) {
   const alumnos = Array.isArray(alumnosArr) ? alumnosArr : [];
-  const f = _nivelFieldName(cfg);
+  const f = _nivelFieldName(cfg, alumnos);
   const set = new Set(alumnos.map(a => String(a[f] || '').trim()).filter(Boolean));
   const ordenCEBA = ['INICIAL','INTERMEDIO','AVANZADO'];
   if (ordenCEBA.some(c => set.has(c))) {
@@ -20778,7 +20824,7 @@ function _nivelesDesdeAlumnos(alumnosArr, cfg) {
 function _filtrarPorNivel(arr, nivelSel, cfg) {
   if (!Array.isArray(arr)) return [];
   if (!nivelSel || nivelSel === 'TODOS') return arr.slice();
-  const f = _nivelFieldName(cfg);
+  const f = _nivelFieldName(cfg, arr);
   const nS = String(nivelSel).trim();
   return arr.filter(o => String(o && o[f] || '').trim() === nS);
 }
