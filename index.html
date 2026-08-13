@@ -5195,7 +5195,7 @@
         </div>
         <div class="form-group">
           <label>Ciclo / Nivel pedagógico</label>
-          <select id="f-ciclo" onchange="_syncFGradosPorCiclo()">
+          <select id="f-ciclo" onchange="_syncFGradosPorCiclo(); if(typeof cargarGradosPorNivel === 'function'){ cargarGradosPorNivel(); }">
             <option value="">(EBR: dejar vacío | CEBA: INICIAL / INTERMEDIO / AVANZADO)</option>
             <option value="INICIAL">CICLO INICIAL</option>
             <option value="INTERMEDIO">CICLO INTERMEDIO</option>
@@ -5461,6 +5461,40 @@ function _nivelesPorModalidad(m) {
   return ['INICIAL', 'INTERMEDIO', 'AVANZADO'];
 }
 
+// ============================================================
+// Helpers MODALIDAD DE ATENCIÓN (CEBA): PRESENCIAL / SEMIPRESENCIAL / VIRTUAL
+//   Solo aplica para CEBA/EBA. En EBR, `turno` = Inicial/Primaria/Secundaria (Nivel pedagógico).
+// ============================================================
+const _MODALIDADES_ATENCION = ['PRESENCIAL','SEMIPRESENCIAL','VIRTUAL'];
+const _MODALIDAD_ATENCION_LABEL = { 'PRESENCIAL':'Presencial', 'SEMIPRESENCIAL':'Semipresencial', 'VIRTUAL':'Virtual' };
+
+function _normModAtencion(val) {
+  const s = String(val || '').trim().toUpperCase();
+  if (!s) return '';
+  if (s === 'PRESENCIAL' || s === 'PRESEN' || s === 'PRE' || s === 'PR' || s.startsWith('PRESEN')) return 'PRESENCIAL';
+  if (s === 'SEMIPRESENCIAL' || s === 'SEMI' || s === 'SEM' || s.startsWith('SEMI') || s === 'HIBRIDO' || s === 'HÍBRIDO') return 'SEMIPRESENCIAL';
+  if (s === 'VIRTUAL' || s === 'VIRT' || s === 'VIR' || s.startsWith('VIR') || s === 'ONLINE' || s === 'REMOTO') return 'VIRTUAL';
+  // Si no match directo, buscar substring
+  if (s.includes('PRESEN') && !s.includes('SEMI')) return 'PRESENCIAL';
+  if (s.includes('SEMI') || s.includes('HIBRI') || s.includes('HÍBRI')) return 'SEMIPRESENCIAL';
+  if (s.includes('VIRT') || s.includes('ONLINE') || s.includes('REMOTO')) return 'VIRTUAL';
+  return s; // desconocido, devolver normalizado
+}
+
+function _cfgHorarioKey(alumno, cfg, alumnosArr) {
+  if (!alumno || typeof alumno !== 'object') return '';
+  let modalidad;
+  try { modalidad = _cfgModalidadConInferencia(cfg || {}, alumnosArr || (typeof window !== 'undefined' ? (window.alumnosCache || []) : [])); }
+  catch(_e) { modalidad = String((cfg && cfg.modalidadEducativa) || (cfg && cfg.modalidad_educativa) || '').toUpperCase(); }
+  const esEBR = modalidad === 'EBR';
+  if (esEBR) return String(alumno.turno || '').trim();
+  // CEBA/EBA: key compuesta CICLO|MOD_ATENCION
+  const ciclo = String(alumno.ciclo || '').trim().toUpperCase();
+  const modAt = _normModAtencion(alumno.turno);
+  if (!ciclo || !modAt) return String(alumno.turno || '').trim(); // fallback si falta alguno
+  return `${ciclo}|${modAt}`;
+}
+
 function _gradosPorModalidad(m) {
   let modal;
   try {
@@ -5499,11 +5533,24 @@ function _horariosPorModalidad(m) {
       { nombre: 'Secundaria', horaApertura: '06:30', horaLimite: '07:45', horaCorte: '10:00', horaSalida: horasDefault.salida },
     ];
   }
-  return [
-    { nombre: 'INICIAL',    horaApertura: horasDefault.apertura, horaLimite: horasDefault.limite, horaCorte: horasDefault.corte, horaSalida: horasDefault.salida },
-    { nombre: 'INTERMEDIO', horaApertura: horasDefault.apertura, horaLimite: horasDefault.limite, horaCorte: horasDefault.corte, horaSalida: horasDefault.salida },
-    { nombre: 'AVANZADO',    horaApertura: horasDefault.apertura, horaLimite: horasDefault.limite, horaCorte: horasDefault.corte, horaSalida: horasDefault.salida },
-  ];
+  // CEBA / EBA: 3 CICLOS × 3 MODALIDADES ATENCIÓN = 9 filas
+  const ciclosCEBA = ['INICIAL','INTERMEDIO','AVANZADO'];
+  const arr = [];
+  ciclosCEBA.forEach(ciclo => {
+    _MODALIDADES_ATENCION.forEach(modAt => {
+      arr.push({
+        nombre: `${ciclo}|${modAt}`,
+        ciclo,
+        modalAtencion: modAt,
+        // Valores base: Virtual un poquito más tarde que presencial
+        horaApertura: modAt === 'VIRTUAL' ? '09:00' : (ciclo === 'AVANZADO' ? '06:45' : horasDefault.apertura),
+        horaLimite:   modAt === 'VIRTUAL' ? '09:30' : (ciclo === 'AVANZADO' ? '07:30' : horasDefault.limite),
+        horaCorte:    modAt === 'VIRTUAL' ? '11:00' : horasDefault.corte,
+        horaSalida:   modAt === 'VIRTUAL' ? '12:00' : horasDefault.salida,
+      });
+    });
+  });
+  return arr;
 }
 
 // Aplica nombre, eslogan, logo y año del colegio en toda la app (fuente: config/general)
@@ -7717,7 +7764,7 @@ async function autoRegistrar(alumno) {
     }
 
     // ── Obtener horario del nivel y calcular ventanas ──
-    const horario  = await getHorarioByNivel(alumno.turno);
+    const horario  = await getHorarioByNivel(alumno);
     const toMin    = s => { const [h,m] = (s||'00:00').split(':').map(Number); return h*60+m; };
     const ahoraMin = now.getHours() * 60 + now.getMinutes();
     const apertura = toMin(horario.horaApertura);
@@ -7971,7 +8018,7 @@ async function saveAlumno() {
       ciclo: cicloFinal,
       seccion: document.getElementById('f-seccion').value,
       turno: turnoVal,
-      limite: await getLimiteByNivel(turnoVal),
+      limite: await getLimiteByNivel({ ciclo: cicloFinal, turno: turnoVal }),
       telefono: document.getElementById('f-telefono').value.trim(),
       apoderadoNombres: document.getElementById('f-apoderado-nombres').value.trim(),
       apoderadoApellidos: document.getElementById('f-apoderado-apellidos').value.trim(),
@@ -10060,7 +10107,9 @@ function handleCSV(e) {
         consanguinidad2, consanguinidadDetalle2
       ] = cols;
       if(!id || !/^\d{8}$/.test(id)) continue;
-      const limite = await getLimiteByNivel(turno||'Primaria');
+      const csvCiclo = (typeof _canonCicloJS === 'function') ? _canonCicloJS(turno || '') : '';
+      const objTmpNiv = { turno: turno||'Primaria', ciclo: csvCiclo };
+      const limite = await getLimiteByNivel(objTmpNiv);
       const alumno = {
         id,
         nombres,
@@ -10068,6 +10117,7 @@ function handleCSV(e) {
         grado: grado||'',
         seccion: seccion||'A',
         turno: turno||'Primaria',
+        ciclo: csvCiclo,
         limite,
         foto: foto||'',
         apoderadoNombres: apoderadoNombres||'',
@@ -10205,7 +10255,9 @@ async function handleExcel(e) {
           apoderado2Nombres, apoderado2Apellidos, telefono2, correoApoderado2,
           consanguinidad2, consanguinidadDetalle2
         ] = cols;
-        const limite = await getLimiteByNivel(turno || 'Primaria');
+        const csvCiclo2 = (typeof _canonCicloJS === 'function') ? _canonCicloJS(turno || '') : '';
+        const objTmpNiv2 = { turno: turno||'Primaria', ciclo: csvCiclo2 };
+        const limite = await getLimiteByNivel(objTmpNiv2);
         const alumno = {
           id,
           nombres:            nombres || '',
@@ -10213,6 +10265,7 @@ async function handleExcel(e) {
           grado:              grado || '',
           seccion:            seccion || 'A',
           turno:              turno || 'Primaria',
+          ciclo:              csvCiclo2,
           limite,
           foto:               foto || '',
           apoderadoNombres:   apoderadoNombres || '',
@@ -20899,13 +20952,36 @@ async function inicializarFiltros(options = {}) {
     _disableSelect('fa-seccion');
   }
 
-  const niveles = (cfg.niveles||[]).map(n => n.nombre);
+  const modalidad = _cfgModalidadConInferencia(cfg, alumnos);
+  const esEBR = modalidad === 'EBR';
+  const nivelesSelectFturno = esEBR
+    ? (cfg.niveles||[]).map(n => (typeof n === 'string' ? n : (n && n.nombre ? n.nombre : ''))).filter(Boolean)
+    : _MODALIDADES_ATENCION.slice();
   const secciones = cfg.secciones || ['A','B','C','D'];
   const fTurno = document.getElementById('f-turno');
   if(fTurno) {
     fTurno.innerHTML = '<option value="">Seleccionar</option>';
-    niveles.forEach(n => { fTurno.innerHTML += `<option value="${n}">${n}</option>`; });
+    nivelesSelectFturno.forEach(n => { fTurno.innerHTML += `<option value="${n}">${_MODALIDAD_ATENCION_LABEL[n] || n}</option>`; });
   }
+  // Actualizar labels de formulario registro según modalidad
+  try {
+    const labelFTurno = (function(){
+      const sel = document.getElementById('f-turno');
+      if (!sel) return null;
+      const p = sel.closest ? sel.closest('.form-group') : null;
+      if (!p) return null;
+      return p.querySelector ? p.querySelector('label') : null;
+    })();
+    if (labelFTurno) labelFTurno.textContent = esEBR ? 'Nivel' : 'Modalidad de atención';
+    const labelFCiclo = (function(){
+      const sel = document.getElementById('f-ciclo');
+      if (!sel) return null;
+      const p = sel.closest ? sel.closest('.form-group') : null;
+      if (!p) return null;
+      return p.querySelector ? p.querySelector('label') : null;
+    })();
+    if (labelFCiclo) labelFCiclo.textContent = esEBR ? 'Ciclo / Nivel pedagógico' : 'Nivel (Ciclo CEBA)';
+  } catch(_) {}
   const fSeccion = document.getElementById('f-seccion');
   if(fSeccion) {
     fSeccion.innerHTML = '<option value="">Seleccionar</option>';
@@ -21408,15 +21484,53 @@ function iniciarConfigListener() {
     });
 }
 
-async function getLimiteByNivel(nivel) {
+async function getLimiteByNivel(nivelOAlumno) {
   const cfg = await getConfig();
-  const n = (cfg.niveles||[]).find(x => x.nombre === nivel);
+  const niveles = Array.isArray(cfg.niveles) ? cfg.niveles : [];
+  let n = null;
+  let key = '';
+  if (nivelOAlumno && typeof nivelOAlumno === 'object') {
+    // Nuevo API: paso alumno object completo → usar composite key
+    key = _cfgHorarioKey(nivelOAlumno, cfg, null);
+    if (key) n = niveles.find(x => x && String(x.nombre || '') === key);
+  }
+  if (!n) {
+    // Legacy API: paso string, o key compuesta no encontró → buscar exact string
+    const str = String(nivelOAlumno && typeof nivelOAlumno === 'object' ? (nivelOAlumno.turno || '') : (nivelOAlumno || '')).trim();
+    if (str) n = niveles.find(x => x && String(x.nombre || '') === str);
+  }
+  if (!n) {
+    // Fallback final: para CEBA si solo tengo la parte CICLO y modal PRESENCIAL default
+    const str = String(nivelOAlumno && typeof nivelOAlumno === 'object' ? ((nivelOAlumno.ciclo || '') + '|' + _normModAtencion(nivelOAlumno.turno) || (nivelOAlumno.turno || '')) : (nivelOAlumno || '')).trim();
+    n = niveles.find(x => x && (String(x.ciclo || '') === str || (x && x.nombre && x.nombre.split('|')[0] === str)));
+  }
   return n ? n.horaLimite : '08:00';
 }
 
-async function getHorarioByNivel(nivel) {
+async function getHorarioByNivel(nivelOAlumno) {
   const cfg = await getConfig();
-  const n = (cfg.niveles||[]).find(x => x.nombre === nivel);
+  const niveles = Array.isArray(cfg.niveles) ? cfg.niveles : [];
+  let n = null;
+  let key = '';
+  if (nivelOAlumno && typeof nivelOAlumno === 'object') {
+    // Nuevo API: paso alumno object completo → usar composite key
+    key = _cfgHorarioKey(nivelOAlumno, cfg, null);
+    if (key) n = niveles.find(x => x && String(x.nombre || '') === key);
+  }
+  if (!n) {
+    // Legacy API: paso string, o key compuesta no encontró → buscar exact string
+    const str = String(nivelOAlumno && typeof nivelOAlumno === 'object' ? (nivelOAlumno.turno || '') : (nivelOAlumno || '')).trim();
+    if (str) n = niveles.find(x => x && String(x.nombre || '') === str);
+  }
+  if (!n) {
+    // Fallback extra: si no encontramos y hay alumno obj, intentar match por ciclo + default PRESENCIAL
+    if (nivelOAlumno && typeof nivelOAlumno === 'object') {
+      const ciclo = String((nivelOAlumno||{}).ciclo || '').trim().toUpperCase();
+      if (ciclo) {
+        n = niveles.find(x => x && String(x.nombre || '') === (ciclo + '|PRESENCIAL'));
+      }
+    }
+  }
   return {
     horaApertura: n?.horaApertura || '07:00',
     horaLimite:   n?.horaLimite   || '08:00',
@@ -21465,19 +21579,53 @@ async function renderConfig() {
     }
   } catch(_) {}
   const modalActual = _cfgModalidadConInferencia(cfg, alumnosArr);
+  const esEBR = (modalActual === 'EBR');
   const nombresEsperados = _nivelesPorModalidad(modalActual || 'EBR');
   const cfgNivelesOld = Array.isArray(cfg.niveles) ? cfg.niveles : [];
-  const horariosBase = (cfgNivelesOld.length && nombresEsperados.every(n => cfgNivelesOld.some(o => o && String(o.nombre || '') === n)))
-    ? cfgNivelesOld
-    : _horariosPorModalidad(modalActual || 'EBR').map(h => {
-        const existente = cfgNivelesOld.find(x => x && String(x.nombre || '') === h.nombre);
-        return existente ? Object.assign({}, h, {
-          horaApertura: existente.horaApertura || h.horaApertura,
-          horaLimite:   existente.horaLimite   || h.horaLimite,
-          horaCorte:    existente.horaCorte    || h.horaCorte,
-          horaSalida:   existente.horaSalida   || h.horaSalida,
-        }) : h;
-      });
+  let horariosBase;
+  try {
+    const esperadosPorNombre = {};
+    const expected = _horariosPorModalidad(modalActual || 'EBR');
+    expected.forEach(h => { esperadosPorNombre[String(h.nombre || '')] = h; });
+    // Merge strategy: exact nombre match → merge horas de cfgNivelesOld. Else: para CEBA, fallback al entry legacy sin pipe (h.ciclo == cfgNivelesOld[i].nombre)
+    horariosBase = expected.map(h => {
+      let existente = cfgNivelesOld.find(x => x && String(x.nombre || '') === String(h.nombre || ''));
+      if (!existente && !esEBR && h.ciclo) {
+        // Buscar legacy entry INICIAL (antes |) — usar como fallback PRESENCIAL (y extender a todas modalid de ese ciclo)
+        const legacy = cfgNivelesOld.find(x => x && String(x.nombre || '').trim().toUpperCase() === String(h.ciclo || '').trim().toUpperCase());
+        if (legacy) existente = legacy;
+      }
+      return existente ? Object.assign({}, h, {
+        horaApertura: existente.horaApertura || h.horaApertura,
+        horaLimite:   existente.horaLimite   || h.horaLimite,
+        horaCorte:    existente.horaCorte    || h.horaCorte,
+        horaSalida:   existente.horaSalida   || h.horaSalida,
+      }) : h;
+    });
+    // Si cfgNivelesOld tiene entries que no esperabamos (3 CEBA legacy), al menos usar sus horas para preservar trabajo del admin
+    if (!esEBR && cfgNivelesOld.length === 3) {
+      const nombresCEBA = nombresEsperados.slice().sort();
+      const old3SoloCiclos = cfgNivelesOld.filter(o => {
+        const n = String((o||{}).nombre||'').trim().toUpperCase();
+        return !n.includes('|') && nombresCEBA.includes(n);
+      }).length === 3;
+      if (old3SoloCiclos) {
+        // Merge: cada legacy entry a sus 3 homónimos
+        horariosBase = horariosBase.map(h => {
+          const legacy = cfgNivelesOld.find(o => String((o||{}).nombre||'').trim().toUpperCase() === String(h.ciclo||'').toUpperCase());
+          if (!legacy) return h;
+          return Object.assign({}, h, {
+            horaApertura: legacy.horaApertura || h.horaApertura,
+            horaLimite:   legacy.horaLimite   || h.horaLimite,
+            horaCorte:    legacy.horaCorte    || h.horaCorte,
+            horaSalida:   legacy.horaSalida   || h.horaSalida,
+          });
+        });
+      }
+    }
+  } catch(_err2) {
+    horariosBase = _horariosPorModalidad(modalActual || 'EBR');
+  }
   const gradosMapEsperado = _gradosPorModalidad(modalActual || 'EBR');
   const cfgGrados = (cfg.grados && typeof cfg.grados === 'object') ? cfg.grados : {};
   const gradosMapFinal = {};
@@ -21547,37 +21695,93 @@ async function renderConfig() {
 
   // Niveles y horarios
   const nivelesEl = document.getElementById('cfg-niveles-list');
-  nivelesEl.innerHTML = horariosBase.map((n,i) => `
-    <div style="margin-bottom:16px;padding:12px 14px;background:rgba(255,255,255,0.03);border-radius:10px;border:1px solid rgba(255,255,255,0.07);">
-      <div style="font-weight:700;font-size:0.95rem;margin-bottom:10px;color:var(--accent);">${n.nombre}</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <div class="form-group" style="flex:1;min-width:130px;margin:0;">
-          <label style="font-size:0.72rem;">🟢 Apertura (desde)</label>
-          <input type="time" id="cfg-apertura-${i}" value="${n.horaApertura||'07:00'}">
-        </div>
-        <div class="form-group" style="flex:1;min-width:130px;margin:0;">
-          <label style="font-size:0.72rem;">⚠️ Límite puntualidad</label>
-          <input type="time" id="cfg-hora-${i}" value="${n.horaLimite||'08:00'}">
-        </div>
-        <div class="form-group" style="flex:1;min-width:130px;margin:0;">
-          <label style="font-size:0.72rem;">🔴 Corte ingreso (hasta)</label>
-          <input type="time" id="cfg-corte-${i}" value="${n.horaCorte||'10:30'}">
-        </div>
-        <div class="form-group" style="flex:1;min-width:130px;margin:0;">
-          <label style="font-size:0.72rem;">🚪 Salida (desde)</label>
-          <input type="time" id="cfg-salida-${i}" value="${n.horaSalida||'13:00'}">
+  if (esEBR) {
+    // EBR: 3 tarjetas planas (Inicial / Primaria / Secundaria)
+    nivelesEl.innerHTML = horariosBase.map((n,i) => `
+      <div style="margin-bottom:16px;padding:12px 14px;background:rgba(255,255,255,0.03);border-radius:10px;border:1px solid rgba(255,255,255,0.07);">
+        <div style="font-weight:700;font-size:0.95rem;margin-bottom:10px;color:var(--accent);">${n.nombre}</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <div class="form-group" style="flex:1;min-width:130px;margin:0;">
+            <label style="font-size:0.72rem;">🟢 Apertura (desde)</label>
+            <input type="time" id="cfg-apertura-${i}" value="${n.horaApertura||'07:00'}">
+          </div>
+          <div class="form-group" style="flex:1;min-width:130px;margin:0;">
+            <label style="font-size:0.72rem;">⚠️ Límite puntualidad</label>
+            <input type="time" id="cfg-hora-${i}" value="${n.horaLimite||'08:00'}">
+          </div>
+          <div class="form-group" style="flex:1;min-width:130px;margin:0;">
+            <label style="font-size:0.72rem;">🔴 Corte ingreso (hasta)</label>
+            <input type="time" id="cfg-corte-${i}" value="${n.horaCorte||'10:30'}">
+          </div>
+          <div class="form-group" style="flex:1;min-width:130px;margin:0;">
+            <label style="font-size:0.72rem;">🚪 Salida (desde)</label>
+            <input type="time" id="cfg-salida-${i}" value="${n.horaSalida||'13:00'}">
+          </div>
         </div>
       </div>
-    </div>
-  `).join('');
+    `).join('');
+  } else {
+    // CEBA/EBA: 3 grupos = CICLOS. Cada grupo = 3 sub-tarjetas (PRESENCIAL / SEMIPRESENCIAL / VIRTUAL)
+    // horariosBase es [INICIAL|PRE, INICIAL|SEMI, INICIAL|VIRT, INTER|PRE, ..., AVAN|VIRT] = 9 items.
+    const ciclos = nombresEsperados.slice(); // ['INICIAL','INTERMEDIO','AVANZADO']
+    const modBadgeColor = { 'PRESENCIAL':'#1D9E75', 'SEMIPRESENCIAL':'#8B5CF6', 'VIRTUAL':'#2563EB' };
+    const grupoHtmlList = [];
+    ciclos.forEach((cicloNombre, idxCiclo) => {
+      const itemsCiclo = [];
+      for(let k = 0; k < 3; k++) {
+        const idxGlobal = idxCiclo * 3 + k;
+        itemsCiclo.push(horariosBase[idxGlobal]);
+      }
+      const cardsModHtml = itemsCiclo.map((n, k) => {
+        const idxGlobal = idxCiclo * 3 + k;
+        const modAt = n && n.modalAtencion ? n.modalAtencion : _MODALIDADES_ATENCION[k];
+        const modLabel = _MODALIDAD_ATENCION_LABEL[modAt] || modAt;
+        const color = modBadgeColor[modAt] || 'var(--accent)';
+        return `
+          <div style="padding:10px 12px;background:rgba(255,255,255,0.02);border-radius:10px;border:1px solid rgba(255,255,255,0.06);">
+            <div style="font-weight:600;font-size:0.82rem;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};"></span>${modLabel}
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <div class="form-group" style="flex:1;min-width:120px;margin:0;">
+                <label style="font-size:0.7rem;">🟢 Apertura</label>
+                <input type="time" id="cfg-apertura-${idxGlobal}" value="${n.horaApertura||'07:00'}">
+              </div>
+              <div class="form-group" style="flex:1;min-width:120px;margin:0;">
+                <label style="font-size:0.7rem;">⚠️ Límite puntual</label>
+                <input type="time" id="cfg-hora-${idxGlobal}" value="${n.horaLimite||'08:00'}">
+              </div>
+              <div class="form-group" style="flex:1;min-width:120px;margin:0;">
+                <label style="font-size:0.7rem;">🔴 Corte</label>
+                <input type="time" id="cfg-corte-${idxGlobal}" value="${n.horaCorte||'10:30'}">
+              </div>
+              <div class="form-group" style="flex:1;min-width:120px;margin:0;">
+                <label style="font-size:0.7rem;">🚪 Salida</label>
+                <input type="time" id="cfg-salida-${idxGlobal}" value="${n.horaSalida||'13:00'}">
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+      grupoHtmlList.push(`
+        <div style="margin-bottom:20px;padding:14px 16px 12px 16px;background:rgba(255,255,255,0.03);border-radius:12px;border:1px solid rgba(255,255,255,0.08);">
+          <div style="font-weight:800;font-size:1rem;margin-bottom:12px;color:var(--accent);letter-spacing:0.3px;">◆ Ciclo ${cicloNombre}</div>
+          <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));">
+            ${cardsModHtml}
+          </div>
+        </div>
+      `);
+    });
+    nivelesEl.innerHTML = grupoHtmlList.join('');
+  }
 
-  // Grados
+  // Grados: SIEMPRE por nombresEsperados (3 para EBR y 3 para CEBA - no por horariosBase que tiene 9 en CEBA)
   const gradosEl = document.getElementById('cfg-grados-list');
-  gradosEl.innerHTML = horariosBase.map((n,i) => {
-    const grados = gradosMapFinal[n.nombre] || [];
+  gradosEl.innerHTML = nombresEsperados.map((nombCiclo, i) => {
+    const grados = gradosMapFinal[nombCiclo] || [];
     return `
       <div style="margin-bottom:14px;">
-        <div style="font-weight:600;font-size:0.9rem;margin-bottom:6px;">${n.nombre}</div>
+        <div style="font-weight:600;font-size:0.9rem;margin-bottom:6px;">${nombCiclo}</div>
         <input type="text" id="cfg-grados-${i}" value="${grados.join(', ')}" placeholder="1°, 2°, 3°" style="width:100%;box-sizing:border-box;">
         <div style="font-size:0.75rem;color:var(--muted);margin-top:4px;">Separados por coma</div>
       </div>
@@ -21826,29 +22030,66 @@ async function guardarHorarios() {
   let alumnosArr = null;
   try { alumnosArr = (typeof window !== 'undefined') ? (window.alumnosCache || []) : null; } catch(_) {}
   const modalActual = _cfgModalidadConInferencia(cfg, alumnosArr);
+  const esEBR = (modalActual === 'EBR');
   const nombresEsperados = _nivelesPorModalidad(modalActual || 'EBR');
   const cfgNivelesOld = Array.isArray(cfg.niveles) ? cfg.niveles : [];
-  const base = (cfgNivelesOld.length && nombresEsperados.every(n => cfgNivelesOld.some(o => o && String(o.nombre || '') === n)))
-    ? cfgNivelesOld
-    : _horariosPorModalidad(modalActual || 'EBR').map(h => {
-        const existente = cfgNivelesOld.find(x => x && String(x.nombre || '') === h.nombre);
-        return existente ? Object.assign({}, h, {
-          horaApertura: existente.horaApertura || h.horaApertura,
-          horaLimite:   existente.horaLimite   || h.horaLimite,
-          horaCorte:    existente.horaCorte    || h.horaCorte,
-          horaSalida:   existente.horaSalida   || h.horaSalida,
-        }) : h;
-      });
+  let base;
+  try {
+    const expected = _horariosPorModalidad(modalActual || 'EBR');
+    base = expected.map(h => {
+      let existente = cfgNivelesOld.find(x => x && String(x.nombre || '') === String(h.nombre || ''));
+      if (!existente && !esEBR && h.ciclo) {
+        const legacy = cfgNivelesOld.find(x => x && String(x.nombre || '').trim().toUpperCase() === String(h.ciclo || '').trim().toUpperCase());
+        if (legacy) existente = legacy;
+      }
+      return existente ? Object.assign({}, h, {
+        horaApertura: existente.horaApertura || h.horaApertura,
+        horaLimite:   existente.horaLimite   || h.horaLimite,
+        horaCorte:    existente.horaCorte    || h.horaCorte,
+        horaSalida:   existente.horaSalida   || h.horaSalida,
+        ciclo:        existente.ciclo || h.ciclo,
+        modalAtencion: existente.modalAtencion || h.modalAtencion,
+      }) : h;
+    });
+    if (!esEBR && cfgNivelesOld.length === 3) {
+      const nombresCEBA = nombresEsperados.slice().sort();
+      const old3SoloCiclos = cfgNivelesOld.filter(o => {
+        const n = String((o||{}).nombre||'').trim().toUpperCase();
+        return !n.includes('|') && nombresCEBA.includes(n);
+      }).length === 3;
+      if (old3SoloCiclos) {
+        base = base.map(h => {
+          const legacy = cfgNivelesOld.find(o => String((o||{}).nombre||'').trim().toUpperCase() === String(h.ciclo||'').toUpperCase());
+          if (!legacy) return h;
+          return Object.assign({}, h, {
+            horaApertura: legacy.horaApertura || h.horaApertura,
+            horaLimite:   legacy.horaLimite   || h.horaLimite,
+            horaCorte:    legacy.horaCorte    || h.horaCorte,
+            horaSalida:   legacy.horaSalida   || h.horaSalida,
+          });
+        });
+      }
+    }
+  } catch(_errGH) {
+    base = _horariosPorModalidad(modalActual || 'EBR');
+  }
   const niveles = base.map((n,i) => {
     const apertura = document.getElementById('cfg-apertura-'+i)?.value || '07:00';
     const limite   = document.getElementById('cfg-hora-'+i)?.value    || '08:00';
     const corte    = document.getElementById('cfg-corte-'+i)?.value   || '10:30';
     const salida   = document.getElementById('cfg-salida-'+i)?.value  || '13:00';
     const toMin = s => { const [h,m] = (s||'00:00').split(':').map(Number); return h*60+m; };
-    if(toMin(apertura) >= toMin(limite)) { toast(`${n.nombre}: La apertura debe ser antes del límite de puntualidad`, 'warning'); return null; }
-    if(toMin(limite) >= toMin(corte))    { toast(`${n.nombre}: El límite de puntualidad debe ser antes del corte de ingreso`, 'warning'); return null; }
-    if(toMin(corte) >= toMin(salida))    { toast(`${n.nombre}: El corte de ingreso debe ser antes de la hora de salida`, 'warning'); return null; }
-    return { nombre: n.nombre, horaApertura: apertura, horaLimite: limite, horaCorte: corte, horaSalida: salida };
+    const nombreBase = n && n.nombre ? n.nombre : String((n && n.ciclo ? (n.ciclo + '|' + (n.modalAtencion || 'PRESENCIAL')) : '')).trim();
+    const labelErr = (nombreBase && nombreBase.includes('|')) 
+      ? `Ciclo ${nombreBase.split('|')[0]} ${_MODALIDAD_ATENCION_LABEL[nombreBase.split('|')[1]] || nombreBase.split('|')[1]}`
+      : nombreBase;
+    if(toMin(apertura) >= toMin(limite)) { toast(`${labelErr}: La apertura debe ser antes del límite de puntualidad`, 'warning'); return null; }
+    if(toMin(limite) >= toMin(corte))    { toast(`${labelErr}: El límite de puntualidad debe ser antes del corte de ingreso`, 'warning'); return null; }
+    if(toMin(corte) >= toMin(salida))    { toast(`${labelErr}: El corte de ingreso debe ser antes de la hora de salida`, 'warning'); return null; }
+    const payloadOut = { nombre: nombreBase, horaApertura: apertura, horaLimite: limite, horaCorte: corte, horaSalida: salida };
+    if (n && n.ciclo) payloadOut.ciclo = n.ciclo;
+    if (n && n.modalAtencion) payloadOut.modalAtencion = n.modalAtencion;
+    return payloadOut;
   });
   if(niveles.some(x => x === null)) return;
   try {
@@ -21864,15 +22105,24 @@ async function guardarGrados() {
   try { alumnosArr = (typeof window !== 'undefined') ? (window.alumnosCache || []) : null; } catch(_) {}
   const modalActual = _cfgModalidadConInferencia(cfg, alumnosArr);
   const nombresEsperados = _nivelesPorModalidad(modalActual || 'EBR');
-  const cfgNivelesOld = Array.isArray(cfg.niveles) ? cfg.niveles : [];
-  const base = (cfgNivelesOld.length && nombresEsperados.every(n => cfgNivelesOld.some(o => o && String(o.nombre || '') === n)))
-    ? cfgNivelesOld
-    : _horariosPorModalidad(modalActual || 'EBR');
   const grados = {};
-  base.forEach((n,i) => {
+  nombresEsperados.forEach((nombCiclo, i) => {
     const val = document.getElementById('cfg-grados-'+i)?.value || '';
-    grados[n.nombre] = val.split(',').map(x => x.trim()).filter(Boolean);
+    grados[nombCiclo] = val.split(',').map(x => x.trim()).filter(Boolean);
   });
+  // Limpiar también claves antiguas con formato compuesto si existían (no tienen sentido en grados)
+  try {
+    if (cfg.grados && typeof cfg.grados === 'object') {
+      Object.keys(cfg.grados).forEach(k => {
+        if (String(k||'').includes('|')) {
+          const soloCiclo = k.split('|')[0];
+          if (nombresEsperados.includes(soloCiclo) && !grados[soloCiclo].length) {
+            grados[soloCiclo] = (cfg.grados[k] || []).slice();
+          }
+        }
+      });
+    }
+  } catch(_eCl) {}
   try {
     await db.collection('config').doc('general').set({ grados }, { merge: true });
     invalidateConfig();
@@ -21896,12 +22146,31 @@ async function guardarSecciones() {
 
 // Cargar grados en el formulario de alumno según nivel seleccionado
 async function cargarGradosPorNivel(nivelParam) {
-  const nivel = (typeof nivelParam === 'string') ? nivelParam : document.getElementById('f-turno').value;
+  const cfg = await getConfig();
+  let alumnosArr = null;
+  try { alumnosArr = (typeof window !== 'undefined') ? (window.alumnosCache || []) : []; } catch(_) {}
+  const modalidad = _cfgModalidadConInferencia(cfg, alumnosArr);
+  const esEBR = modalidad === 'EBR';
+  let nivel;
+  if (typeof nivelParam === 'string' && nivelParam) {
+    nivel = nivelParam;
+    // Si vino de edit form legacy CEBA (param = PRE etc) y hoy es CEBA → no usar ese como key, usar f-ciclo
+    if (!esEBR && !['INICIAL','INTERMEDIO','AVANZADO','Inicial','Primaria','Secundaria','PRIMARIA','SECUNDARIA'].includes(String(nivel).trim())) {
+      const cicloVal = document.getElementById('f-ciclo')?.value || '';
+      if (cicloVal) nivel = cicloVal;
+    }
+  } else {
+    if (esEBR) {
+      nivel = document.getElementById('f-turno')?.value || '';
+    } else {
+      // CEBA: Grados dependen de CICLO (no de modalidad atención PRE/SEMI/VIRT)
+      nivel = document.getElementById('f-ciclo')?.value || '';
+    }
+  }
   const gradoSel = document.getElementById('f-grado');
   gradoSel.innerHTML = '<option value="">Seleccionar</option>';
   if(!nivel) { _disableSelect('f-grado'); _disableSelect('f-seccion'); return; }
   _enableSelect('f-grado');
-  const cfg = await getConfig();
   const gradosMap = cfg.grados || {};
   const nivelNorm = String(nivel || '').trim().toLowerCase();
   let grados = gradosMap[nivel] || gradosMap[String(nivel || '').trim()] || [];
@@ -21910,13 +22179,16 @@ async function cargarGradosPorNivel(nivelParam) {
     if(k) grados = gradosMap[k] || [];
   }
   if(!grados.length) {
-    const alumnos = await getAlumnosFiltrados();
-    const fromAlumnos = [...new Set(alumnos
-      .filter(a => String(a.turno||'').trim().toLowerCase() === nivelNorm)
-      .map(a => a.grado)
-      .filter(Boolean)
-    )].sort();
-    grados = fromAlumnos;
+    try {
+      const alumnos = await getAlumnosFiltrados();
+      const campoMatch = esEBR ? 'turno' : 'ciclo';
+      const fromAlumnos = [...new Set(alumnos
+        .filter(a => String((a||{})[campoMatch]||'').trim().toLowerCase() === nivelNorm)
+        .map(a => a.grado)
+        .filter(Boolean)
+      )].sort();
+      grados = fromAlumnos;
+    } catch(_errFilt) {}
   }
   grados.forEach(g => {
     const opt = document.createElement('option');
@@ -21944,7 +22216,10 @@ async function cargarSeccionesPorGrado() {
 // Cargar niveles, grados y secciones en todos los selects del sistema
 async function actualizarTodosLosFiltros() {
   const cfg = await getConfig();
-  const niveles = (cfg.niveles||[]).map(n => n.nombre);
+  let alumnosArr = null;
+  try { alumnosArr = (typeof window !== 'undefined') ? (window.alumnosCache || []) : []; } catch(_) {}
+  const modalidad = _cfgModalidadConInferencia(cfg, alumnosArr);
+  const niveles = _nivelesPorModalidad(cfg); // INICIAL/INTERMEDIO/AVANZADO o Inicial/Primaria/Secundaria
   const secciones = cfg.secciones || ['A','B','C','D'];
   const todosGrados = [...new Set(Object.values(cfg.grados||{}).flat())];
 

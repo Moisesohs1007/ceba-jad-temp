@@ -10,5 +10,8 @@
     "cost:dashboard": "node cost_sim/server.js",
     "cost:all": "node cost_sim/run_all.js",
     "cost:audit": "node cost_sim/analyze_audit.js"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
   }
 }
