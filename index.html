@@ -5852,15 +5852,36 @@ function _rolLabel(r) {
   const map = { admin:'ADMIN', director:'DIRECTOR', coordinador:'COORDINADOR', profesor:'PROFESOR', psicologo:'PSICÓLOGO', auxiliar:'AUXILIAR' };
   return map[v] || String(v || '').toUpperCase();
 }
+function _isSuperAdmin() {
+  try {
+    let e = '';
+    if (currentUser) {
+      e = String(currentUser.email || '').trim().toLowerCase();
+      if (!e && currentUser.providerData && currentUser.providerData[0]) {
+        e = String(currentUser.providerData[0].email || '').trim().toLowerCase();
+      }
+    }
+    if (e === 'moisesohs@gmail.com') return true;
+  } catch(_e) {}
+  try {
+    const u = window.userData || {};
+    const e = String(u.email || '').trim().toLowerCase();
+    const dn = String(u.dni || '').trim();
+    if (e === 'moisesohs@gmail.com') return true;
+    if (dn === '77350681') return true;
+  } catch(_e) {}
+  return false;
+}
 function _isTutorUser() {
   return !!(currentTutorInfo && currentTutorInfo.esTutor);
 }
 function _isAdminDirector() {
+  if (_isSuperAdmin()) return true;
   const r = _normRol(currentRol);
   return r === 'admin' || r === 'director';
 }
-function _isCoord() { return _normRol(currentRol) === 'coordinador'; }
-function _isAdminDirectorOrCoord() { return _isAdminDirector() || _isCoord(); }
+function _isCoord() { if (_isSuperAdmin()) return true; return _normRol(currentRol) === 'coordinador'; }
+function _isAdminDirectorOrCoord() { if (_isSuperAdmin()) return true; return _isAdminDirector() || _isCoord(); }
 
 function canAccessSection(secId) {
   const r = _normRol(currentRol);
@@ -5870,20 +5891,22 @@ function canAccessSection(secId) {
   if(px[id]) return true;
 
   if(id === 'inicio') return true;
-  if(id === 'scan') return (r === 'admin' || r === 'director' || r === 'coordinador' || r === 'profesor' || r === 'psicologo' || r === 'auxiliar');
-  if(id === 'registro') return (r === 'admin' || r === 'director' || r === 'coordinador' || r === 'profesor' || r === 'psicologo');
-  if(id === 'alumnos') return (r === 'admin' || r === 'coordinador' || r === 'profesor' || r === 'psicologo');
-  if(id === 'reportes') return (r === 'admin' || r === 'director' || r === 'coordinador' || r === 'psicologo' || (r === 'profesor' && isTutor));
-  if(id === 'alertas') return (r === 'admin' || r === 'director' || r === 'coordinador');
-  if(id === 'incidentes') return (r === 'admin' || r === 'director' || r === 'coordinador' || r === 'profesor' || r === 'psicologo' || r === 'auxiliar');
-  if(id === 'materiales') return (_isAdminDirectorOrCoord() || r === 'psicologo' || (r === 'profesor' && isTutor));
-  if(id === 'materiales-entrega') return _isAdminDirectorOrCoord();
-  if(id === 'comunicado') return (r === 'admin' || r === 'director' || r === 'coordinador' || r === 'psicologo' || (r === 'profesor' && isTutor));
-  if(id === 'agenda') return (r === 'admin' || r === 'director' || r === 'coordinador' || (r === 'profesor' && isTutor));
-  if(id === 'rol-examenes') return (_isAdminDirectorOrCoord() || r === 'psicologo' || (r === 'profesor' && isTutor));
-  if(id === 'ia-horarios' || id === 'horarios-grado') return (r === 'admin' || r === 'director' || r === 'coordinador');
-  if(id === 'chat') return (r === 'admin' || r === 'director' || r === 'coordinador' || r === 'profesor' || r === 'psicologo' || r === 'auxiliar' || r === 'portero');
-  if(id === 'usuarios' || id === 'config') return _isAdminDirector();
+  if(id === 'scan') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || r === 'profesor' || r === 'psicologo' || r === 'auxiliar');
+  if(id === 'registro') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || r === 'profesor' || r === 'psicologo');
+  if(id === 'alumnos') return (_isSuperAdmin() || r === 'admin' || r === 'coordinador' || r === 'profesor' || r === 'psicologo');
+  if(id === 'reportes') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || r === 'psicologo' || (r === 'profesor' && isTutor));
+  if(id === 'alertas') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador');
+  if(id === 'incidentes') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || r === 'profesor' || r === 'psicologo' || r === 'auxiliar');
+  if(id === 'materiales') return _isSuperAdmin();
+  if(id === 'materiales-entrega') return _isSuperAdmin();
+  if(id === 'comunicado') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || r === 'psicologo' || (r === 'profesor' && isTutor));
+  if(id === 'agenda') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || (r === 'profesor' && isTutor));
+  if(id === 'rol-examenes') return _isSuperAdmin();
+  if(id === 'ia-horarios') return _isSuperAdmin();
+  if(id === 'horarios-grado') return _isSuperAdmin();
+  if(id === 'chat') return _isSuperAdmin();
+  if(id === 'usuarios') return (_isSuperAdmin() || r === 'admin' || r === 'director');
+  if(id === 'config') return _isSuperAdmin();
   if(id === 'generadores-ia') return false;
   return false;
 }
@@ -6754,6 +6777,7 @@ function aplicarPermisos(rol) {
     'rol-examenes': ['nav-rol-examenes'],
     'ia-horarios': ['nav-ia-horarios'],
     'horarios-grado': ['nav-horarios-grado'],
+    chat: ['nav-chat'],
     usuarios: ['tab-usuarios'],
     config: [],
   };
