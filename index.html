@@ -8472,7 +8472,75 @@ async function renderAlumnos() {
     if(!alumnos.length) {
       tbody.innerHTML = '';
       empty.style.display = 'block';
-      empty.querySelector('p').textContent = 'No se encontraron alumnos con ese filtro';
+      // Hint UX: si filtro nivel+grado devuelve 0, pero el MISMO grado tiene alumnos EN OTRO nivel,
+      // sugerirle al usuario que pruebe cambiando el nivel.
+      // Evita el misterio: "Mostrando 0 de 14 alumnos" sin entender por qué.
+      try {
+        const alumnosBase2 = await getAlumnosFiltrados();
+        const prep2 = _getPreparedAlumnosView(alumnosBase2);
+        let _msg = 'No se encontraron alumnos con ese filtro';
+        if(grado && grado !== 'TODOS') {
+          const _cfa = typeof configCache !== 'undefined' ? configCache : {};
+          const mismoGradoOtrosNiveles = new Map();
+          prep2.sorted.forEach(a => {
+            if(String(a.grado||'').trim() !== String(grado).trim()) return;
+            const niv = _alumnoNivelText(a, _cfa) || '-';
+            if(nivel && nivel !== 'TODOS' && niv === nivel) return;
+            const key = niv + '|' + String(a.seccion||'');
+            const cur = mismoGradoOtrosNiveles.get(key) || { n: 0, nivel: niv, sec: a.seccion };
+            cur.n++;
+            mismoGradoOtrosNiveles.set(key, cur);
+          });
+          if(mismoGradoOtrosNiveles.size > 0) {
+            let txts = [];
+            for(const it of mismoGradoOtrosNiveles.values()) txts.push(`${it.n} en ${it.nivel}${it.sec ? ' ' + it.sec : ''}`);
+            txts = txts.slice(0, 6);
+            const hint = txts.join(', ');
+            const btnHtml = (mismoGradoOtrosNiveles.size === 1)
+              ? `<br><button id="btn-aula-otros-niv" style="margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">Cambiar nivel sugerido</button>`
+              : '';
+            _msg = `Grado ${grado} no tiene alumnos en el nivel actual. Se encontraron ${mismoGradoOtrosNiveles.size} combinaciones: ${hint}${btnHtml}`;
+            setTimeout(() => {
+              const bb = document.getElementById('btn-aula-otros-niv');
+              if(!bb) return;
+              bb.addEventListener('click', async () => {
+                // Tomar el primer (único) nivel sugerido y setearlo, rerender
+                const _cfa2 = typeof configCache !== 'undefined' ? configCache : await getConfig();
+                const allB = await getAlumnosFiltrados();
+                const prepB = _getPreparedAlumnosView(allB);
+                const candidatos = prepB.sorted
+                  .filter(a => String(a.grado||'').trim() === String(grado).trim())
+                  .map(a => ({ niv: _alumnoNivelText(a,_cfa2), sec: a.seccion }))
+                  .filter(x => x.niv && x.niv !== (nivel||''));
+                if(candidatos.length) {
+                  const nSel = candidatos[0].niv;
+                  const elNiv = document.getElementById('fa-nivel');
+                  if(elNiv && [...elNiv.options].some(o => o.value === nSel)) { elNiv.value = nSel; }
+                  else {
+                    // Si no esta en las opciones, agregar una option temporal con ese nivel + TODOS
+                    if(![...elNiv.options].some(o => o.value === nSel)) {
+                      const opt = document.createElement('option');
+                      opt.value = nSel;
+                      opt.textContent = nSel;
+                      elNiv.insertBefore(opt, elNiv.firstChild);
+                    }
+                    elNiv.value = nSel;
+                  }
+                  const sSel = candidatos[0].sec;
+                  const elSec = document.getElementById('fa-seccion');
+                  if(sSel && elSec && [...elSec.options].some(o => o.value === sSel)) { elSec.value = sSel; }
+                  renderAlumnos();
+                }
+              });
+            }, 0);
+          } else if(q && !seccion) {
+            // Por si escribio una busqueda y luego no hay coincidencia
+          }
+        }
+        empty.querySelector('p').innerHTML = _msg;
+      } catch(_ex) {
+        empty.querySelector('p').textContent = 'No se encontraron alumnos con ese filtro';
+      }
       return;
     }
     empty.style.display = 'none';
@@ -21027,6 +21095,7 @@ async function onGradoChangeAlumnos() {
   document.getElementById('search-alumnos').value = '';
   const grado = document.getElementById('fa-grado').value;
   const seccionPrevia = document.getElementById('fa-seccion').value;
+  const nivelElegidoPorUsuario = document.getElementById('fa-nivel').value;
   if(grado && grado !== 'TODOS') {
     // Auto-detectar nivel
     const cfg = await getConfig();
@@ -21043,7 +21112,25 @@ async function onGradoChangeAlumnos() {
         if(match) nivelAuto = String(match[campo]||'').trim();
       } catch(_) {}
     }
-    if(nivelAuto) document.getElementById('fa-nivel').value = nivelAuto;
+    // Si el usuario ya habia elegido un nivel explicitamente distinto al detectado,
+    // validar alumnos coincidentes en el nivel elegido. Si existen: NO pisar.
+    if(nivelElegidoPorUsuario && nivelElegidoPorUsuario !== nivelAuto) {
+      try {
+        const todos = await DB.getAlumnos();
+        const _cfgR = typeof configCache !== 'undefined' ? configCache : cfg;
+        const existeEnNivelElegido = todos.some(a => {
+          if(String(a.grado||'').trim() !== String(grado).trim()) return false;
+          return _matchNivel(a, nivelElegidoPorUsuario, _cfgR, todos);
+        });
+        if(!existeEnNivelElegido && nivelAuto) {
+          document.getElementById('fa-nivel').value = nivelAuto;
+        }
+      } catch(_) {
+        if(nivelAuto) document.getElementById('fa-nivel').value = nivelAuto;
+      }
+    } else if(nivelAuto) {
+      document.getElementById('fa-nivel').value = nivelAuto;
+    }
     await poblarFiltroSeccion('fa-seccion', grado);
     _enableSelect('fa-seccion');
   } else {
