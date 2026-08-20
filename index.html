@@ -21417,37 +21417,138 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
 
   const asignaciones = tempAsignaciones;
 
-  // Render por nivel en modal-privilegios
+  // Helper: extraer key de grados a partir del nombre de nivel (soporta CEBA INICIAL|PRESENCIAL, EBR INICIAL, etc.)
+  const cleanLabel = (n) => {
+    let s = String(n || '').trim();
+    if(!s) return '';
+    // Separadores comunes: | · - / y espacios múltiples → reemplazar por " · "
+    s = s.replace(/\s*[\|·\-_\/:]\s*/g, ' · ');
+    s = s.replace(/\s{2,}/g, ' ').trim();
+    return s;
+  };
+  const extractGradoKeys = (n) => {
+    const raw = String(n || '').trim().toUpperCase();
+    const out = new Set();
+    if(raw) out.add(raw);
+    // Si trae separador (| · - /), agregar prefijo y sufijo por separado (CEBA INICIAL|PRESENCIAL → "INICIAL" es key real en cfg.grados)
+    const parts = raw.split(/[\|·\-_\/:\s]+/).filter(Boolean);
+    parts.forEach(p => { if(p && p.length > 1) out.add(p); });
+    // Agregar versión canon
+    const canon = _canonCicloJS(raw.split(/[\|·\-_\/:\s]+/)[0] || '');
+    if(canon) out.add(canon);
+    return Array.from(out);
+  };
+  // Build list of niveles: prefer cfg.niveles, si no usar las keys de cfg.grados
+  let nivelesList = [];
+  if (Array.isArray(cfg.niveles) && cfg.niveles.length) {
+    cfg.niveles.forEach(n => {
+      if (!n || !n.nombre) return;
+      const keys = extractGradoKeys(n.nombre);
+      nivelesList.push({ label: cleanLabel(n.nombre) || String(n.nombre), keys });
+    });
+  }
+  // Si cfg.grados tiene keys que NO están en ningun nivelKey, agregarlos como niveles "virtuales"
+  if (cfg.grados && typeof cfg.grados === 'object') {
+    Object.keys(cfg.grados).forEach(gk => {
+      if(!gk) return;
+      const existe = nivelesList.some(n => n.keys.some(k => k === gk || k === String(gk).toUpperCase()));
+      if(!existe) nivelesList.push({ label: cleanLabel(gk), keys: extractGradoKeys(gk) });
+    });
+  }
+  // Si no hay nada (cfg sin niveles ni grados), crear niveles dummy (ultrafallback)
+  if(!nivelesList.length) nivelesList = [{ label: 'Grados', keys: ['','TODOS'] }];
+
+  // Helper: dado un nivel.keys, buscar los grados en cfg.grados (probando todas las keys)
+  const getGradosForNivel = (nivelKeys) => {
+    const grd = cfg.grados || {};
+    for(const k of nivelKeys) {
+      if(!k) continue;
+      const v1 = grd[k];
+      const v2 = grd[String(k).toLowerCase()];
+      const v3 = grd[String(k).toUpperCase()];
+      const arr = (Array.isArray(v1)?v1:null) || (Array.isArray(v2)?v2:null) || (Array.isArray(v3)?v3:null);
+      if(arr && arr.length) return arr;
+    }
+    return [];
+  };
+  // Ultrafallback (grados flat): si NINGUN nivel devuelve grados, sacar todos los grados como lista plana
+  const flatGrados = Array.from(new Set(
+    Object.values(cfg.grados || {}).flat().map(x => String(x || '').trim()).filter(Boolean)
+  ));
+  let modoFlat = !nivelesList.some(n => getGradosForNivel(n.keys).length > 0);
+
   const nivelesEl = document.getElementById('u-niveles-checks');
-  nivelesEl.innerHTML = (cfg.niveles||[]).map(n => {
-    const grados = (cfg.grados||{})[n.nombre] || [];
-    const nKey = _agendaKey(n.nombre);
-    const nivelKey = n.nombre.replace(/[^a-z0-9]/gi,'_');
-    return `
+  if(!nivelesEl) return;
+  if(modoFlat && flatGrados.length) {
+    // Render FLAT (sin niveles) - utlimo recurso para que el usuario vea algo
+    const hasGradoFn = (g) => Object.prototype.hasOwnProperty.call((asignaciones || {}), g);
+    const seccsSetFn = (g) => new Set(((asignaciones || {})[g] || []).map(x => String(x || '').trim().toUpperCase()).filter(Boolean));
+    const nivelKeyFlat = 'GRADOS_FLAT';
+    nivelesEl.innerHTML = `
       <div style="margin-bottom:16px;padding:12px;background:var(--surface2);border-radius:10px;">
-        <div style="font-size:0.82rem;font-weight:700;color:var(--accent);margin-bottom:10px;">${n.nombre}</div>
-        ${grados.map(g => {
-          const hasGrado = Object.prototype.hasOwnProperty.call((asignaciones || {}), g);
-          const seccsAsignadas = hasGrado ? ((asignaciones || {})[g] || []) : [];
-          const seccsSet = new Set((seccsAsignadas || []).map(x => String(x || '').trim().toUpperCase()).filter(Boolean));
-          const gradoKey = nivelKey + '_' + g.replace(/[^a-z0-9]/gi,'_');
-          const secciones = seccionesCfg;
+        <div style="font-size:0.82rem;font-weight:700;color:var(--accent);margin-bottom:10px;">🎓 Todos los grados</div>
+        ${flatGrados.map(g => {
+          const hasGrado = hasGradoFn(g);
+          const seccsSet = seccsSetFn(g);
+          const gradoKey = nivelKeyFlat + '_' + String(g).replace(/[^a-z0-9]/gi,'_');
           return `
             <div style="margin-bottom:8px;">
               <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem;font-weight:600;margin-bottom:5px;">
                 <input type="checkbox" class="chk-grado" data-grado="${g}" data-key="${gradoKey}"
-                  onchange="toggleGradoSecciones(this)"
-                  ${hasGrado?'checked':''}
+                  onchange="toggleGradoSecciones(this)" ${hasGrado?'checked':''}
                   style="accent-color:var(--accent);width:15px;height:15px;">
-                ${g}
+                Grado ${g}
               </label>
               <div id="secc-${gradoKey}" style="display:${hasGrado?'flex':'none'};flex-wrap:wrap;gap:8px;padding-left:22px;margin-top:4px;">
-                ${(secciones || []).map(s => `
+                ${(seccionesCfg || []).map(s => `
                   <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.82rem;">
                     <input type="checkbox" class="chk-seccion" data-grado="${g}" data-key="${gradoKey}" value="${s}"
                       ${seccsSet.has(String(s || '').trim().toUpperCase())?'checked':''}
                       style="accent-color:var(--accent);width:14px;height:14px;">
-                    ${s}
+                    Sección ${s}
+                  </label>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+    actualizarResumenPrivilegios();
+    return;
+  }
+
+  // Render por nivel (estándar)
+  nivelesEl.innerHTML = nivelesList.map(n => {
+    const grados = getGradosForNivel(n.keys);
+    if(!grados.length) return ''; // saltar niveles sin grados
+    const nKey = n.keys[0] || n.label;
+    const nivelKey = String(n.label || '').replace(/[^a-z0-9]/gi,'_') + '_' + Math.floor(Math.random()*1000);
+    return `
+      <div style="margin-bottom:16px;padding:12px;background:var(--surface2);border-radius:10px;">
+        <div style="font-size:0.88rem;font-weight:800;color:var(--accent);margin-bottom:10px;letter-spacing:0.2px;">📘 ${n.label}</div>
+        ${grados.map(g => {
+          const hasGrado = Object.prototype.hasOwnProperty.call((asignaciones || {}), g);
+          const seccsAsignadas = hasGrado ? ((asignaciones || {})[g] || []) : [];
+          const seccsSet = new Set((seccsAsignadas || []).map(x => String(x || '').trim().toUpperCase()).filter(Boolean));
+          const gradoKey = nivelKey + '_' + String(g).replace(/[^a-z0-9]/gi,'_');
+          const secciones = seccionesCfg;
+          return `
+            <div style="margin-bottom:10px;">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.86rem;font-weight:700;margin-bottom:6px;">
+                <input type="checkbox" class="chk-grado" data-grado="${g}" data-key="${gradoKey}"
+                  onchange="toggleGradoSecciones(this)"
+                  ${hasGrado?'checked':''}
+                  style="accent-color:var(--accent);width:17px;height:17px;">
+                <span>Grado ${g}</span>
+              </label>
+              <div id="secc-${gradoKey}" style="display:${hasGrado?'flex':'none'};flex-wrap:wrap;gap:10px;padding-left:28px;margin-top:4px;">
+                ${(secciones || []).map(s => `
+                  <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.84rem;font-weight:600;background:var(--surface);border:1px solid var(--border);padding:6px 10px;border-radius:8px;">
+                    <input type="checkbox" class="chk-seccion" data-grado="${g}" data-key="${gradoKey}" value="${s}"
+                      ${seccsSet.has(String(s || '').trim().toUpperCase())?'checked':''}
+                      style="accent-color:var(--accent);width:15px;height:15px;">
+                    Sección ${s}
                   </label>
                 `).join('')}
               </div>
