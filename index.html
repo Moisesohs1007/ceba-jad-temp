@@ -20341,7 +20341,61 @@ async function handleImportUsuariosFile() {
     const wb = XLSX.read(ab, { type: 'array' });
     const sheetName = wb.SheetNames?.[0];
     const ws = sheetName ? wb.Sheets[sheetName] : null;
-    const rawRows = ws ? XLSX.utils.sheet_to_json(ws, { defval: '' }) : [];
+
+    // ===== Fix PARSER: Auto-detectar fila de HEADERS =====
+    // Las planillas exportadas de Google Forms a veces tienen 1 fila vacía arriba,
+    // o 1 fila TÍTULO antes de los encabezados reales. Entonces sheet_to_json default
+    // (1ra fila = headers) deja keys = "__EMPTY_0..." y no encuentra NADA.
+    // Solución: leer sheet como array-of-arrays, detectar fila con palabras clave
+    // (correo, email, apellidos, nombres, tutor, cargo, dni) y usarla como headers.
+    let rawRows = [];
+    if (ws) {
+      const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) || [];
+      const headerScore = (row) => {
+        const joined = (row || []).map(c => String(c || '').toLowerCase().replace(/[_\s]/g, '')).join('|');
+        let pts = 0;
+        ['correo','email','mail'].forEach(k => { if (joined.includes(k)) pts += 5; });
+        ['apellido','nombre'].forEach(k => { if (joined.includes(k)) pts += 3; });
+        ['tutor','aula'].forEach(k => { if (joined.includes(k)) pts += 3; });
+        ['cargo','profesion','especialidad'].forEach(k => { if (joined.includes(k)) pts += 2; });
+        ['dni','documento'].forEach(k => { if (joined.includes(k)) pts += 2; });
+        return pts;
+      };
+      let headersRowIdx = 0;
+      let bestScore = headerScore(aoa[0] || []);
+      const topK = Math.min(aoa.length, 8);
+      for (let i = 1; i < topK; i++) {
+        const s = headerScore(aoa[i] || []);
+        if (s > bestScore) { bestScore = s; headersRowIdx = i; }
+      }
+      // Si nos quedamos con headers "todos vacíos" (__EMPTY) y el score es 0,
+      // probar filas subsiguientes hasta encontrar una con al menos 2 celdas no vacías:
+      if (bestScore === 0) {
+        for (let i = 0; i < topK; i++) {
+          const nonEmpty = (aoa[i] || []).filter(c => String(c || '').trim() !== '').length;
+          if (nonEmpty >= 2) { headersRowIdx = i; break; }
+        }
+      }
+      const headers = (aoa[headersRowIdx] || []).map(h => String(h || '').trim());
+      // Construir rawRows desde headersRowIdx + 1
+      const objRows = [];
+      for (let i = headersRowIdx + 1; i < aoa.length; i++) {
+        const row = aoa[i] || [];
+        const obj = {};
+        let hasData = false;
+        for (let j = 0; j < headers.length; j++) {
+          const h = headers[j];
+          if (!h) continue;
+          const v = row[j];
+          obj[h] = (v == null ? '' : v);
+          if (String(v || '').trim() !== '') hasData = true;
+        }
+        // Incluir incluso si hasData=false (para que Google Forms filas con solo TUTOR no se borren).
+        objRows.push(obj);
+      }
+      // Filtrar filas completamente vacías:
+      rawRows = objRows.filter(r => Object.values(r || {}).some(v => String(v || '').trim() !== ''));
+    }
 
     const normalized = rawRows.map((r) => {
       const out = {};
@@ -20369,18 +20423,34 @@ async function handleImportUsuariosFile() {
       };
       // IMPORTANTE: DECLARAR errors al INICIO de la iteración (antes se usaba TDZ).
       const errors = [];
-      const nombre = String(_getRowVal(r, ['nombre','nombres','nombre_completo','apellidos_y_nombres','nombres_y_apellidos','apellidos_nombres','docente','profesor','apellidos_nombre']) || fuzzy(['apellido','nombre','docente','profesor'])).trim();
-      const email = _sanitizeEmail(_getRowVal(r, ['email','correo','correo_electronico','mail','correo_institucional','correo_electronico_institucional','email_institucional']) || fuzzy(['correo','email','mail']));
+      const allCells = Object.values(r || {}).map(v => String(v || '').trim()).filter(Boolean);
+      const nombre = String(_getRowVal(r, ['nombre','nombres','nombre_completo','apellidos_y_nombres','nombres_y_apellidos','apellidos_nombres','docente','profesor','apellidos_nombre','apellidos_y_nombres_completos','apellidos_nombres_completos']) || fuzzy(['apellido','nombre','docente','profesor']) ||
+        // Ultrafallback: primera celda que parezca nombre (contiene espacio, no es email, no son solo números, no es TUTOR string)
+        (allCells.find(c =>
+          c.includes(' ') && !c.includes('@') && !/^\d+$/.test(c.replace(/[\s.]/g, '')) && c.length < 100 &&
+          !/^(CICLO|GRADO|AVANZADO|INICIAL|INTERMEDIO|SECUNDARIA|PRIMARIA|DOCENTE)/i.test(c) &&
+          !/^\d+[°"']?[A-Za-z]/.test(c)
+        ) || '')).trim();
+      const email = _sanitizeEmail(_getRowVal(r, ['email','correo','correo_electronico','mail','correo_institucional','correo_electronico_institucional','email_institucional','direccion_de_correo_electronico','dirección_de_correo_electrónico','correo_electronico_personal','correo_personal']) || fuzzy(['correo','email','mail']) ||
+        // Ultrafallback: primera celda que parezca email (contiene @ y un .)
+        (allCells.find(c => _looksLikeEmail(c)) || ''));
       const password = String(_getRowVal(r, ['password','contrasena','contraseña','clave','pass'])).trim();
       const rol = String(_getRowVal(r, ['rol','role']) || fuzzy(['rol','cargo','perfil'])).trim().toLowerCase();
-      const telefono = String(_getRowVal(r, ['telefono','tel','celular','whatsapp','cel','numero','telefono_celular','celular_numero','contacto']) || fuzzy(['telefono','celular','whatsapp','contacto','numero'])).trim();
+      const telefono = String(_getRowVal(r, ['telefono','tel','celular','whatsapp','cel','numero','telefono_celular','celular_numero','contacto']) || fuzzy(['telefono','celular','whatsapp','contacto','numero']) ||
+        // Ultrafallback: celda que parezca teléfono (solo dígitos, 6-12 chars, empieza por 9 o no DNI largo)
+        (allCells.find(c => /^\d{6,12}$/.test(c.replace(/[\s\-+()]/g, ''))) || '')).trim();
       const cargo = String(_getRowVal(r, ['cargo','especialidad','profesion','cargo_especialidad']) || fuzzy(['cargo','especialidad','profesion'])).trim();
       const esTutorRaw = _getRowVal(r, ['es_tutor','tutor','estutor','es_tutoria','es_tutor_de']) || fuzzy(['es_tutor','estutor','tutoria','tutor']);
       const esTutor = _parseBool(esTutorRaw);
       const tutorGradoRaw = String(_getRowVal(r, ['tutor_grado','grado_tutor','tutorgrado'])).trim();
       const tutorGrado = _normGradoFromCfg(tutorGradoRaw, cfg, '') || tutorGradoRaw;
       const tutorSeccion = String(_getRowVal(r, ['tutor_seccion','seccion_tutor','tutorseccion'])).trim();
-      const tutorColumnaExcel = String(_getRowVal(r, ['tutor','aulas_tutor','aulas','tutor_aulas','tutor_grado_seccion','grado_seccion_tutor','tutoria','aulas_tutoria']) || fuzzy(['aulas_tutor','tutor_aulas','tutor_grado','grado_seccion','seccion_tutor','aula'])).trim();
+      const tutorColumnaExcel = String(_getRowVal(r, ['tutor','aulas_tutor','aulas','tutor_aulas','tutor_grado_seccion','grado_seccion_tutor','tutoria','aulas_tutoria','tutorias','tutor_aulas_multiple']) || fuzzy(['aulas_tutor','tutor_aulas','tutor_grado','grado_seccion','seccion_tutor','aula','tutor']) ||
+        // Ultrafallback: celda que parezca columna TUTOR (empieza por "CICLO", o menciona "1A", "1°A", "1\"A\"", etc.)
+        (allCells.find(c => (
+          /^(CICLO|GRADO|AVANZADO|INICIAL|INTERMEDIO|EBR|CEBA)/i.test(c) ||
+          /\d["'°]?\s?[A-Za-z]/.test(c)
+        ) && c.length > 5) || '')).trim();
       // Parsear columna TUTOR libre (CEBA) o combinar con legacy tutor_grado + tutor_seccion
       let tutorAulasJson = [];
       try {
