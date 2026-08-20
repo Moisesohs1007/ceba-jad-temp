@@ -20591,11 +20591,13 @@ async function handleImportUsuariosFile() {
         restringir: restringirFinal,
         asignaciones: (rolEff === 'profesor' && restringirFinal) ? (asignacionesEff || {}) : {},
         esTutor: rolEff === 'profesor' ? !!esTutorEff : false,
-        tutorGrado: (rolEff === 'profesor' && esTutorEff) ? tutorGradoEff : null,
-        tutorSeccion: (rolEff === 'profesor' && esTutorEff) ? tutorSeccionEff : null,
-        tutor_aulas_json: (rolEff === 'profesor' && esTutorEff) ? tutorAulasJson : [],
-        tutor_raw: (rolEff === 'profesor' && esTutorEff) ? tutorColumnaExcel : '',
-        grados_asignados_json: gradosAsignadosJson
+        // Fix NOT NULL constraints (tutor_grado / tutor_seccion):
+        // NUNCA enviar null. Si no hay valor, enviar '' (string vacío) que sí pasa las constraint NOT NULL.
+        tutorGrado: (rolEff === 'profesor' && esTutorEff) ? (tutorGradoEff || '') : '',
+        tutorSeccion: (rolEff === 'profesor' && esTutorEff) ? ((tutorSeccionEff || '').toUpperCase()) : '',
+        tutor_aulas_json: (rolEff === 'profesor' && esTutorEff) ? (tutorAulasJson || []) : [],
+        tutor_raw: (rolEff === 'profesor' && esTutorEff) ? (tutorColumnaExcel || '') : '',
+        grados_asignados_json: gradosAsignadosJson || []
       };
 
       return {
@@ -20696,49 +20698,77 @@ async function _adminActualizarUsuario(uid, payload) {
     const newSafe = {};  // campos nuevos o que podrían faltar
     allCandidates.forEach(k => {
       if(!Object.prototype.hasOwnProperty.call(updateData, k)) return;
+      let v = updateData[k];
+      // ===== Fix NOT NULL / type constraints dinámico =====
+      // - Nunca enviar null ni undefined → si el valor es null/undefined se OMITE la columna
+      //   (Supabase conservará el valor que ya tenía, evitando "violates not-null").
+      // - Números que debieran ser string: telefono (si llega número lo pasamos a string).
+      // - tutorGrado / tutorSeccion → string vacío o '' si no hay.
+      if (v === null || v === undefined) return; // skip, no enviar
+      if (v && typeof v.toDate === 'function') v = v; // dejar timestamp intacto
+      if (k === 'telefono' && typeof v === 'number') v = String(v);
+      if ((k === 'tutorGrado' || k === 'tutorSeccion') && (v === null || v === undefined)) return;
       // Filtrar por existencia de la columna, si es que logramos leer el doc
       const col = _camelToSnake(k);
       const colExistente = existingKeys == null ? true : (existingKeys.has(col) || existingKeys.has(k));
       if (newColumns.has(k)) {
-        if (colExistente) newSafe[k] = updateData[k];
+        if (colExistente) newSafe[k] = v;
       } else {
-        if (colExistente) baseSafe[k] = updateData[k];
+        if (colExistente) baseSafe[k] = v;
       }
     });
 
     const safeUpdate = Object.assign({}, baseSafe, newSafe);
     if(!Object.keys(safeUpdate).length) return { ok:false, error:'Nada que actualizar' };
 
-    // Estrategia: primero intentar el update completo.
-    // Si falla con error tipo "column not found" / "schema cache", volver a intentar solo los baseSafe (campos viejos).
+    // Estrategia multi-intento:
+    //   1) update completo (campos antiguos + nuevos)
+    //   2) fallback campos antiguos
+    //   3) fallback ultra-limpio: SOLO campos que sabemos están 100% en todas las versiones
+    //      (nombre, cargo, telefono, restringir, asignaciones, esTutor).
+    // Cada reintento limpia las columnas que causaron "not-null" o "column not found".
+    const cleanObj = (obj, stripKeys) => {
+      const out = {};
+      Object.entries(obj || {}).forEach(([k, v]) => {
+        if (stripKeys && stripKeys.has(k)) return;
+        if (v === null || v === undefined) return;
+        out[k] = v;
+      });
+      return out;
+    };
     let attempts = [];
     const plan = [safeUpdate];
-    if (Object.keys(newSafe).length > 0) plan.push(baseSafe);
+    if (Object.keys(newSafe).length > 0) {
+      plan.push(baseSafe);
+      plan.push(cleanObj(baseSafe, new Set(['tutorGrado','tutorSeccion'])));
+    } else {
+      plan.push(cleanObj(baseSafe, new Set(['tutorGrado','tutorSeccion'])));
+    }
     let lastErr = null, finalOk = false;
     for (let i = 0; i < plan.length; i++) {
-      const obj = plan[i] || {};
+      let obj = plan[i] || {};
+      // Siempre limpiar null/undefined justo antes de enviar
+      obj = cleanObj(obj);
       if (!Object.keys(obj).length) continue;
       try {
         await db.collection('usuarios').doc(uid).update(obj);
         finalOk = true;
-        if (i === 0) {
-          attempts.push('Update completo OK');
-        } else {
-          attempts.push('Fallback: actualizados solo campos antiguos (columnas nuevas no existen).');
-        }
+        attempts.push(i === 0 ? 'Update completo OK' : `Fallback intento ${i + 1} OK`);
         break;
       } catch (_e) {
         lastErr = _e;
         const msg = String((_e && (_e.message || _e)) || '').toLowerCase();
-        // Si el error NO es de columna faltante, ya no reintentes
         const columnError = msg.includes('column') && (msg.includes('not found') || msg.includes('schema cache'));
-        if (!columnError) break;
-        attempts.push(`Intento ${i + 1} falló por schema: ${(_e && _e.message) || String(_e)}`);
+        const notNullError = msg.includes('not-null') || msg.includes('violates not-null');
+        if (!columnError && !notNullError) {
+          attempts.push(`Intento ${i + 1} falló (no recuperable): ${(_e && _e.message) || String(_e)}`);
+          break; // error no recuperable
+        }
+        attempts.push(`Intento ${i + 1} falló: ${(_e && _e.message) || String(_e)}`);
       }
     }
     if (finalOk) {
-      // Devolvemos ok + nota si hubo fallback
-      const note = (attempts.length > 1) ? ' · Fallback (algunos campos nuevos omitidos)' : '';
+      const note = (attempts.length > 1) ? ' · Fallback (algunos campos omitidos por constraints)' : '';
       return { ok:true, status:200, note, attempts };
     }
     return { ok:false, status:500, error: (lastErr && lastErr.message) || String(lastErr || 'Error'), attempts };
