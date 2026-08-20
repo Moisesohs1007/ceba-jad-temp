@@ -2713,6 +2713,10 @@
     Cambiar contraseña
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.4"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
   </div>
+  <div onclick="recargarMisTutorias();closeUserMenu();" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;font-size:12px;color:#10b981;border-bottom:1px solid var(--border);" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+    🔄 Recargar mis Tutorías
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.6"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+  </div>
   <div onclick="doLogout();closeUserMenu();" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;font-size:12px;color:var(--danger);" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
     Cerrar sesión
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.6"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -6570,6 +6574,53 @@ function doLogout() {
   }, 5000);
 }
 
+async function recargarMisTutorias() {
+  try {
+    if(!currentUser) { toast('Debes iniciar sesión primero', 'error'); return; }
+    const was = showLoader && typeof showLoader === 'function' ? showLoader('🔄 Recargando tus tutorías y privilegios...') : null;
+    try {
+      // 1) Borrar cache local de usuario y dashboard para que lea FRESCO desde Supabase.
+      try { sessionStorage.removeItem('asmqr_userCache_' + currentUser.uid); } catch(_) {}
+      try { localStorage.removeItem('asmqr_userCache_' + currentUser.uid); } catch(_) {}
+      try { sessionStorage.removeItem('asmqr_userCache'); } catch(_) {}
+      try { localStorage.removeItem('asmqr_userCache'); } catch(_) {}
+      try { sessionStorage.removeItem('_alumnosCache'); } catch(_) {}
+      try { sessionStorage.removeItem('_cfgCache'); } catch(_) {}
+      try { _dashInicioCache = null; _dashInicioCacheTs = 0; _dashInicioPromise = null; } catch(_) {}
+      try { window.alumnosCache = null; } catch(_) {}
+      try { DB && DB.invalidarAlumnos && DB.invalidarAlumnos(); } catch(_) {}
+      // 2) Volver a leer usuario DOC desde Supabase DIRECTAMENTE (no cache).
+      let uData = null;
+      try {
+        const doc = await db.collection('usuarios').doc(currentUser.uid).get();
+        if(doc && doc.exists) {
+          uData = doc.data() || {};
+          _setCurrentUsuarioCache(currentUser.uid, uData);
+        }
+      } catch(_e0) { console.warn('[recargarMisTutorias] refresh doc falló', _e0); }
+      if(!uData) uData = _getCurrentUsuarioCache(currentUser.uid);
+      // 3) Recargar tutor actual + privilegios actuales + config
+      const cfg = await getConfig(true);
+      await cargarTutorActual(uData);
+      await cargarPrivilegiosActuales(cfg, uData);
+      // 4) Volver a inicializar filtros y re-renderizar lo que esté visible.
+      await inicializarFiltros({ cfg });
+      try { await cargarDashboardInicio(true); } catch(_) {}
+      try { if(document.getElementById('sec-alumnos')?.classList?.contains('active')) renderAlumnos && renderAlumnos(); } catch(_) {}
+      try { if(document.getElementById('sec-asistencia')?.classList?.contains('active')) renderRegistro && renderRegistro(); } catch(_) {}
+      // 5) Resetear toast 1 sola vez por sesión scope vacío.
+      try { _warnedProfesorSinAulas = false; } catch(_) {}
+      toast('✅ Tutorías y privilegios recargados. Si seguiste viendo el aviso, pide a Admin que ejecute Modo Reparación.', 'success');
+    } finally {
+      if(was && typeof was === 'function') try { was(); } catch(_) {}
+      else hideLoader && hideLoader();
+    }
+  } catch(e) {
+    console.error('[recargarMisTutorias]', e);
+    toast('Error al recargar: ' + (e?.message || String(e)), 'error');
+  }
+}
+
 // Escuchar cambios de sesión
 auth.onAuthStateChanged(async user => {
   if(user) {
@@ -7166,7 +7217,7 @@ function _renderDashboardInicioData(data) {
   if(ulEl) ulEl.innerHTML = data.ultimosHtml;
 }
 
-async function cargarDashboardInicio() {
+async function cargarDashboardInicio(force = false) {
   try {
     const fechaStr = new Date().toLocaleDateString('es-PE',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
     const f = document.getElementById('inicio-fecha');
@@ -7178,22 +7229,38 @@ async function cargarDashboardInicio() {
     }
 
     const _hoy = hoy();
-    if(_dashInicioCache && _dashInicioCache.hoy === _hoy && (Date.now() - _dashInicioCacheTs) < DASH_INICIO_TTL_MS) {
+    if(!force && _dashInicioCache && _dashInicioCache.hoy === _hoy && (Date.now() - _dashInicioCacheTs) < DASH_INICIO_TTL_MS) {
       _renderDashboardInicioData(_dashInicioCache);
       return;
     }
-    if(_dashInicioPromise) {
+    if(!force && _dashInicioPromise) {
       const data = await _dashInicioPromise;
       _renderDashboardInicioData(data);
       return;
     }
 
     _dashInicioPromise = (async () => {
-      const [alumnos, regsHoy, cfg] = await Promise.all([
-        DB.getAlumnos(),
-        DB.getRegistros({fecha:_hoy}),
-        getConfig()
-      ]);
+      // ===== SCOPE: Si el usuario es profesor/restringido, usar SUS alumnos, NO todo el colegio =====
+      const cfg = await getConfig();
+      let alumnos = [];
+      try {
+        alumnos = await getAlumnosFiltrados({ cfg, forceAllIfEmpty: false });
+      } catch(_e1) {
+        // Fallback por si getAlumnosFiltrados llega a fallar (aunque ya devuelve [])
+        alumnos = [];
+      }
+      // Regs de HOY también los filtramos: SOLO los de sus alumnos (para Presentes/Faltas correctos).
+      let regsHoy = [];
+      try {
+        regsHoy = await DB.getRegistros({fecha:_hoy});
+        const alumnosIds = new Set(alumnos.map(a => String(a.id || a.uid || a.alumnoId || '').trim()).filter(Boolean));
+        if (alumnosIds.size > 0) {
+          regsHoy = regsHoy.filter(r => {
+            const rid = String((r && (r.alumnoId || r.id || r.uid)) || '').trim();
+            return !rid ? true : alumnosIds.has(rid);
+          });
+        }
+      } catch(_e2) { regsHoy = []; }
       try { if (typeof window !== 'undefined') window.alumnosCache = alumnos; } catch(_) {}
       const cfgNivelesRaw = (cfg.niveles||[]).map(n=> (typeof n === 'string' ? n : (n && n.nombre ? n.nombre : '')) ).filter(Boolean);
       const alumnosNiveles = _nivelesDesdeAlumnos(alumnos, cfg);
@@ -21833,11 +21900,12 @@ function _filtrarPorNivel(arr, nivelSel, cfg) {
   const nS = String(nivelSel).trim();
   return arr.filter(o => String(o && o[f] || '').trim() === nS);
 }
-async function getConfig() {
+async function getConfig(force = false) {
+  if(force) { try { invalidateConfig && invalidateConfig(); } catch(_) {} }
   if(configCache) return configCache;
   // Intentar desde localStorage
   const lsConfig = LSC.get('config');
-  if(lsConfig) {
+  if(lsConfig && !force) {
     configCache = _normalizarConfig(lsConfig);
     _aplicarConfigColegio(configCache);
     Promise.resolve().then(async function() {
