@@ -389,9 +389,10 @@
   #sec-scan .scan-col-left {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
     min-height: 0;
     height: 100%;
+    padding: 4px 2px 14px;
   }
   #sec-scan .scan-col-left #qr-reader {
     flex: 1;
@@ -922,15 +923,34 @@
   /* QR INPUT MANUAL */
   .manual-input {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     align-items: flex-end;
-    margin-bottom: 12px;
+    margin-bottom: 4px;
+    padding: 2px 6px 8px;
   }
-  .manual-input .form-group { flex: 1; }
+  .manual-input .form-group { flex: 1; margin: 0; }
+  .manual-input .form-group input {
+    width: 100%;
+    padding: 12px 16px !important;
+    font-size: 0.95rem !important;
+    letter-spacing: 0.5px;
+  }
+  .manual-input > .btn {
+    height: 44px;
+    padding: 0 18px !important;
+    font-size: 0.9rem !important;
+  }
   @media(max-width:700px){
-    .manual-input { margin-bottom: 10px; }
+    .manual-input {
+      margin-bottom: 10px;
+      padding: 4px 2px 12px;
+      gap: 8px;
+      flex-direction: column;
+      align-items: stretch;
+    }
     .manual-input .form-group label { font-size:0.75rem; }
-    .manual-input input { padding: 8px 10px; font-size:0.85rem; }
+    .manual-input .form-group input { padding: 10px 14px !important; font-size:0.9rem !important; }
+    .manual-input > .btn { width: 100%; height: 40px; }
   }
 
   /* TIMESTAMP BADGE */
