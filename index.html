@@ -10831,12 +10831,25 @@ function _buildAulasFromUserData(d) {
       } catch (_eRaw) { console.warn('[buildAulasFromUserData] tutor_raw parse falló', _eRaw); }
     }
   }
-  // ATENCIÓN: NO usamos fallback legacy (tutorGrado + tutorSeccion strings sueltos) AQUÍ.
-  // Motivo: en CEBA muchos tutores tienen 5+ aulas de múltiples ciclos (Magloria).
-  // Si tutorAulas/tutor_aulas_json Y tutor_raw están VACÍOS (fallo total del parser),
-  // NO inventamos una sola aula "1A" — porque eso le asigna el grado 1A DE TODOS LOS CICLOS
-  // y luego en renderAlumnos() con Nivel=AVANZADO le muestra 38 alumnos que NO son suyos.
-  // Si quedan vacías → el scope queda vacío → ve 0 filas, y el admin debe repararlo.
+  // ==== Fix LEGACY strings (contra rotura por Modo Reparación): ====
+  // Caso: docente que NO es tutor CEBA multi-ciclo, pero SÍ es tutor de una sola aula
+  // (ej: Llerena, 2C). Modo Reparación le sobreescribió asignaciones={} PERO se guardaron
+  // los strings legacy tutorGrado="2" / tutorSeccion="C".
+  // Solo aplicamos este fallback SI: tutorAulas==[] Y tutor_raw=='' PERO legacy strings
+  // están completos. Esto NO inventará ciclos a Magloria (porque ella ya tiene tutor_raw).
+  if (!aulas.length && tutorGrado && tutorSeccion) {
+    try {
+      // Inferir ciclo canónico desde el grado (usa configuración actual).
+      const inferNivel = (typeof _agendaInferNivelByGrado === 'function')
+        ? _agendaInferNivelByGrado(tutorGrado, null)
+        : '';
+      aulas = [{
+        ciclo: _canonCicloJS(inferNivel || ''),
+        grado: tutorGrado,
+        seccion: tutorSeccion
+      }];
+    } catch (_eLegacy) { aulas = [{ ciclo: '', grado: tutorGrado, seccion: tutorSeccion }]; }
+  }
   let gradosAsignados = Array.isArray(d.grados_asignados_json) ? d.grados_asignados_json : [];
   gradosAsignados = gradosAsignados.map(a => ({ ciclo: _canonCicloJS(a.ciclo||''), grado: String(a.grado||'').trim(), seccion: String(a.seccion||'').trim().toUpperCase() }))
                                   .filter(a => a.grado && a.seccion);
@@ -20725,18 +20738,56 @@ async function handleImportUsuariosFile() {
         rol: rolEff,
         nombre,
         cargo,
-        telefono,
-        restringir: restringirFinal,
-        asignaciones: (rolEff === 'profesor' && restringirFinal) ? (asignacionesEff || {}) : {},
-        esTutor: rolEff === 'profesor' ? !!esTutorEff : false,
-        // Fix NOT NULL constraints (tutor_grado / tutor_seccion):
-        // NUNCA enviar null. Si no hay valor, enviar '' (string vacío) que sí pasa las constraint NOT NULL.
-        tutorGrado: (rolEff === 'profesor' && esTutorEff) ? (tutorGradoEff || '') : '',
-        tutorSeccion: (rolEff === 'profesor' && esTutorEff) ? ((tutorSeccionEff || '').toUpperCase()) : '',
-        tutor_aulas_json: (rolEff === 'profesor' && esTutorEff) ? (tutorAulasJson || []) : [],
-        tutor_raw: (rolEff === 'profesor' && esTutorEff) ? (tutorColumnaExcel || '') : '',
-        grados_asignados_json: gradosAsignadosJson || []
+        telefono
       };
+      // ===== Fix Modo Reparación: SOLO incluir campos scope/tutor si HAY datos REALES. =====
+      // Si están VACÍOS los OMITIMOS del payload → Update NO toca la columna en DB →
+      // conserva el valor que ya tenía (evita rotura Llerena: asignaciones={"2":["C"]}).
+      //
+      // Reglas de inclusión:
+      //   1) restringir: SOLO incluir si true (si es false: omitir, DB conserva anterior)
+      //   2) asignaciones: SOLO incluir si Object.keys>0 (si vacío: omitir, conservar DB)
+      //   3) esTutor: SOLO incluir si true OR si tutorAulasJson>0 OR si legacy strings tG+tS
+      //   4) tutorGrado / tutorSeccion: SOLO si no están vacíos
+      //   5) tutor_aulas_json / grados_asignados_json: SOLO si length>0
+      //   6) tutor_raw: SOLO si no está vacío
+      const rolIsProf = (rolEff === 'profesor');
+      const includeScope = !modoReparacion || (rolIsProf && (
+        Object.keys(asignacionesEff || {}).length > 0 ||
+        tutorAulasJson.length > 0 ||
+        (tutorGradoEff && tutorSeccionEff) ||
+        tutorColumnaExcel
+      ));
+      if (restringirFinal === true) payload.restringir = true;
+      else if (!modoReparacion && rolEff === 'profesor') payload.restringir = false;
+
+      if (includeScope && Object.keys(asignacionesEff || {}).length > 0) {
+        payload.asignaciones = asignacionesEff || {};
+      } else if (!modoReparacion && rolEff === 'profesor') {
+        payload.asignaciones = {};
+      }
+
+      const esTutorExpl = !!esTutorEff || tutorAulasJson.length > 0 ||
+                         (tutorGradoEff && tutorSeccionEff) || !!tutorColumnaExcel;
+      if (rolIsProf && esTutorExpl) {
+        payload.esTutor = true;
+        if (tutorGradoEff) payload.tutorGrado = tutorGradoEff;
+        if (tutorSeccionEff) payload.tutorSeccion = tutorSeccionEff;
+        if (tutorAulasJson.length) payload.tutor_aulas_json = tutorAulasJson;
+        if (tutorColumnaExcel) payload.tutor_raw = tutorColumnaExcel;
+      } else if (!modoReparacion && rolIsProf) {
+        payload.esTutor = false;
+        payload.tutorGrado = '';
+        payload.tutorSeccion = '';
+        payload.tutor_aulas_json = [];
+        payload.tutor_raw = '';
+      }
+
+      if (gradosAsignadosJson && gradosAsignadosJson.length) {
+        payload.grados_asignados_json = gradosAsignadosJson;
+      } else if (!modoReparacion) {
+        payload.grados_asignados_json = [];
+      }
 
       return {
         idx: idx + 1,
@@ -21452,12 +21503,20 @@ function aplicarFiltroProfesor(alumnos) {
   if(r !== 'profesor' && r !== 'psicologo') return alumnos;
   if(!!currentPerms?.verTodasAulas) return alumnos;
   const aulasList = _profesorAsignacionesAulasList();
-  if(!aulasList.length) return [];
+  // ==== Fix seguridad contra scope vacío (rotura por Modo Reparación): ====
+  // Si el profesor TIENE restringir=true PERO 0 aulas → asumimos inconsistencia.
+  // Devolvemos la lista ORIGINAL (sin filtrar) y mostramos 1 solo toast de advertencia.
+  // Esto evita que docentes como Llerena vean 0 alumnos mientras se repara su registro.
+  if(!aulasList.length) {
+    if (typeof toastWarning === 'function' && !_warnedProfesorSinAulas) {
+      _warnedProfesorSinAulas = true;
+      toastWarning('Sin aulas asignadas detectadas. Mostrando todos los alumnos temporalmente. Notifica al administrador.');
+    }
+    return alumnos;
+  }
   return alumnos.filter(a => {
     return aulasList.some(x => {
       // MISMA seguridad anti-ambiguedad CEBA que en db_supabase.js getAlumnosScoped:
-      // Si scope aula NO trae ciclo (x.ciclo vacío) PERO alumno SÍ tiene ciclo (CEBA)
-      // → NO coincidir (seguro, evita 1A de TODOS los ciclos a la vez).
       const xCiclo = String(x.ciclo || '').trim().toUpperCase();
       const aCiclo = String(a.ciclo || '').trim().toUpperCase();
       let cicloMatch;
@@ -21488,22 +21547,21 @@ async function getAlumnosFiltrados() {
     if(!!currentPerms?.verTodasAulas) return DB.getAlumnos();
     const asig = _profesorAsignacionesEfectivas();
     if(Object.keys(asig).length) return DB.getAlumnosScoped(asig);
-    // SEGURIDAD: profesor/psicologo RESTRINGIDO o TUTOR pero SIN aulas parseadas.
-    // NUNCA devolver DB.getAlumnos() completo (habia bug Magloria → todo AVANZADO 1).
-    // Devolvemos [] y tostamos UNA SOLA VEZ al usuario (por sesión) para que contacte admin.
+    // ==== Fix seguridad contra scope vacío (rotura por Modo Reparación): ====
+    // Si llegamos acá sin asignaciones → CASO EXTREMO (ni legacy strings, ni tutor_raw,
+    // ni asignaciones DB). En vez de devolver [], mostramos lista COMPLETA con 1 sola
+    // advertencia por sesión para que docente NO esté bloqueado mientras admin repara.
     if(!_warnedProfesorSinAulas) {
       _warnedProfesorSinAulas = true;
       try {
-        if(typeof toast === 'function') {
-          const _esT = _isTutorUser();
-          const msg = _esT
-            ? '⚠️ Tienes TUTORÍAS asignadas pero no se pudieron cargar las aulas. Contacta al administrador para que use Modo Reparación en Usuarios.'
-            : '⚠️ No tienes aulas asignadas. Contacta al administrador para configurar tus secciones.';
-          toast(msg, 'warning', 10000);
+        if(typeof toastWarning === 'function') {
+          toastWarning('Sin aulas asignadas detectadas. Mostrando todos los alumnos temporalmente. Notifica al administrador.');
+        } else if(typeof toast === 'function') {
+          toast('Sin aulas asignadas detectadas. Mostrando todos los alumnos temporalmente. Notifica al administrador.', 'warning', 12000);
         }
       } catch(_e) {}
     }
-    return [];
+    return DB.getAlumnos();
   }
   const now = Date.now();
   if(_alumnosCacheFull && now - _alumnosCacheTs < 90000) return _alumnosCacheFull;
