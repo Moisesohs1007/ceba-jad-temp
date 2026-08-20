@@ -3102,13 +3102,17 @@
           <input type="text" id="cfg-colegio-anio" placeholder="2026" inputmode="numeric">
         </div>
         <div class="form-group">
-          <label>Modalidad educativa</label>
-          <select id="cfg-colegio-modalidad" onchange="_applyUiByModalidad(this.value)">
+          <label>Modalidad educativa (solo lectura)</label>
+          <div id="cfg-mod-lectura" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px dashed var(--border);border-radius:10px;background:var(--surface2);margin-bottom:0;">
+            <span id="cfg-mod-badge" style="padding:3px 10px;border-radius:20px;font-weight:800;font-size:0.8rem;color:#fff;background:#111;">—</span>
+            <span style="font-size:0.78rem;color:var(--muted);" id="cfg-mod-info">Cambia en Configuraciones Avanzadas</span>
+          </div>
+          <div style="display:none;"><select id="cfg-colegio-modalidad" onchange="_applyUiByModalidad(this.value)">
             <option value="">(no configurada)</option>
             <option value="CEBA">CEBA — Ciclos (Inicial / Intermedio / Avanzado)</option>
             <option value="EBR">EBR — Educación Básica Regular (Primaria / Secundaria)</option>
             <option value="EBA">EBA — Educación Básica Alternativa</option>
-          </select>
+          </select></div>
         </div>
         <div class="form-group">
           <label>Logo (PNG/JPG &lt; 300KB)</label>
@@ -3209,6 +3213,33 @@
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding:14px 18px;background:rgba(100,116,139,0.1);border-radius:12px;border:1px solid var(--border);">
         <div style="font-weight:700;font-size:0.95rem;color:var(--text);">⚙️ Configuraciones Avanzadas</div>
         <button class="btn btn-ghost" onclick="cerrarConfigAvanzada()" style="font-size:0.8rem;padding:6px 14px;">✕ Cerrar</button>
+      </div>
+
+      <!-- Modalidad educativa (solo moisesohs@gmail.com) -->
+      <div class="card" id="cfg-card-modalidad-superadmin" style="margin-bottom:20px;padding:20px 24px;border:1px solid #10b981;box-shadow:0 0 0 1px rgba(16,185,129,0.08);">
+        <div style="font-family:var(--font-display);font-size:1rem;font-weight:700;margin-bottom:4px;color:#10b981;">🏫 Modalidad educativa</div>
+        <div style="color:var(--muted);font-size:0.82rem;margin-bottom:14px;">Esta opción define TODO el comportamiento del sistema (niveles, grados, horarios, modalidades de atención). <b style="color:#fff;">Solo el SuperAdministrador Moisesohs@gmail.com</b> puede cambiarla.</div>
+        <div id="cfg-modalidad-visible-wrap">
+          <div style="margin-bottom:12px;padding:10px 13px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.35);border-radius:10px;color:#fca5a5;font-size:0.82rem;">🔒 No estás autorizado para cambiar la modalidad educativa. Contacta a <code style="color:#fff;">moisesohs@gmail.com</code>.</div>
+        </div>
+        <div style="display:none;" id="cfg-modalidad-edit-wrap">
+          <div class="form-grid">
+            <div class="form-group form-full">
+              <label>Selecciona la modalidad educativa del colegio</label>
+              <select id="cfg-avanzada-modalidad" onchange="_applyUiByModalidad(this.value)">
+                <option value="">(no configurada)</option>
+                <option value="CEBA">CEBA — Ciclos (Inicial / Intermedio / Avanzado) × Presencial / Semipresencial / Virtual</option>
+                <option value="EBR">EBR — Educación Básica Regular (Inicial / Primaria / Secundaria)</option>
+                <option value="EBA">EBA — Educación Básica Alternativa</option>
+              </select>
+              <div style="font-size:0.75rem;color:#f59e0b;margin-top:6px;">⚠️ Cambiar esto reinicia: grados por nivel, horarios por nivel, y Filtros de Gestion de Alumnos. Luego guarda Horarios y Grados para regenerar.</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="guardarModalidadSuperAdmin()" style="background:#10b981;border-color:#10b981;">💾 Guardar modalidad</button>
+            <span id="cfg-status-modalidad" style="font-size:0.78rem;color:var(--muted);align-self:center;"></span>
+          </div>
+        </div>
       </div>
 
       <!-- WhatsApp Factiliza -->
@@ -22825,6 +22856,40 @@ async function renderConfig() {
         cfgModSel.value = '';
       }
     }
+    // === NUEVO: select editable DENTRO de Configuraciones Avanzadas (solo Moisés) ===
+    const cfgAdvModSel = document.getElementById('cfg-avanzada-modalidad');
+    if (cfgAdvModSel) {
+      const v = (modalidadExpl || modalActual || '');
+      cfgAdvModSel.value = v;
+      if (!Array.from(cfgAdvModSel.options || []).some(o => String(o.value || '') === String(v || ''))) {
+        cfgAdvModSel.value = '';
+      }
+    }
+    // === Actualizar BADGE lectura en la tarjeta Datos Colegio ===
+    const badge = document.getElementById('cfg-mod-badge');
+    const infoTxt = document.getElementById('cfg-mod-info');
+    if (badge) {
+      const lblMap = { CEBA:['#0f766e','CEBA'], EBR:['#1e40af','EBR'], EBA:['#7c3aed','EBA'] };
+      const curVal = String(modalidadExpl || modalActual || '').trim().toUpperCase();
+      const arr = lblMap[curVal] || ['#475569','(no configurada)'];
+      badge.textContent = arr[1];
+      badge.style.background = arr[0];
+    }
+    // === Mostrar/ocultar panel editable SEGÚN EMAIL MOISÉS ===
+    const editWrap = document.getElementById('cfg-modalidad-edit-wrap');
+    const viewWrap = document.getElementById('cfg-modalidad-visible-wrap');
+    const isSuper = (currentUser && currentUser.email && String(currentUser.email).trim().toLowerCase() === 'moisesohs@gmail.com');
+    if (editWrap && viewWrap) {
+      if (isSuper) {
+        viewWrap.style.display = 'none';
+        editWrap.style.display = 'block';
+        if (infoTxt) infoTxt.textContent = 'Tú eres el SuperAdmin: puedes cambiar esto en Configuraciones Avanzadas.';
+      } else {
+        viewWrap.style.display = 'block';
+        editWrap.style.display = 'none';
+        if (infoTxt) infoTxt.textContent = 'Solo moisesohs@gmail.com puede cambiar la modalidad.';
+      }
+    }
   } catch(_) {}
   if ((!cfgNivelesOld.length || !nombresEsperados.every(n => cfgNivelesOld.some(o => String(o && o.nombre || '') === n)))) {
     try {
@@ -23194,7 +23259,16 @@ async function guardarInfoColegio() {
     const nombre = document.getElementById('cfg-colegio-nombre')?.value?.trim() || '';
     const eslogan = document.getElementById('cfg-colegio-eslogan')?.value?.trim() || '';
     const anio = document.getElementById('cfg-colegio-anio')?.value?.trim() || '';
-    const modalidadSel = String(document.getElementById('cfg-colegio-modalidad')?.value || '').trim().toUpperCase();
+    // GUARDIA DE SEGURIDAD: modalidad SOLO se toma de cfg-colegio-modalidad si email es MOISES,
+    // para evitar que otros usuarios accidentalmente sobrescriban al hacer "Guardar datos" (bug viejo).
+    const curEmail = String((currentUser && currentUser.email) || '').trim().toLowerCase();
+    const isMoisesSuper = curEmail === 'moisesohs@gmail.com';
+    const modalidadSelRaw = String(document.getElementById('cfg-colegio-modalidad')?.value || '').trim().toUpperCase();
+    const modalidadValidaRaw = ['CEBA','EBR','EBA'].includes(modalidadSelRaw);
+    // Solo preservar si moises (y ya tenia dato). Si es otro usuario, usar lo que YA ESTA GUARDADO (cfg)
+    const modalidadSel = isMoisesSuper
+      ? (modalidadValidaRaw || modalidadSelRaw==='' ? modalidadSelRaw : String(cfg.modalidadEducativa || cfg.modalidad_educativa || '').trim().toUpperCase())
+      : String(cfg.modalidadEducativa || cfg.modalidad_educativa || '').trim().toUpperCase();
     if(!nombre) { toast('Completa el nombre del colegio','warning'); return; }
     const modalidadValida = ['CEBA','EBR','EBA'].includes(modalidadSel);
     const modalidad = modalidadValida ? modalidadSel : '';
@@ -23204,11 +23278,17 @@ async function guardarInfoColegio() {
       esloganColegio: eslogan,
       anio: anio || (cfg.anio || COLEGIO_ANIO || ''),
     };
-    if (modalidadValida || modalidadSel === '') {
+    if ((modalidadValida || modalidadSel === '') && isMoisesSuper) {
       payload.modalidadEducativa = modalidadSel;
       payload.modalidad_educativa = modalidadSel;
+    } else if (!isMoisesSuper) {
+      // Otros usuarios: NO TOCAR modalidad
+      try {
+        if (cfg.modalidadEducativa) payload.modalidadEducativa = cfg.modalidadEducativa;
+        if (cfg.modalidad_educativa) payload.modalidad_educativa = cfg.modalidad_educativa;
+      } catch(_noToc) {}
     }
-    if (modalidadValida) {
+    if (modalidadValida && isMoisesSuper) {
       const nivelesBase = _horariosPorModalidad(modalidad);
       const cfgNivelesOld = Array.isArray(cfg.niveles) ? cfg.niveles : [];
       payload.niveles = nivelesBase.map(h => {
@@ -23238,18 +23318,28 @@ async function guardarInfoColegio() {
     // Actualizamos en memoria configCache y newCfg con la modalidad que eligió, sin importar alumnos.
     try {
       if (!newCfg || typeof newCfg !== 'object') newCfg = {};
-      if (modalidadValida || modalidadSel === '') {
+      if ((modalidadValida || modalidadSel === '') && isMoisesSuper) {
         newCfg.modalidadEducativa = modalidadSel;
         newCfg.modalidad_educativa = modalidadSel;
         if (payload.niveles) newCfg.niveles = payload.niveles;
         if (payload.grados)  newCfg.grados  = payload.grados;
+      } else {
+        try {
+          if (cfg.modalidadEducativa) newCfg.modalidadEducativa = cfg.modalidadEducativa;
+          if (cfg.modalidad_educativa) newCfg.modalidad_educativa = cfg.modalidad_educativa;
+        } catch(_preserve) {}
       }
       if (typeof configCache === 'object') {
-        if (modalidadValida || modalidadSel === '') {
+        if ((modalidadValida || modalidadSel === '') && isMoisesSuper) {
           configCache.modalidadEducativa = modalidadSel;
           configCache.modalidad_educativa = modalidadSel;
           if (payload.niveles) configCache.niveles = payload.niveles;
           if (payload.grados)  configCache.grados  = payload.grados;
+        } else {
+          try {
+            if (cfg.modalidadEducativa) configCache.modalidadEducativa = cfg.modalidadEducativa;
+            if (cfg.modalidad_educativa) configCache.modalidad_educativa = cfg.modalidad_educativa;
+          } catch(_preserve) {}
         }
       }
       try { LSC.set('config', configCache || newCfg, LSC.TTL_CONFIG); } catch(_eLSC) {}
@@ -23258,6 +23348,87 @@ async function guardarInfoColegio() {
     renderConfig();
     toast('Datos del colegio guardados','success');
   } catch(e) {
+    toast('Error al guardar: ' + (e?.message || ''),'error');
+  }
+}
+
+// Guardar Modalidad educativa (Solo botón de Configuraciones Avanzadas)
+async function guardarModalidadSuperAdmin() {
+  try {
+    // Guardia de seguridad 1: email moises
+    const curEmail = String((currentUser && currentUser.email) || '').trim().toLowerCase();
+    if (curEmail !== 'moisesohs@gmail.com') {
+      toast('🔒 Solo moisesohs@gmail.com puede cambiar la modalidad','error');
+      return;
+    }
+    const modalidadSel = String(document.getElementById('cfg-avanzada-modalidad')?.value || '').trim().toUpperCase();
+    if (!modalidadSel) { toast('Selecciona una modalidad','warning'); return; }
+    if (!['CEBA','EBR','EBA'].includes(modalidadSel)) { toast('Modalidad inválida','error'); return; }
+    const cfg = await getConfig();
+    const statusEl = document.getElementById('cfg-status-modalidad');
+    if(statusEl) statusEl.textContent = 'Guardando…';
+    const nivelesBase = _horariosPorModalidad(modalidadSel);
+    const cfgNivelesOld = Array.isArray(cfg.niveles) ? cfg.niveles : [];
+    const nivelesPayload = nivelesBase.map(h => {
+      const existente = cfgNivelesOld.find(x => x && String(x.nombre || '') === h.nombre);
+      return existente ? Object.assign({}, h, {
+        horaApertura: existente.horaApertura || h.horaApertura,
+        horaLimite:   existente.horaLimite   || h.horaLimite,
+        horaCorte:    existente.horaCorte    || h.horaCorte,
+        horaSalida:   existente.horaSalida   || h.horaSalida,
+      }) : h;
+    });
+    const gradosMapEsperado = _gradosPorModalidad(modalidadSel);
+    const cfgGrados = (cfg.grados && typeof cfg.grados === 'object') ? cfg.grados : {};
+    const gradosPayload = {};
+    // Preservar TOTALMENTE los keys existentes (incluye keys de otras modalidades para no borrar CEBA si vuelve EBR)
+    Object.keys(cfgGrados).forEach(k => {
+      const v = cfgGrados[k];
+      gradosPayload[k] = Array.isArray(v) ? v.slice() : (String(v||'').split(',').map(x=>x.trim()).filter(Boolean));
+    });
+    Object.keys(gradosMapEsperado).forEach(niv => {
+      if (Object.prototype.hasOwnProperty.call(gradosPayload, niv)) return; // respetar si ya existe
+      const g = gradosMapEsperado[niv] || [];
+      gradosPayload[niv] = Array.isArray(g) ? g : (String(g || '').split(',').map(x => x.trim()).filter(Boolean));
+    });
+    const payload = {
+      modalidadEducativa: modalidadSel,
+      modalidad_educativa: modalidadSel,
+      niveles: nivelesPayload,
+      grados: gradosPayload,
+    };
+    await db.collection('config').doc('general').set(payload, { merge: true });
+    invalidateConfig();
+    // Sincronizar valor al (oculto) selector original para que guardarInfoColegio() se mantenga consistente
+    try {
+      const oldSel = document.getElementById('cfg-colegio-modalidad');
+      if (oldSel) { oldSel.value = modalidadSel; }
+    } catch(_syncOld){}
+    // Refrescar memoria
+    let newCfg;
+    try { newCfg = await getConfig(); } catch(_e) { newCfg = { ...(configCache || {}), ...payload }; }
+    try {
+      if (!newCfg || typeof newCfg !== 'object') newCfg = {};
+      newCfg.modalidadEducativa = modalidadSel;
+      newCfg.modalidad_educativa = modalidadSel;
+      newCfg.niveles = nivelesPayload;
+      newCfg.grados = gradosPayload;
+      if (typeof configCache === 'object') {
+        configCache.modalidadEducativa = modalidadSel;
+        configCache.modalidad_educativa = modalidadSel;
+        configCache.niveles = nivelesPayload;
+        configCache.grados = gradosPayload;
+      }
+      try { LSC.set('config', configCache || newCfg, LSC.TTL_CONFIG); } catch(_eLSC) {}
+    } catch(_eMem) {}
+    _aplicarConfigColegio(newCfg);
+    renderConfig();
+    try { await actualizarTodosLosFiltros(); } catch(_eFil) {}
+    if(statusEl) statusEl.textContent = '✔ Guardado y recargado.';
+    toast(`Modalidad guardada: ${modalidadSel}. Horarios y Grados regenerados.`,'success', 5000);
+  } catch(e) {
+    const statusEl = document.getElementById('cfg-status-modalidad');
+    if(statusEl) statusEl.textContent = '';
     toast('Error al guardar: ' + (e?.message || ''),'error');
   }
 }
