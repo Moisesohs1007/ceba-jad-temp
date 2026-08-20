@@ -3102,10 +3102,9 @@
           <input type="text" id="cfg-colegio-anio" placeholder="2026" inputmode="numeric">
         </div>
         <div class="form-group">
-          <label>Modalidad educativa (solo lectura)</label>
+          <label>Modalidad educativa</label>
           <div id="cfg-mod-lectura" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px dashed var(--border);border-radius:10px;background:var(--surface2);margin-bottom:0;">
             <span id="cfg-mod-badge" style="padding:3px 10px;border-radius:20px;font-weight:800;font-size:0.8rem;color:#fff;background:#111;">—</span>
-            <span style="font-size:0.78rem;color:var(--muted);" id="cfg-mod-info">Cambia en Configuraciones Avanzadas</span>
           </div>
           <div style="display:none;"><select id="cfg-colegio-modalidad" onchange="_applyUiByModalidad(this.value)">
             <option value="">(no configurada)</option>
@@ -22867,7 +22866,6 @@ async function renderConfig() {
     }
     // === Actualizar BADGE lectura en la tarjeta Datos Colegio ===
     const badge = document.getElementById('cfg-mod-badge');
-    const infoTxt = document.getElementById('cfg-mod-info');
     if (badge) {
       const lblMap = { CEBA:['#0f766e','CEBA'], EBR:['#1e40af','EBR'], EBA:['#7c3aed','EBA'] };
       const curVal = String(modalidadExpl || modalActual || '').trim().toUpperCase();
@@ -22883,11 +22881,9 @@ async function renderConfig() {
       if (isSuper) {
         viewWrap.style.display = 'none';
         editWrap.style.display = 'block';
-        if (infoTxt) infoTxt.textContent = 'Tú eres el SuperAdmin: puedes cambiar esto en Configuraciones Avanzadas.';
       } else {
         viewWrap.style.display = 'block';
         editWrap.style.display = 'none';
-        if (infoTxt) infoTxt.textContent = 'Solo moisesohs@gmail.com puede cambiar la modalidad.';
       }
     }
   } catch(_) {}
