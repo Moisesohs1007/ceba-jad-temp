@@ -9339,8 +9339,10 @@ async function getRegistrosFiltrados() {
   // Generar ausentes si hay filtro individual (alumno) o por nivel/grado/sección
   // No generar si no hay filtro — evita 14k+ filas
   const hayFiltroEspecifico = q || (nivel && nivel !== 'TODOS') || (grado && grado !== 'TODOS') || (seccion && seccion !== 'TODOS');
+  const _chkSinReg = document.getElementById('chk-registro-sin-registro');
+  const _sinRegActivo = !!( _chkSinReg && _chkSinReg.checked );
 
-  if(hayFiltroEspecifico) {
+  if(hayFiltroEspecifico && _sinRegActivo) {
     const mesSel = document.getElementById('reg-mes-select')?.value || mesActual();
     const rangoDesde = desde || mesSel + '-01';
     const rangoHasta = hasta || (() => {
@@ -9372,15 +9374,21 @@ async function getRegistrosFiltrados() {
       cur.setDate(cur.getDate() + 1);
     }
 
-    alumnosFiltrados.forEach(a => {
-      fechasHabiles.forEach(fecha => {
-        const key = a.id + '_' + fecha;
-        if(!grupos[key]) {
-          const nivTxt = _alumnoNivelText(a,_cfgRPd);
-          filasPDF.push({ fecha, dni: a.id, nombre: ((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '', turno: nivTxt||a.turno||'-', nivel: nivTxt||a.turno||'-', grado: a.grado, seccion: a.seccion, ingreso: null, salida: null, estado: 'Sin registro' });
-        }
+    if(alumnosFiltrados.length * fechasHabiles.length <= 2500) {
+      const MAX_DIAS_PDF = 10;
+      const fechasHabilesOk = fechasHabiles.length > MAX_DIAS_PDF ? fechasHabiles.slice(-MAX_DIAS_PDF) : fechasHabiles;
+      alumnosFiltrados.forEach(a => {
+        fechasHabilesOk.forEach(fecha => {
+          const key = a.id + '_' + fecha;
+          if(!grupos[key]) {
+            const nivTxt = _alumnoNivelText(a,_cfgRPd);
+            filasPDF.push({ fecha, dni: a.id, nombre: ((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '', turno: nivTxt||a.turno||'-', nivel: nivTxt||a.turno||'-', grado: a.grado, seccion: a.seccion, ingreso: null, salida: null, estado: 'Sin registro' });
+          }
+        });
       });
-    });
+    } else {
+      toast('Rango grande: reduce fechas para mostrar "Sin registro"','warning');
+    }
   }
 
   // Ordenar: nivel → grado numérico → sección → apellido → nombre
@@ -9457,6 +9465,8 @@ async function exportXLSX() {
   const nombreColegio = COLEGIO_NOMBRE;
   const fechaExport = new Date().toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit',year:'numeric'});
   const diasSemana  = ['Domingo','Lunes','Martes','Miercoles','Jueves','Viernes','Sabado'];
+  const _chkSinRegExport = document.getElementById('chk-registro-sin-registro');
+  const _sinRegActivoExport = !!( _chkSinRegExport && _chkSinRegExport.checked );
 
   if(esPorAula) {
     // ── FORMATO MATRICIAL — por aula ──
@@ -9505,9 +9515,11 @@ async function exportXLSX() {
       const row=[a.id,nombre];
       let pC=0,tC=0,aC=0;
       diasHabiles.forEach(d=>{
-        const cod=(mapa[a.id]&&mapa[a.id][d.fecha])||'F';
+        const _c=(mapa[a.id]&&mapa[a.id][d.fecha]);
+        let cod;
+        if(_c){ cod=_c; } else { cod= _sinRegActivoExport ? 'F' : ''; }
         row.push(cod);
-        if(cod==='P') pC++; else if(cod==='T') tC++; else aC++;
+        if(cod==='P') pC++; else if(cod==='T') tC++; else if(cod==='F') aC++;
       });
       row.push(pC,tC,aC);
       aoa.push(row); styleMap[aoa.length-1]=ai%2===0?'even':'odd';
@@ -9679,6 +9691,8 @@ async function exportPDFRegistro() {
   const NAVY=[13,26,58],GOLD=[201,168,76],WHITE=[255,255,255],GRAY=[240,242,248],MUTED=[100,116,139],TEXT=[30,41,59];
   const GREEN=[22,163,74],AMBER=[202,138,4],RED=[220,38,38];
   const logoB64 = await cargarLogoBase64();
+  const _chkSinRegPdf = document.getElementById('chk-registro-sin-registro');
+  const _sinRegActivoPdf = !!( _chkSinRegPdf && _chkSinRegPdf.checked );
 
   if(esPorAula) {
     // ── FORMATO MATRICIAL — por aula ──
@@ -9752,8 +9766,10 @@ async function exportPDFRegistro() {
       doc.text(nom.length>26?nom.substring(0,24)+'..':nom,cx+2,curY+ROW_H/2+2);cx+=COL_NOMBRE;
       let pC=0,tC=0,aC=0;
       diasHabiles.forEach(d=>{
-        const cod=(mapa[a.id]&&mapa[a.id][d.fecha])||'F';
-        if(cod==='P'){doc.setTextColor(...GREEN);pC++;}else if(cod==='T'){doc.setTextColor(...AMBER);tC++;}else{doc.setTextColor(...RED);aC++;}
+        const _c=(mapa[a.id]&&mapa[a.id][d.fecha]);
+        let cod;
+        if(_c){ cod=_c; } else { cod=_sinRegActivoPdf?'F':''; }
+        if(cod==='P'){doc.setTextColor(...GREEN);pC++;}else if(cod==='T'){doc.setTextColor(...AMBER);tC++;}else if(cod==='F'){doc.setTextColor(...RED);aC++;} else { doc.setTextColor(...MUTED); }
         doc.setFontSize(5.9);doc.setFont('helvetica','bold');
         doc.text(cod,cx+COL_DIA/2,curY+ROW_H/2+2,{align:'center'});cx+=COL_DIA;
       });
