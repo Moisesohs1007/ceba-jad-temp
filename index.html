@@ -6847,6 +6847,12 @@ function aplicarPermisos(rol) {
 }
 
 function showSectionDirect(id) {
+  if(!canAccessSection(id)) {
+    toast('Sin acceso a esta sección', 'warning');
+    showSectionDirect('inicio');
+    setActiveTab('tab-inicio');
+    return;
+  }
   const prevSection = currentSection;
   currentSection = id;
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -10569,23 +10575,20 @@ function _matIsAdminMode() {
 }
 
 function matCanAccess() {
-  const r = _normRol(currentRol);
-  const px = (currentPerms && currentPerms.sections && typeof currentPerms.sections === 'object') ? currentPerms.sections : {};
-  return _matIsAdminMode() || !!px['materiales'] || (r === 'psicologo') || (r === 'profesor' && !!currentTutorInfo.esTutor);
+  return canAccessSection('materiales');
 }
 
 function matUpdateAccessUi() {
   const can = matCanAccess();
-  const px = (currentPerms && currentPerms.sections && typeof currentPerms.sections === 'object') ? currentPerms.sections : {};
-  const canEntrega = _matIsAdminMode() || !!px['materiales-entrega'];
+  const canEntrega = canAccessSection('materiales-entrega');
   const nav = document.getElementById('nav-materiales');
   if(nav) nav.style.display = can ? '' : 'none';
   const nav2 = document.getElementById('nav-materiales-entrega');
   if(nav2) nav2.style.display = canEntrega ? '' : 'none';
   const msb = document.getElementById('msb-sub-materiales');
-  if(msb) msb.style.display = can ? '' : 'none';
+  if(msb) msb.style.display = can ? 'flex' : 'none';
   const msb2 = document.getElementById('msb-sub-materiales-entrega');
-  if(msb2) msb2.style.display = canEntrega ? '' : 'none';
+  if(msb2) msb2.style.display = canEntrega ? 'flex' : 'none';
 }
 
 let _matInited = false;
@@ -23424,6 +23427,7 @@ function msbInit() {
     'ia-horarios': 'msb-sub-ia-horarios',
     'horarios-grado': 'msb-sub-horarios-grado',
     'rol-examenes': 'msb-sub-rol-examenes',
+    chat: 'msb-sub-chat',
     config: 'msb-sub-config-general',
     usuarios: 'msb-sub-usuarios',
   };
@@ -23440,9 +23444,9 @@ function msbInit() {
   const subAu = document.getElementById('msb-sub-aula');
   if(subAu) subAu.style.display = ['alumnos','incidentes','materiales','materiales-entrega'].some(canAccessSection) ? '' : 'none';
   const btnCo = document.getElementById('msb-btn-comunicacion');
-  if(btnCo) btnCo.style.display = ['comunicado','agenda','rol-examenes','ia-horarios','horarios-grado'].some(canAccessSection) ? '' : 'none';
+  if(btnCo) btnCo.style.display = ['comunicado','agenda','rol-examenes','ia-horarios','horarios-grado','chat'].some(canAccessSection) ? '' : 'none';
   const subCo = document.getElementById('msb-sub-comunicacion');
-  if(subCo) subCo.style.display = ['comunicado','agenda','rol-examenes','ia-horarios','horarios-grado'].some(canAccessSection) ? '' : 'none';
+  if(subCo) subCo.style.display = ['comunicado','agenda','rol-examenes','ia-horarios','horarios-grado','chat'].some(canAccessSection) ? '' : 'none';
   const btnCfg = document.getElementById('msb-btn-config');
   if(btnCfg) btnCfg.style.display = ['config','usuarios'].some(canAccessSection) ? '' : 'none';
   const subCfg = document.getElementById('msb-sub-config');
