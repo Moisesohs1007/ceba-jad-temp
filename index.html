@@ -3645,6 +3645,17 @@
         <label>Archivo Excel (.xlsx)</label>
         <input type="file" id="u-import-file" accept=".xlsx,.xls,.csv" onchange="handleImportUsuariosFile()" />
       </div>
+
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:6px 0 4px 0;padding:10px 12px;background:rgba(16,185,129,0.07);border:1px solid rgba(16,185,129,0.25);border-radius:10px;">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:650;font-size:0.9rem;cursor:pointer;">
+          <input type="checkbox" id="u-import-modo-reparacion" style="width:18px;height:18px;accent-color:var(--accent);" onchange="handleImportUsuariosFile()" />
+          🔧 Modo Reparación (NO crea usuarios — solo actualiza los que ya existen x email)
+        </label>
+        <button class="btn btn-ghost" id="btn-import-reparar-todos" style="display:none;background:rgba(16,185,129,0.12);color:#10b981;border-color:rgba(16,185,129,0.35);" onclick="runImportUsuarios(true)">🛠 Reparar Asignaciones</button>
+        <div style="font-size:0.78rem;color:var(--muted);flex:1 1 240px;">
+          Sube la misma planilla de docentes y repara de un solo golpe los campos: esTutor, tutor_aulas_json, asignaciones, restringir, tutorGrado, tutorSeccion, tutor_raw (para Magloria y otros tutores CEBA).
+        </div>
+      </div>
       <div id="u-import-status" style="display:none;margin:10px 0;padding:10px 12px;border-radius:10px;font-size:0.83rem;"></div>
 
       <div class="card" style="padding:0;margin-top:10px;">
@@ -5794,10 +5805,21 @@ let _tutoriaLocked = false;
 async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   if (!_isDocenteAula()) return;
   const _asig = (currentPrivilegios && typeof currentPrivilegios.asignaciones === 'object' && currentPrivilegios.asignaciones) ? currentPrivilegios.asignaciones : {};
+  const aulasList = _profesorAsignacionesAulasList(); // [ {ciclo,grado,seccion} ]
   const _noLock = String(nivelId || '').startsWith('rep-');
-  const _lockCampos = _noLock ? false : (!(Object.keys(_asig || {}).length > 0) && !currentPerms?.verTodasAulas);
-  const g = String(currentTutorInfo?.tutorGrado || '').trim();
-  const s = String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
+  const _lockCampos = _noLock ? false : (!(Object.keys(_asig || {}).length > 0) && !currentPerms?.verTodasAulas && aulasList.length > 0);
+  // SI no hay aulas efectivas (ni asignaciones, ni tutorAulas parseadas), NO auto-seleccionamos
+  // nada, para evitar inventar "1-A-AVANZADO" por defecto (sino Magloria veía 38 malos).
+  // El profesor verá 0 filas o estado inicial; el admin debe usar Modo Reparación.
+  if(!aulasList.length && !(Object.keys(_asig||{}).length) && !(currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length)) {
+    if (_lockCampos) {} // nada
+    return;
+  }
+  // Tomar la primera aula EFECTIVA (de la lista real, no legacy strings sueltos)
+  const primeraAula = aulasList[0] || null;
+  const g = primeraAula ? String(primeraAula.grado || '').trim() : String(currentTutorInfo?.tutorGrado || '').trim();
+  const s = primeraAula ? String(primeraAula.seccion || '').trim().toUpperCase() : String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
+  const cicloAuto = primeraAula ? String(primeraAula.ciclo || '').trim() : '';
   if (!g || !s) return;
 
   _tutoriaLocked = true; // Bloquear onChange mientras se auto-selecciona
@@ -5807,19 +5829,21 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   const sEl = document.getElementById(seccionId);
 
   // 1. Poblar y seleccionar nivel
-  let nivel = '';
+  let nivel = cicloAuto || '';
   if (nEl) {
     let cfg = options.cfg || null;
     try { if(!cfg) cfg = await getConfig(); } catch(e0) {}
     await poblarFiltroNivel(nivelId, null, { cfg, alumnos: options.alumnos });
-    nivel = (cfg ? _agendaInferNivelByGrado(g, cfg) : '') || [...(nEl.options || [])].find(o => o.value && o.value !== 'TODOS')?.value || '';
-    if (!nivel) {
-      const alumnos = Array.isArray(options.alumnos) ? options.alumnos : await getAlumnosFiltrados();
-      nivel = alumnos[0]?.turno || '';
+    if(!nivel) {
+      nivel = (cfg ? _agendaInferNivelByGrado(g, cfg) : '') || [...(nEl.options || [])].find(o => o.value && o.value !== 'TODOS')?.value || '';
+      if (!nivel) {
+        const alumnos = Array.isArray(options.alumnos) ? options.alumnos : await getAlumnosFiltrados();
+        nivel = alumnos[0]?.turno || '';
+      }
     }
     if (nivel) {
       if (![...nEl.options].some(o => o.value === nivel)) await poblarFiltroNivel(nivelId, null, { cfg, alumnos: options.alumnos });
-      nEl.value = nivel;
+      if([...nEl.options].some(o => o.value === nivel)) nEl.value = nivel;
       nEl.disabled = _lockCampos;
     }
   }
@@ -6677,8 +6701,12 @@ auth.onAuthStateChanged(async user => {
 
     // Cargar datos y configuración
     const cfgInit = await getConfig();
-    cargarTutorActual(uData).catch(() => {});
-    cargarPrivilegiosActuales(cfgInit, uData).catch(() => {});
+    // IMPORTANTE: AWAIT ambos para evitar race condition.
+    // Si se dejan fire-and-forget, inicializarFiltros usa getAlumnosFiltrados()
+    // ANTES de que se carguen tutorAulas y asignaciones → scope falso = 38 alumnos AVANZADO 1A
+    // para Magloria y similares.
+    await cargarTutorActual(uData).catch(() => {});
+    await cargarPrivilegiosActuales(cfgInit, uData).catch(() => {});
     cargarConfigBanner(); // cargar imágenes banner en segundo plano
     await inicializarFiltros({ cfg: cfgInit });
     updateStats();
@@ -10665,9 +10693,12 @@ function _buildAulasFromUserData(d) {
                .filter(a => a.grado && a.seccion);
   const seen = new Set();
   aulas = aulas.filter(a => { const k = [a.ciclo,a.grado,a.seccion].join('|'); if(seen.has(k)) return false; seen.add(k); return true; });
-  if(!aulas.length && tutorGrado && tutorSeccion){
-    aulas = [{ ciclo:'', grado: tutorGrado, seccion: tutorSeccion }];
-  }
+  // ATENCIÓN: NO usamos fallback legacy (tutorGrado + tutorSeccion) aquí.
+  // Motivo: en CEBA muchos tutores tienen 5+ aulas de múltiples ciclos (Magloria).
+  // Si tutorAulas/tutor_aulas_json está VACÍO (por fallo del parser en import antiguo),
+  // NO inventamos una sola aula "1A" — porque eso le asigna el grado 1A DE TODOS LOS CICLOS
+  // y luego en renderAlumnos() con Nivel=AVANZADO le muestra 38 alumnos que NO son suyos.
+  // Si quedan vacías → el scope queda vacío → ve 0 filas, y el admin debe repararlo.
   let gradosAsignados = Array.isArray(d.grados_asignados_json) ? d.grados_asignados_json : [];
   gradosAsignados = gradosAsignados.map(a => ({ ciclo: _canonCicloJS(a.ciclo||''), grado: String(a.grado||'').trim(), seccion: String(a.seccion||'').trim().toUpperCase() }))
                                   .filter(a => a.grado && a.seccion);
@@ -20018,6 +20049,10 @@ function openModalImportUsuarios() {
   if(counts) counts.textContent = '';
   const btn = document.getElementById('btn-import-run');
   if(btn) btn.disabled = true;
+  const btnReparar = document.getElementById('btn-import-reparar-todos');
+  if(btnReparar) btnReparar.style.display = 'none';
+  const chkRep = document.getElementById('u-import-modo-reparacion');
+  if(chkRep) chkRep.checked = false;
   const mSetup = document.getElementById('modal-setup');
   if(mSetup && mSetup.classList.contains('open')) {
     mSetup.style.zIndex = '10005';
@@ -20289,13 +20324,17 @@ async function handleImportUsuariosFile() {
   if(!file) return;
   const tbody = document.getElementById('u-import-tbody');
   const btn = document.getElementById('btn-import-run');
+  const btnReparar = document.getElementById('btn-import-reparar-todos');
   const counts = document.getElementById('u-import-counts');
   const st = document.getElementById('u-import-status');
+  const modoReparacionChk = document.getElementById('u-import-modo-reparacion');
+  const modoReparacion = !!(modoReparacionChk && modoReparacionChk.checked);
 
   try {
     if(st) { st.style.display = 'none'; st.textContent = ''; }
     if(tbody) tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:18px;">Procesando archivo...</td></tr>`;
     if(btn) btn.disabled = true;
+    if(btnReparar) btnReparar.style.display = 'none';
 
     const XLSX = await ensureXLSX();
     const ab = await file.arrayBuffer();
@@ -20317,6 +20356,8 @@ async function handleImportUsuariosFile() {
     const allowedRoles = new Set(['admin','director','coordinador','profesor','psicologo','auxiliar']);
 
     _importUsuariosRows = normalized.map((r, idx) => {
+      // IMPORTANTE: DECLARAR errors al INICIO de la iteración (antes se usaba TDZ).
+      const errors = [];
       const nombre = String(_getRowVal(r, ['nombre','nombres','nombre_completo'])).trim();
       const email = _sanitizeEmail(_getRowVal(r, ['email','correo','correo_electronico','mail']));
       const password = String(_getRowVal(r, ['password','contrasena','contraseña','clave'])).trim();
@@ -20333,9 +20374,6 @@ async function handleImportUsuariosFile() {
       try {
         if(tutorColumnaExcel) tutorAulasJson = _parseTutorColumnaExcelAulas(tutorColumnaExcel);
         // Seguridad anti-parser fallido:
-        // Si el usuario lleno la columna TUTOR con texto pero el parser no logro extraer NINGUNA aula,
-        // (por ejemplo comillas raras, simbolos desconocidos, etc) lo reportamos como error de validacion
-        // para que no se guarde al docente "sin aulas" y luego vea TODO el colegio o NADA (problema Magloria).
         if(!tutorAulasJson.length && tutorColumnaExcel.length > 5) {
           errors.push('No se pudieron extraer aulas TUTOR desde: "' + tutorColumnaExcel + '". Ajusta formato: 1"A" / 2A / 3°A');
         }
@@ -20350,17 +20388,12 @@ async function handleImportUsuariosFile() {
         tutorAulasJson = [{ ciclo: _canonCicloJS(inferNivel), grado: tutorGrado, seccion: tutorSeccion.toUpperCase() }].filter(a => a.grado && a.seccion);
       }
       if(esTutor && tutorAulasJson.length) {
-        // Legacy fallback: si no había tutor_grado/seccion, tomamos la primera aula como principal
         if(!tutorGrado)   tutorGrado   = String(tutorAulasJson[0].grado||'').trim();
         if(!tutorSeccion) tutorSeccion = String(tutorAulasJson[0].seccion||'').trim().toUpperCase();
       }
       const restringir = _parseBool(_getRowVal(r, ['restringir','restrignir','restricto','restringido']));
       const asignacionesRaw = _parseAsignaciones(_getRowVal(r, ['asignaciones','asignaciones_json']));
       let asignaciones = _normalizeAsignacionesWithCfg(asignacionesRaw || {}, cfg, _agendaInferNivelByGrado(tutorGrado, cfg)) || {};
-      // Sincronizacion de seguridad: si ES TUTOR y columna TUTOR se parseó a tutorAulasJson, PERO
-      // el usuario no llenó la columna "asignaciones" (asignaciones vacías), copiamos tutor -> asignaciones
-      // asi el profesor restringido SIEMPRE tiene grados/secciones en asignaciones aunque el Excel
-      // no la complete. Evitamos que luego quede sin filtro y vea todo o nada.
       const esProfesor = (rol === 'profesor');
       if(esProfesor && esTutor && tutorAulasJson.length && (!asignacionesRaw || Object.keys(asignacionesRaw).length === 0)) {
         asignaciones = {};
@@ -20371,25 +20404,24 @@ async function handleImportUsuariosFile() {
           if(!(g in asignaciones)) asignaciones[g] = [];
           if(!asignaciones[g].includes(s)) asignaciones[g].push(s);
         });
-        // Normalizamos nuevamente por si se agrego
         asignaciones = _normalizeAsignacionesWithCfg(asignaciones, cfg, _agendaInferNivelByGrado(tutorGrado, cfg)) || asignaciones;
       }
-      // Otra sincronizacion: si columna restringir no es explicita pero ES TUTOR con aulas -> activamos restringir
-      // para que no quede "docente tutor sin restriccion".
       let restringirFinal = rol === 'profesor' ? !!restringir : false;
       if(esProfesor && esTutor && tutorAulasJson.length && !restringirFinal) {
         restringirFinal = true;
       }
       const gradosAsignadosJson = _asignacionesObjToAulasList(asignaciones) || [];
 
-      const errors = [];
-      if(!nombre) errors.push('Falta nombre');
+      // Validaciones
+      if(!modoReparacion) {
+        if(!nombre) errors.push('Falta nombre');
+        if(!password || password.length < 6) errors.push('Password < 6');
+        if(!rol) errors.push('Falta rol');
+        if(rol && !allowedRoles.has(rol)) errors.push('Rol inválido');
+        if(email && seenEmails.has(email)) errors.push('Email duplicado en archivo');
+      }
       if(!email) errors.push('Falta email');
       if(email && !_looksLikeEmail(email)) errors.push('Email inválido: ' + email);
-      if(!password || password.length < 6) errors.push('Password < 6');
-      if(!rol) errors.push('Falta rol');
-      if(rol && !allowedRoles.has(rol)) errors.push('Rol inválido');
-      if(email && seenEmails.has(email)) errors.push('Email duplicado en archivo');
       if(email) seenEmails.add(email);
       if(rol === 'profesor' && esTutor) {
         if(!telefono) errors.push('Tutor sin teléfono');
@@ -20398,7 +20430,6 @@ async function handleImportUsuariosFile() {
           if(tutorGrado && gradeSet.size && !gradeSet.has(tutorGrado)) errors.push('Tutor grado no existe');
           if(tutorSeccion && sectionSet.size && !sectionSet.has(tutorSeccion)) errors.push('Tutor sección no existe');
         } else {
-          // Validar cada aula
           tutorAulasJson.forEach(a => {
             if(!a.grado) errors.push('Aula sin grado');
             if(!a.seccion) errors.push('Aula sin sección');
@@ -20410,7 +20441,7 @@ async function handleImportUsuariosFile() {
       if(rol === 'psicologo' && esTutor) {
         errors.push('Tutor no aplica a psicólogo');
       }
-      if(rol !== 'profesor' && rol !== 'psicologo' && (restringir || esTutor)) {
+      if(rol && rol !== 'profesor' && rol !== 'psicologo' && (restringir || esTutor)) {
         errors.push('Restringir/Tutor solo aplica a profesor o psicólogo');
       }
       if(rol === 'psicologo' && !restringir) {
@@ -20439,6 +20470,7 @@ async function handleImportUsuariosFile() {
         tutorGrado: (rol === 'profesor' && esTutor) ? tutorGrado : null,
         tutorSeccion: (rol === 'profesor' && esTutor) ? tutorSeccion : null,
         tutor_aulas_json: (rol === 'profesor' && esTutor) ? tutorAulasJson : [],
+        tutor_raw: (rol === 'profesor' && esTutor) ? tutorColumnaExcel : '',
         grados_asignados_json: gradosAsignadosJson
       };
 
@@ -20449,7 +20481,7 @@ async function handleImportUsuariosFile() {
         rol,
         payload,
         errors,
-        status: errors.length ? 'Error' : 'Listo'
+        status: errors.length ? 'Error' : (modoReparacion ? 'Listo (reparar)' : 'Listo')
       };
     }).filter(r => r.nombre || r.email || r.rol || (r.errors && r.errors.length));
 
@@ -20460,7 +20492,7 @@ async function handleImportUsuariosFile() {
     if(tbody) {
       const show = _importUsuariosRows.slice(0, 50);
       tbody.innerHTML = show.map(r => {
-        const stTxt = r.errors.length ? (r.errors.join(' · ')) : 'OK';
+        const stTxt = r.errors.length ? (r.errors.join(' · ')) : (r.status || 'OK');
         const color = r.errors.length ? '#ef4444' : '#34d399';
         return `<tr>
           <td>${r.idx}</td>
@@ -20472,7 +20504,8 @@ async function handleImportUsuariosFile() {
       }).join('') + (_importUsuariosRows.length > 50 ? `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:14px;">Mostrando 50 de ${_importUsuariosRows.length}</td></tr>` : '');
     }
 
-    if(btn) btn.disabled = ok === 0;
+    if(btnReparar) btnReparar.style.display = (modoReparacion && ok > 0) ? 'inline-flex' : 'none';
+    if(btn) btn.disabled = (modoReparacion ? true : (ok === 0));
   } catch(e) {
     if(st) {
       st.style.display = '';
@@ -20483,44 +20516,93 @@ async function handleImportUsuariosFile() {
     }
     if(tbody) tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:18px;">Error al leer</td></tr>`;
     if(btn) btn.disabled = true;
+    if(btnReparar) btnReparar.style.display = 'none';
   }
 }
 
-async function runImportUsuarios() {
+// Helper para Reparación: busca uid del usuario x email (tabla usuarios de Supabase)
+async function _findUsuarioUidByEmail(email) {
+  const em = String(email || '').trim().toLowerCase();
+  if(!em) return null;
+  try {
+    const snap = await db.collection('usuarios').where('email', '==', em).limit(1).get();
+    if(snap && !snap.empty && snap.docs && snap.docs[0]) return snap.docs[0].id;
+  } catch(_e) {}
+  return null;
+}
+
+// Reparación client-side: actualiza SOLO los campos tutor/asignaciones/restringir/cargo/telefono/nombre
+// (NUNCA toca email, password, rol). Devuelve { ok, error }.
+async function _adminActualizarUsuario(uid, payload) {
+  if(!uid) return { ok:false, status:404, error:'No se encontró usuario con ese email' };
+  try {
+    const { email, password, rol, ...updateData } = payload || {};
+    // Campos seguros para reparación / actualización de perfil
+    const safeUpdate = {};
+    ['nombre','cargo','telefono','restringir','asignaciones','esTutor','tutorGrado','tutorSeccion','tutor_aulas_json','tutor_raw','grados_asignados_json'].forEach(k => {
+      if(Object.prototype.hasOwnProperty.call(updateData, k)) safeUpdate[k] = updateData[k];
+    });
+    if(!Object.keys(safeUpdate).length) return { ok:false, error:'Nada que actualizar' };
+    await db.collection('usuarios').doc(uid).update(safeUpdate);
+    return { ok:true, status:200 };
+  } catch(e) {
+    return { ok:false, status:500, error: e?.message || String(e) };
+  }
+}
+
+async function runImportUsuarios(forceReparar = false) {
   if(_importUsuariosBusy) return;
   const btn = document.getElementById('btn-import-run');
+  const btnReparar = document.getElementById('btn-import-reparar-todos');
   const st = document.getElementById('u-import-status');
   const tbody = document.getElementById('u-import-tbody');
   const counts = document.getElementById('u-import-counts');
+  const modoRepChk = document.getElementById('u-import-modo-reparacion');
+  const modoReparacion = !!(forceReparar || (modoRepChk && modoRepChk.checked));
   const rows = _importUsuariosRows || [];
   const pending = rows.filter(r => !r.errors.length);
   if(!pending.length) return;
 
   _importUsuariosBusy = true;
   if(btn) btn.disabled = true;
-  let ok = 0, bad = 0, done = 0;
+  if(btnReparar) btnReparar.disabled = true;
+  let ok = 0, bad = 0, skipped = 0, done = 0;
 
   for(const r of pending) {
-    const res = await _adminCrearUsuario(r.payload);
-    done++;
-    if(res.ok) {
-      ok++;
-      r.status = 'Creado';
+    let res;
+    if(modoReparacion) {
+      // Modo reparación: buscar x email → actualizar campos seguros
+      const uid = await _findUsuarioUidByEmail(r.email);
+      if(uid) {
+        res = await _adminActualizarUsuario(uid, r.payload);
+        if(res.ok) { ok++; r.status = 'Reparado OK'; }
+        else { bad++; r.status = 'Error al reparar: ' + (res.error || 'Error'); }
+      } else {
+        skipped++; r.status = 'Saltado (email no existe)';
+      }
     } else {
-      bad++;
-      const msg = (res.code === 'auth/email-already-in-use' || res.status === 409) ? 'Email ya existe' : (res.error || 'Error');
-      r.status = 'Error: ' + msg;
+      res = await _adminCrearUsuario(r.payload);
+      if(res.ok) { ok++; r.status = 'Creado'; }
+      else {
+        bad++;
+        const msg = (res.code === 'auth/email-already-in-use' || res.status === 409) ? 'Email ya existe' : (res.error || 'Error');
+        r.status = 'Error: ' + msg;
+      }
     }
+    done++;
     if(st) {
       st.style.display = '';
-      st.style.background = 'rgba(96,165,250,0.10)';
-      st.style.border = '1px solid rgba(96,165,250,0.25)';
+      st.style.background = modoReparacion ? 'rgba(16,185,129,0.10)' : 'rgba(96,165,250,0.10)';
+      st.style.border = modoReparacion ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(96,165,250,0.25)';
       st.style.color = 'var(--text)';
-      st.textContent = `Importando... ${done}/${pending.length} · OK ${ok} · Error ${bad}`;
+      const txtModo = modoReparacion
+        ? `Reparando... ${done}/${pending.length} · OK ${ok} · Saltados ${skipped} · Error ${bad}`
+        : `Importando... ${done}/${pending.length} · OK ${ok} · Error ${bad}`;
+      st.textContent = txtModo;
     }
   }
 
-  if(counts) counts.textContent = `${rows.length} filas · creados ${ok} · errores ${bad}`;
+  if(counts) counts.textContent = `${rows.length} filas · ${modoReparacion ? ('reparados '+ok+' · saltados '+skipped) : ('creados '+ok)} · errores ${bad}`;
   if(tbody) {
     const show = rows.slice(0, 50);
     tbody.innerHTML = show.map(r => {
@@ -20541,13 +20623,25 @@ async function runImportUsuarios() {
   await renderUsuarios().catch(() => {});
   if(st) {
     st.style.display = '';
-    st.style.background = bad ? 'rgba(245,158,11,0.12)' : 'rgba(34,197,94,0.12)';
-    st.style.border = bad ? '1px solid rgba(245,158,11,0.35)' : '1px solid rgba(34,197,94,0.35)';
-    st.style.color = bad ? '#f59e0b' : '#22c55e';
-    st.textContent = bad ? `Importación terminada con errores: OK ${ok} · Error ${bad}` : `Importación completa: ${ok} usuarios creados`;
+    if(bad) {
+      st.style.background = 'rgba(245,158,11,0.12)';
+      st.style.border = '1px solid rgba(245,158,11,0.35)';
+      st.style.color = '#f59e0b';
+      st.textContent = modoReparacion
+        ? `Reparación terminada con alertas: OK ${ok} · Saltados ${skipped} · Error ${bad}`
+        : `Importación terminada con errores: OK ${ok} · Error ${bad}`;
+    } else {
+      st.style.background = 'rgba(34,197,94,0.12)';
+      st.style.border = '1px solid rgba(34,197,94,0.35)';
+      st.style.color = '#22c55e';
+      st.textContent = modoReparacion
+        ? `✅ Reparación completa: ${ok} usuarios reparados${skipped ? ' · ' + skipped + ' saltados' : ''}. Pide a los docentes CERRAR SESIÓN y volver a entrar para que vean sus aulas correctas.`
+        : `Importación completa: ${ok} usuarios creados`;
+    }
   }
 
   _importUsuariosBusy = false;
+  if(btnReparar) btnReparar.disabled = false;
 }
 
 
@@ -20923,11 +21017,12 @@ async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
 // Util runtime: convierte tutorAulas del currentTutorInfo en asignaciones obj {grado:[secciones]}
 function _profesorTutorToAsignaciones() {
   const out = {};
-  const lista = Array.isArray(currentTutorInfo?.tutorAulas) && currentTutorInfo.tutorAulas.length
+  // ATENCIÓN: NO usamos fallback legacy (tutorGrado + tutorSeccion strings sueltos) aquí.
+  // (Ver explicación detallada en _buildAulasFromUserData).
+  // Solo consideramos tutorAulas[] la LISTA (que ya viene parseada correctamente).
+  const lista = (Array.isArray(currentTutorInfo?.tutorAulas) && currentTutorInfo.tutorAulas.length)
     ? currentTutorInfo.tutorAulas.slice()
-    : (((currentTutorInfo?.tutorGrado && currentTutorInfo?.tutorSeccion))
-        ? [{ ciclo: '', grado: String(currentTutorInfo.tutorGrado||'').trim(), seccion: String(currentTutorInfo.tutorSeccion||'').trim().toUpperCase() }]
-        : []);
+    : [];
   lista.forEach(a => {
     if(!a || !a.grado || !a.seccion) return;
     const g = String(a.grado||'').trim();
@@ -20946,11 +21041,12 @@ function _profesorAsignacionesAulasList() {
   const asigObj = (currentPrivilegios && typeof currentPrivilegios.asignaciones === 'object') ? currentPrivilegios.asignaciones : {};
   let list = Array.isArray(currentTutorInfo?.gradosAsignados) ? currentTutorInfo.gradosAsignados.slice() :
              _asignacionesObjToAulasList(asigObj);
-  // Añadir aulas del tutor CEBA (multiples) o la única legacy
+  // Añadir aulas del tutor CEBA (multiples) — SOLO desde tutorAulas[] la LISTA parseada,
+  // NUNCA desde legacy tutorGrado/tutorSeccion sueltos (ver explicación en _buildAulasFromUserData).
   if(_isTutorUser()) {
     const tutorList = Array.isArray(currentTutorInfo?.tutorAulas) && currentTutorInfo.tutorAulas.length
       ? currentTutorInfo.tutorAulas.slice()
-      : ((currentTutorInfo?.tutorGrado && currentTutorInfo?.tutorSeccion) ? [{ ciclo:'', grado: String(currentTutorInfo.tutorGrado||'').trim(), seccion: String(currentTutorInfo.tutorSeccion||'').trim().toUpperCase() }] : []);
+      : [];
     tutorList.forEach(a => {
       if(!a || !a.grado || !a.seccion) return;
       const k = [_canonCicloJS(a.ciclo||''), String(a.grado||'').trim(), String(a.seccion||'').trim().toUpperCase()].join('|');
@@ -20983,7 +21079,14 @@ function aplicarFiltroProfesor(alumnos) {
   if(!aulasList.length) return [];
   return alumnos.filter(a => {
     return aulasList.some(x => {
-      const cicloMatch = !x.ciclo || !a.ciclo || (String(a.ciclo||'').toUpperCase() === String(x.ciclo||'').toUpperCase());
+      // MISMA seguridad anti-ambiguedad CEBA que en db_supabase.js getAlumnosScoped:
+      // Si scope aula NO trae ciclo (x.ciclo vacío) PERO alumno SÍ tiene ciclo (CEBA)
+      // → NO coincidir (seguro, evita 1A de TODOS los ciclos a la vez).
+      const xCiclo = String(x.ciclo || '').trim().toUpperCase();
+      const aCiclo = String(a.ciclo || '').trim().toUpperCase();
+      let cicloMatch;
+      if (!xCiclo && aCiclo) cicloMatch = false;
+      else cicloMatch = !xCiclo || !aCiclo || (xCiclo === aCiclo);
       const gradoMatch = String(a.grado||'').trim() === String(x.grado||'').trim();
       if(!cicloMatch || !gradoMatch) return false;
       const secA = String(a.seccion || '').trim().toUpperCase();
@@ -21000,6 +21103,7 @@ function aplicarFiltroProfesor(alumnos) {
 // Para admins/directores/sin restricción usa getAlumnos() (cache completo).
 let _alumnosCacheFull = null;
 let _alumnosCacheTs = 0;
+let _warnedProfesorSinAulas = false; // flag para no tostar 15 veces por sesión
 function _invalidarCacheAlumnos() { _alumnosCacheFull = null; _alumnosCacheTs = 0; }
 
 async function getAlumnosFiltrados() {
@@ -21008,14 +21112,20 @@ async function getAlumnosFiltrados() {
     if(!!currentPerms?.verTodasAulas) return DB.getAlumnos();
     const asig = _profesorAsignacionesEfectivas();
     if(Object.keys(asig).length) return DB.getAlumnosScoped(asig);
-    // Seguridad: si el profesor/psicologo es RESTRINGIDO pero no tiene asignaciones ni
-    // tutorías parseadas (fallo importación), NO le devolvemos DB.getAlumnos completo
-    // (habia un bug en Magloria: le devolvia todos los alumnos). Devolvemos array vacio
-    // para obligar a que el admin configure sus aulas correctamente.
-    const _esRestringido = !!(currentPrivilegios?.restringir);
-    const _esTutor = !!((currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length) || currentTutorInfo?.tutorGrado);
-    if(_esRestringido || _esTutor) {
-      return [];
+    // SEGURIDAD: profesor/psicologo RESTRINGIDO o TUTOR pero SIN aulas parseadas.
+    // NUNCA devolver DB.getAlumnos() completo (habia bug Magloria → todo AVANZADO 1).
+    // Devolvemos [] y tostamos UNA SOLA VEZ al usuario (por sesión) para que contacte admin.
+    if(!_warnedProfesorSinAulas) {
+      _warnedProfesorSinAulas = true;
+      try {
+        if(typeof toast === 'function') {
+          const _esT = _isTutorUser();
+          const msg = _esT
+            ? '⚠️ Tienes TUTORÍAS asignadas pero no se pudieron cargar las aulas. Contacta al administrador para que use Modo Reparación en Usuarios.'
+            : '⚠️ No tienes aulas asignadas. Contacta al administrador para configurar tus secciones.';
+          toast(msg, 'warning', 10000);
+        }
+      } catch(_e) {}
     }
     return [];
   }

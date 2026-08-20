@@ -95,9 +95,23 @@ const DB = {
     const result = data
       .map(_normAlumno)
       .filter(a => {
-        // match con cualquier aula de la lista, compatible con ciclo '' (EBR legacy match cualquier ciclo)
+        // match con cualquier aula de la lista.
+        // SEGURIDAD ANTI-AMBIGÜEDAD CEBA:
+        //   Si la BD guarda `ciclo` en los alumnos (modalidad CEBA/EBA) y la aula del scope
+        //   NO trae ciclo (x.ciclo = '' vacío, legado de asignaciones obj {grado:[secs]} sin ciclo)
+        //   → NO se matchea para evitar que "grado 1 sección A" devuelva 1A de INICIAL,
+        //     INTERMEDIO y AVANZADO al mismo tiempo (bug de Magloria: 38 alumnos equivocados).
+        //   En EBR donde alumnos.ciclo está vacío → cicloMatch sigue siendo true y funciona igual.
         return aulasList.some(x => {
-          const cicloMatch = !x.ciclo || !a.ciclo || (String(a.ciclo||'').toUpperCase() === String(x.ciclo||'').toUpperCase());
+          const xCiclo = String(x.ciclo || '').trim().toUpperCase();
+          const aCiclo = String(a.ciclo || '').trim().toUpperCase();
+          let cicloMatch;
+          if (!xCiclo && aCiclo) {
+            // Scope legado sin ciclo, pero alumno SÍ tiene ciclo (CEBA) → NO coincide (ambiguo/seguro).
+            cicloMatch = false;
+          } else {
+            cicloMatch = !xCiclo || !aCiclo || (xCiclo === aCiclo);
+          }
           const gradoOk = String(a.grado||'').trim() === String(x.grado||'').trim();
           if (!gradoOk || !cicloMatch) return false;
           // si la aula pide seccion '' → todas las secciones de ese grado
