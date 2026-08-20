@@ -20356,19 +20356,31 @@ async function handleImportUsuariosFile() {
     const allowedRoles = new Set(['admin','director','coordinador','profesor','psicologo','auxiliar']);
 
     _importUsuariosRows = normalized.map((r, idx) => {
+      // ===== Fix A: Detección fuzzy de columnas para planillas TUTORES con nombres no estándar =====
+      const fuzzy = (patterns) => {
+        for(const k of Object.keys(r || {})) {
+          const kk = String(k || '').toLowerCase().replace(/[_\s]/g, '');
+          for(const p of patterns) {
+            const pp = String(p || '').toLowerCase().replace(/[_\s]/g, '');
+            if(kk.includes(pp) && r[k] != null && String(r[k]).trim() !== '') return r[k];
+          }
+        }
+        return '';
+      };
       // IMPORTANTE: DECLARAR errors al INICIO de la iteración (antes se usaba TDZ).
       const errors = [];
-      const nombre = String(_getRowVal(r, ['nombre','nombres','nombre_completo'])).trim();
-      const email = _sanitizeEmail(_getRowVal(r, ['email','correo','correo_electronico','mail']));
-      const password = String(_getRowVal(r, ['password','contrasena','contraseña','clave'])).trim();
-      const rol = String(_getRowVal(r, ['rol','role'])).trim().toLowerCase();
-      const telefono = String(_getRowVal(r, ['telefono','tel','celular','whatsapp'])).trim();
-      const cargo = String(_getRowVal(r, ['cargo'])).trim();
-      const esTutor = _parseBool(_getRowVal(r, ['es_tutor','tutor','estutor']));
+      const nombre = String(_getRowVal(r, ['nombre','nombres','nombre_completo','apellidos_y_nombres','nombres_y_apellidos','apellidos_nombres','docente','profesor','apellidos_nombre']) || fuzzy(['apellido','nombre','docente','profesor'])).trim();
+      const email = _sanitizeEmail(_getRowVal(r, ['email','correo','correo_electronico','mail','correo_institucional','correo_electronico_institucional','email_institucional']) || fuzzy(['correo','email','mail']));
+      const password = String(_getRowVal(r, ['password','contrasena','contraseña','clave','pass'])).trim();
+      const rol = String(_getRowVal(r, ['rol','role']) || fuzzy(['rol','cargo','perfil'])).trim().toLowerCase();
+      const telefono = String(_getRowVal(r, ['telefono','tel','celular','whatsapp','cel','numero','telefono_celular','celular_numero','contacto']) || fuzzy(['telefono','celular','whatsapp','contacto','numero'])).trim();
+      const cargo = String(_getRowVal(r, ['cargo','especialidad','profesion','cargo_especialidad']) || fuzzy(['cargo','especialidad','profesion'])).trim();
+      const esTutorRaw = _getRowVal(r, ['es_tutor','tutor','estutor','es_tutoria','es_tutor_de']) || fuzzy(['es_tutor','estutor','tutoria','tutor']);
+      const esTutor = _parseBool(esTutorRaw);
       const tutorGradoRaw = String(_getRowVal(r, ['tutor_grado','grado_tutor','tutorgrado'])).trim();
       const tutorGrado = _normGradoFromCfg(tutorGradoRaw, cfg, '') || tutorGradoRaw;
       const tutorSeccion = String(_getRowVal(r, ['tutor_seccion','seccion_tutor','tutorseccion'])).trim();
-      const tutorColumnaExcel = String(_getRowVal(r, ['tutor','aulas_tutor','aulas','tutor_aulas','tutor_grado_seccion'])).trim();
+      const tutorColumnaExcel = String(_getRowVal(r, ['tutor','aulas_tutor','aulas','tutor_aulas','tutor_grado_seccion','grado_seccion_tutor','tutoria','aulas_tutoria']) || fuzzy(['aulas_tutor','tutor_aulas','tutor_grado','grado_seccion','seccion_tutor','aula'])).trim();
       // Parsear columna TUTOR libre (CEBA) o combinar con legacy tutor_grado + tutor_seccion
       let tutorAulasJson = [];
       try {
@@ -20406,71 +20418,109 @@ async function handleImportUsuariosFile() {
         });
         asignaciones = _normalizeAsignacionesWithCfg(asignaciones, cfg, _agendaInferNivelByGrado(tutorGrado, cfg)) || asignaciones;
       }
-      let restringirFinal = rol === 'profesor' ? !!restringir : false;
-      if(esProfesor && esTutor && tutorAulasJson.length && !restringirFinal) {
+      // ===== Fix B: Modo Reparación defaults =====
+      // Si la planilla no trae rol/esTutor pero SÍ trae columna TUTOR parseable (tutorAulasJson),
+      // asumimos profesor tutor. Esto evita que el payload quede tutor_aulas_json=[].
+      let rolEff = rol;
+      let esTutorEff = esTutor;
+      if(modoReparacion) {
+        if(!rolEff && tutorAulasJson.length) rolEff = 'profesor';
+        if(!rolEff && (tutorColumnaExcel || tutorGrado || tutorSeccion)) rolEff = 'profesor';
+        if(rolEff === 'profesor' && tutorAulasJson.length && !esTutorEff) esTutorEff = true;
+        if(rolEff === 'profesor' && (tutorColumnaExcel || (tutorGrado && tutorSeccion)) && !esTutorEff) esTutorEff = true;
+      }
+      const esProfesorEff = (rolEff === 'profesor');
+      // Recalcular derivados con los valores efectivos
+      let asignacionesEff = asignaciones;
+      if(esProfesorEff && esTutorEff && tutorAulasJson.length && (!asignacionesRaw || Object.keys(asignacionesRaw || {}).length === 0)) {
+        asignacionesEff = {};
+        tutorAulasJson.forEach(a => {
+          const g = String(a.grado||'').trim();
+          const s = String(a.seccion||'').trim().toUpperCase();
+          if(!g || !s || s === 'TODAS') return;
+          if(!(g in asignacionesEff)) asignacionesEff[g] = [];
+          if(!asignacionesEff[g].includes(s)) asignacionesEff[g].push(s);
+        });
+        asignacionesEff = _normalizeAsignacionesWithCfg(asignacionesEff, cfg, _agendaInferNivelByGrado(tutorGrado, cfg)) || asignacionesEff;
+      }
+      let restringirFinal = rolEff === 'profesor' ? !!restringir : false;
+      if(esProfesorEff && esTutorEff && tutorAulasJson.length && !restringirFinal) {
         restringirFinal = true;
       }
-      const gradosAsignadosJson = _asignacionesObjToAulasList(asignaciones) || [];
+      // Fix B-bis: Si no hay tutorGrado/tutorSeccion pero sí hay tutorAulasJson, heredar del primer aula
+      let tutorGradoEff = tutorGrado;
+      let tutorSeccionEff = tutorSeccion;
+      if(esProfesorEff && esTutorEff && tutorAulasJson.length) {
+        if(!tutorGradoEff)   tutorGradoEff   = String(tutorAulasJson[0].grado||'').trim();
+        if(!tutorSeccionEff) tutorSeccionEff = String(tutorAulasJson[0].seccion||'').trim().toUpperCase();
+      }
+      const gradosAsignadosJson = _asignacionesObjToAulasList(asignacionesEff) || [];
 
-      // Validaciones
+      // ===== Fix C: Validaciones =====
+      // Modo Reparación: SÓLO errores fatales (email requerido + válido).
+      // Resto de validaciones se saltan (no bloquean la reparación, los valores viejos se respetan vía safeUpdate whitelist).
       if(!modoReparacion) {
         if(!nombre) errors.push('Falta nombre');
         if(!password || password.length < 6) errors.push('Password < 6');
-        if(!rol) errors.push('Falta rol');
-        if(rol && !allowedRoles.has(rol)) errors.push('Rol inválido');
+        if(!rolEff) errors.push('Falta rol');
+        if(rolEff && !allowedRoles.has(rolEff)) errors.push('Rol inválido');
         if(email && seenEmails.has(email)) errors.push('Email duplicado en archivo');
       }
       if(!email) errors.push('Falta email');
       if(email && !_looksLikeEmail(email)) errors.push('Email inválido: ' + email);
       if(email) seenEmails.add(email);
-      if(rol === 'profesor' && esTutor) {
-        if(!telefono) errors.push('Tutor sin teléfono');
-        if(!tutorAulasJson.length && (!tutorGrado || !tutorSeccion)) errors.push('Tutor sin aulas (columna TUTOR o grado+sección)');
-        if(tutorAulasJson.length === 0) {
-          if(tutorGrado && gradeSet.size && !gradeSet.has(tutorGrado)) errors.push('Tutor grado no existe');
-          if(tutorSeccion && sectionSet.size && !sectionSet.has(tutorSeccion)) errors.push('Tutor sección no existe');
-        } else {
-          tutorAulasJson.forEach(a => {
-            if(!a.grado) errors.push('Aula sin grado');
-            if(!a.seccion) errors.push('Aula sin sección');
-            if(a.grado && gradeSet.size && !gradeSet.has(a.grado)) errors.push('Grado inexistente: ' + a.grado);
-            if(a.seccion && sectionSet.size && !sectionSet.has(a.seccion)) errors.push('Sección inexistente: ' + a.seccion);
+      // Todas las demás validaciones (tutor sin teléfono, asignaciones, grado/sección inexistente, psicólogo)
+      // sólo se ejecutan en modo importación normal (no reparación):
+      if(!modoReparacion) {
+        if(rolEff === 'profesor' && esTutorEff) {
+          if(!telefono) errors.push('Tutor sin teléfono');
+          if(!tutorAulasJson.length && (!tutorGradoEff || !tutorSeccionEff)) errors.push('Tutor sin aulas (columna TUTOR o grado+sección)');
+          if(tutorAulasJson.length === 0) {
+            if(tutorGradoEff && gradeSet.size && !gradeSet.has(tutorGradoEff)) errors.push('Tutor grado no existe');
+            if(tutorSeccionEff && sectionSet.size && !sectionSet.has(tutorSeccionEff)) errors.push('Tutor sección no existe');
+          } else {
+            tutorAulasJson.forEach(a => {
+              if(!a.grado) errors.push('Aula sin grado');
+              if(!a.seccion) errors.push('Aula sin sección');
+              if(a.grado && gradeSet.size && !gradeSet.has(a.grado)) errors.push('Grado inexistente: ' + a.grado);
+              if(a.seccion && sectionSet.size && !sectionSet.has(a.seccion)) errors.push('Sección inexistente: ' + a.seccion);
+            });
+          }
+        }
+        if(rolEff === 'psicologo' && esTutorEff) {
+          errors.push('Tutor no aplica a psicólogo');
+        }
+        if(rolEff && rolEff !== 'profesor' && rolEff !== 'psicologo' && (restringir || esTutorEff)) {
+          errors.push('Restringir/Tutor solo aplica a profesor o psicólogo');
+        }
+        if(rolEff === 'psicologo' && !restringirFinal) {
+          errors.push('Psicólogo debe estar restringido por asignaciones');
+        }
+        if((rolEff === 'profesor' || rolEff === 'psicologo') && restringirFinal) {
+          if(!Object.keys(asignacionesEff || {}).length) errors.push('Sin asignaciones');
+          const keys = Object.keys(asignacionesEff || {});
+          keys.forEach(g => {
+            if(gradeSet.size && !gradeSet.has(g)) errors.push('Asignación grado inválido: ' + g);
+            const ss = (asignacionesEff || {})[g] || [];
+            (ss || []).forEach(s => { if(sectionSet.size && !sectionSet.has(s)) errors.push('Asignación sección inválida: ' + g + ':' + s); });
           });
         }
-      }
-      if(rol === 'psicologo' && esTutor) {
-        errors.push('Tutor no aplica a psicólogo');
-      }
-      if(rol && rol !== 'profesor' && rol !== 'psicologo' && (restringir || esTutor)) {
-        errors.push('Restringir/Tutor solo aplica a profesor o psicólogo');
-      }
-      if(rol === 'psicologo' && !restringir) {
-        errors.push('Psicólogo debe estar restringido por asignaciones');
-      }
-      if((rol === 'profesor' || rol === 'psicologo') && restringir) {
-        if(!Object.keys(asignaciones || {}).length) errors.push('Sin asignaciones');
-        const keys = Object.keys(asignaciones || {});
-        keys.forEach(g => {
-          if(gradeSet.size && !gradeSet.has(g)) errors.push('Asignación grado inválido: ' + g);
-          const ss = (asignaciones || {})[g] || [];
-          (ss || []).forEach(s => { if(sectionSet.size && !sectionSet.has(s)) errors.push('Asignación sección inválida: ' + g + ':' + s); });
-        });
       }
 
       const payload = {
         email,
         password,
-        rol,
+        rol: rolEff,
         nombre,
         cargo,
         telefono,
         restringir: restringirFinal,
-        asignaciones: (rol === 'profesor' && restringirFinal) ? (asignaciones || {}) : {},
-        esTutor: rol === 'profesor' ? !!esTutor : false,
-        tutorGrado: (rol === 'profesor' && esTutor) ? tutorGrado : null,
-        tutorSeccion: (rol === 'profesor' && esTutor) ? tutorSeccion : null,
-        tutor_aulas_json: (rol === 'profesor' && esTutor) ? tutorAulasJson : [],
-        tutor_raw: (rol === 'profesor' && esTutor) ? tutorColumnaExcel : '',
+        asignaciones: (rolEff === 'profesor' && restringirFinal) ? (asignacionesEff || {}) : {},
+        esTutor: rolEff === 'profesor' ? !!esTutorEff : false,
+        tutorGrado: (rolEff === 'profesor' && esTutorEff) ? tutorGradoEff : null,
+        tutorSeccion: (rolEff === 'profesor' && esTutorEff) ? tutorSeccionEff : null,
+        tutor_aulas_json: (rolEff === 'profesor' && esTutorEff) ? tutorAulasJson : [],
+        tutor_raw: (rolEff === 'profesor' && esTutorEff) ? tutorColumnaExcel : '',
         grados_asignados_json: gradosAsignadosJson
       };
 
@@ -20478,22 +20528,33 @@ async function handleImportUsuariosFile() {
         idx: idx + 1,
         nombre,
         email,
-        rol,
+        rol: rolEff,
         payload,
         errors,
         status: errors.length ? 'Error' : (modoReparacion ? 'Listo (reparar)' : 'Listo')
       };
     }).filter(r => r.nombre || r.email || r.rol || (r.errors && r.errors.length));
 
-    const ok = _importUsuariosRows.filter(r => !r.errors.length).length;
-    const bad = _importUsuariosRows.length - ok;
-    if(counts) counts.textContent = `${_importUsuariosRows.length} filas · ${ok} listas · ${bad} con error`;
+    // ===== Fix D: Criterios de OK diferentes para Modo Reparación =====
+    // Reparación: fila OK = tiene email VÁLIDO (el resto de campos se toma de la DB si hace falta)
+    // Importación normal: fila OK = 0 errores
+    const hasValidEmail = (r) => r.email && _looksLikeEmail(String(r.email || '').trim());
+    let ok, bad;
+    if(modoReparacion) {
+      ok = _importUsuariosRows.filter(r => hasValidEmail(r) && !r.errors.some(e => String(e||'').includes('Email inválido') || String(e||'').includes('Falta email'))).length;
+      bad = _importUsuariosRows.length - ok;
+    } else {
+      ok = _importUsuariosRows.filter(r => !r.errors.length).length;
+      bad = _importUsuariosRows.length - ok;
+    }
+    if(counts) counts.textContent = `${_importUsuariosRows.length} filas · ${ok} ${modoReparacion ? 'reparables' : 'listas'} · ${bad} con error`;
 
     if(tbody) {
       const show = _importUsuariosRows.slice(0, 50);
       tbody.innerHTML = show.map(r => {
-        const stTxt = r.errors.length ? (r.errors.join(' · ')) : (r.status || 'OK');
-        const color = r.errors.length ? '#ef4444' : '#34d399';
+        const reparable = modoReparacion && hasValidEmail(r) && !r.errors.some(e => String(e||'').includes('Email inválido') || String(e||'').includes('Falta email'));
+        const stTxt = (r.errors && r.errors.length) ? r.errors.join(' · ') : (r.status || 'OK');
+        const color = r.errors.length ? '#ef4444' : (reparable ? '#10b981' : '#34d399');
         return `<tr>
           <td>${r.idx}</td>
           <td style="font-weight:600;">${_escHtml(r.nombre || '')}</td>
@@ -20504,7 +20565,11 @@ async function handleImportUsuariosFile() {
       }).join('') + (_importUsuariosRows.length > 50 ? `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:14px;">Mostrando 50 de ${_importUsuariosRows.length}</td></tr>` : '');
     }
 
-    if(btnReparar) btnReparar.style.display = (modoReparacion && ok > 0) ? 'inline-flex' : 'none';
+    // Fix D-bis: Botón Reparar visible si hay al menos 1 fila con email válido (no necesita 0 errores)
+    const reparablesCount = modoReparacion
+      ? _importUsuariosRows.filter(r => hasValidEmail(r) && !r.errors.some(e => String(e||'').includes('Email inválido') || String(e||'').includes('Falta email'))).length
+      : 0;
+    if(btnReparar) btnReparar.style.display = (modoReparacion && reparablesCount > 0) ? 'inline-flex' : 'none';
     if(btn) btn.disabled = (modoReparacion ? true : (ok === 0));
   } catch(e) {
     if(st) {
@@ -20560,7 +20625,12 @@ async function runImportUsuarios(forceReparar = false) {
   const modoRepChk = document.getElementById('u-import-modo-reparacion');
   const modoReparacion = !!(forceReparar || (modoRepChk && modoRepChk.checked));
   const rows = _importUsuariosRows || [];
-  const pending = rows.filter(r => !r.errors.length);
+  // Fix D-ter: en Modo Reparación, "pendientes" = filas con email VÁLIDO (no necesariamente 0 errores).
+  //            Importación normal = filas sin errores.
+  const hasValidEmailRep = (r) => r.email && _looksLikeEmail(String(r.email || '').trim());
+  const pending = modoReparacion
+    ? rows.filter(r => hasValidEmailRep(r) && !r.errors.some(e => String(e||'').includes('Email inválido') || String(e||'').includes('Falta email')))
+    : rows.filter(r => !r.errors.length);
   if(!pending.length) return;
 
   _importUsuariosBusy = true;
