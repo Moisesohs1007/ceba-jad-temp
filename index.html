@@ -3690,7 +3690,8 @@
 
       <div id="setup-body"></div>
 
-      <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;margin-top:14px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:space-between;margin-top:14px;">
+        <button class="btn btn-ghost" id="btn-setup-skip" style="margin-right:auto;color:#f59e0b;border-color:#f59e0b44;" onclick="_skipSetupWizard()">⏭ Omitir por hoy</button>
         <button class="btn btn-ghost" id="btn-setup-back" onclick="setupPrev()" disabled>← Atrás</button>
         <button class="btn btn-primary" id="btn-setup-next" onclick="setupNext()">Siguiente →</button>
       </div>
@@ -21216,7 +21217,28 @@ function _setupGetFirstPendingStep(cfg) {
 }
 
 function _setupIsCompleted(cfg) {
-  return _setupGetFirstPendingStep(cfg) > 3;
+  if (_setupGetFirstPendingStep(cfg) > 3) return true;
+  try {
+    const t1 = localStorage.getItem('asmqr_setup_skipped_hoy');
+    const t2 = localStorage.getItem('asmqr_setup_skipped_bd_hecha');
+    const hoy = new Date().toISOString().slice(0,10);
+    if (t1 === hoy || t2 === '1') return true;
+  } catch(_e) {}
+  return false;
+}
+
+function _skipSetupWizard() {
+  try {
+    localStorage.setItem('asmqr_setup_skipped_hoy', new Date().toISOString().slice(0,10));
+  } catch(_e) {}
+  if (_setupState) {
+    _setupState.step = 99;
+    _setupState = null;
+  }
+  try { closeModal('modal-setup'); } catch(_) {}
+  try { window.ASMQR_CONFIRM_ON_LEAVE = false; } catch(_) {}
+  toast('Configuración inicial omitida por hoy. Puedes completarla luego en ⚙️ Configuración.', 'info', 4500);
+  setTimeout(() => window.location.reload(), 400);
 }
 
 function openSetupWizard({ locked = false, message = '' } = {}) {
@@ -21224,11 +21246,13 @@ function openSetupWizard({ locked = false, message = '' } = {}) {
   if(!m) return;
   const lockEl = document.getElementById('setup-locked');
   const closeBtn = document.getElementById('btn-setup-close');
+  const skipBtn = document.getElementById('btn-setup-skip');
   if(lockEl) {
     lockEl.style.display = locked ? '' : 'none';
     lockEl.textContent = message || '';
   }
-  if(closeBtn) closeBtn.style.display = locked ? 'none' : '';
+  if(closeBtn) closeBtn.style.display = '';
+  if(skipBtn) skipBtn.style.display = '';
 
   m.style.display = '';
   _modalLockOn();
@@ -21475,15 +21499,26 @@ async function setupRender() {
 async function maybeRunSetupWizard() {
   const cfg = await getConfig();
   if(_setupIsCompleted(cfg)) return true;
+  let saltoAuto = false;
+  try {
+    const snap = await db.collection('alumnos').limit(20).get().catch(() => null);
+    if (snap && (snap.size >= 20 || (snap.docs && snap.docs.length >= 20))) {
+      localStorage.setItem('asmqr_setup_skipped_bd_hecha', '1');
+      saltoAuto = true;
+    }
+  } catch(_e) {}
+  if (saltoAuto) return true;
   const isAdmin = currentRol === 'admin' || currentRol === 'director';
   if(!isAdmin) {
-    openSetupWizard({ locked: true, message: 'Falta completar la configuración inicial. Pide al administrador que la complete.' });
+    openSetupWizard({ locked: false, message: '⚠️ Aún no se completó la configuración inicial. Puedes omitirla y pedir al administrador que la complete más tarde.' });
     _setupState = { step: _setupGetFirstPendingStep(cfg), nombreColegio: cfg.nombreColegio, esloganColegio: cfg.eslogan || cfg.esloganColegio, logoColegio: cfg.logoUrl || cfg.logoColegio, anio: cfg.anio, niveles: cfg.niveles || [], grados: cfg.grados || {}, secciones: cfg.secciones || [] };
     setupRender();
     const nextBtn = document.getElementById('btn-setup-next');
     const backBtn = document.getElementById('btn-setup-back');
     if(nextBtn) { nextBtn.textContent = 'Cerrar sesión'; nextBtn.onclick = doLogout; }
     if(backBtn) backBtn.style.display = 'none';
+    const skipBtn = document.getElementById('btn-setup-skip');
+    if(skipBtn) skipBtn.style.display = '';
     return false;
   }
   _setupState = {
@@ -21497,7 +21532,7 @@ async function maybeRunSetupWizard() {
     secciones: cfg.secciones || [],
     logoTmp: ''
   };
-  openSetupWizard({ locked: true, message: 'Completa la configuración inicial para usar el sistema.' });
+  openSetupWizard({ locked: false, message: '💡 La configuración inicial no está completa. Puedes omitirla temporalmente y continuar.' });
   setupRender();
   return false;
 }
