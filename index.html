@@ -20011,31 +20011,82 @@ async function renderUsuarios() {
       const tutTxt = (u.esTutor&&(u.tutorGrado||(u.tutor_aulas_json&&u.tutor_aulas_json[0]?.grado)))
         ? `<br><span style="font-size:0.72rem;color:#60a5fa;">Tutor: ${u.tutorGrado||u.tutor_aulas_json[0].grado} ${u.tutorSeccion||u.tutor_aulas_json[0].seccion||''}</span>`
         : '';
-      const uStrB64 = (function(t){try{return btoa(unescape(encodeURIComponent(JSON.stringify(t||{}))))}catch(e){return'';}})(u);
       return `<tr>
         <td style="font-weight:500;">${u.nombre}${esYo}</td>
         <td style="color:var(--muted);font-size:0.85rem;">${u.email}</td>
         <td><span style="color:${rolColors[rol]||'#fff'};font-weight:600;">${rolLabels[rol]||rol}</span>${u.cargo?`<br><span style="font-size:0.72rem;color:var(--muted);">${u.cargo}</span>`:''}${asigTxt}${tutTxt}</td>
         <td style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button class="btn btn-ghost" style="padding:5px 10px;font-size:0.78rem;" title="Editar usuario" onclick="openModalUsuario('${u.uid}','${u.nombre}','${rol}','${u.email}')">✏</button>
-          ${rolProfLike ? `<button class="btn btn-primary" style="padding:5px 10px;font-size:0.78rem;background:#10b981 !important;" title="Configurar aulas (asignaciones)" onclick='_adminQuickOpenAsignaciones(${JSON.stringify(u.uid)}, ${JSON.stringify(u.nombre)}, ${JSON.stringify(rol)}, ${JSON.stringify(u.email)}, ${uStrB64})'>⚙ Aulas</button>` : ''}
-          ${u.uid !== currentUser.uid ? `<button class="btn btn-danger" style="padding:5px 10px;font-size:0.78rem;" title="Eliminar usuario" onclick="deleteUsuario('${u.uid}')">✕</button>` : ''}
+          <button class="btn btn-ghost btn-usuario-edit" style="padding:5px 10px;font-size:0.78rem;" title="Editar usuario" data-uid="${u.uid}" data-uname="${encodeURIComponent(u.nombre||'')}" data-urol="${encodeURIComponent(rol||'')}" data-uemail="${encodeURIComponent(u.email||'')}">✏</button>
+          ${rolProfLike ? `<button class="btn btn-primary btn-usuario-asig" style="padding:5px 10px;font-size:0.78rem;background:#10b981 !important;" title="Configurar aulas (asignaciones)" data-uid="${u.uid}" data-uname="${encodeURIComponent(u.nombre||'')}" data-urol="${encodeURIComponent(rol||'')}" data-uemail="${encodeURIComponent(u.email||'')}">⚙ Aulas</button>` : ''}
+          ${u.uid !== currentUser.uid ? `<button class="btn btn-danger btn-usuario-delete" style="padding:5px 10px;font-size:0.78rem;" title="Eliminar usuario" data-uid="${u.uid}">✕</button>` : ''}
         </td>
       </tr>`;
     }).join('');
   } catch(e) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted);">Error al cargar usuarios</td></tr>'; }
 }
 
+// Delegado global para botones de la tabla usuarios (evita onclick inline roto por tildes/comillas)
+document.addEventListener('click', function(e){
+  const btn1 = e.target && e.target.closest && e.target.closest('.btn-usuario-edit');
+  if (btn1) {
+    e.preventDefault();
+    const uid = btn1.getAttribute('data-uid') || '';
+    const uname = decodeURIComponent(btn1.getAttribute('data-uname') || '');
+    const urol = decodeURIComponent(btn1.getAttribute('data-urol') || '');
+    const uemail = decodeURIComponent(btn1.getAttribute('data-uemail') || '');
+    try { openModalUsuario(uid || null, uname || null, urol || null, uemail || null); } catch(err){ console.error(err); }
+    return;
+  }
+  const btn2 = e.target && e.target.closest && e.target.closest('.btn-usuario-asig');
+  if (btn2) {
+    e.preventDefault();
+    const uid = btn2.getAttribute('data-uid') || '';
+    const uname = decodeURIComponent(btn2.getAttribute('data-uname') || '');
+    const urol = decodeURIComponent(btn2.getAttribute('data-urol') || '');
+    const uemail = decodeURIComponent(btn2.getAttribute('data-uemail') || '');
+    try { _adminQuickOpenAsignaciones(uid || null, uname || null, urol || null, uemail || null); } catch(err){ console.error(err); }
+    return;
+  }
+  const btn3 = e.target && e.target.closest && e.target.closest('.btn-usuario-delete');
+  if (btn3) {
+    e.preventDefault();
+    const uid = btn3.getAttribute('data-uid') || '';
+    if (uid) try { deleteUsuario(uid); } catch(err){ console.error(err); }
+    return;
+  }
+});
+
 // Acceso directo: abre Editar Usuario y auto-abre modal de asignaciones
-async function _adminQuickOpenAsignaciones(uid, nombre, rol, email, b64Cached) {
-  await openModalUsuario(uid, nombre, rol, email);
-  // 1) Marcar Restringir = true si es profesor/psicologo
+async function _adminQuickOpenAsignaciones(uid, nombre, rol, email) {
+  if(!uid) return;
   try {
-    const chkR = document.getElementById('u-restringir');
-    if(chkR && !chkR.checked) { chkR.checked = true; toggleBtnConfigurar(); togglePrivilegios(); }
-  } catch(_e){}
-  // 2) Auto abrir el modal de checkboxes tras 150ms
-  setTimeout(() => { try { abrirModalPrivilegios(); } catch(_e){} }, 180);
+    await openModalUsuario(uid || null, nombre || null, rol || null, email || null);
+  } catch(e0) { console.warn('[QuickAsig] openModalUsuario falló', e0); return; }
+  const tickConfigurar = () => {
+    try {
+      const mUsr = document.getElementById('modal-usuario');
+      if(!mUsr || !mUsr.classList.contains('open')) return false;
+      const chkR = document.getElementById('u-restringir');
+      if(chkR) {
+        if(!chkR.checked) { chkR.checked = true; try { toggleBtnConfigurar(); } catch(_e){} try { togglePrivilegios(); } catch(_e){} }
+      }
+      const btnCfg = document.getElementById('btn-configurar-privilegios');
+      if(btnCfg && !btnCfg.disabled) {
+        try { abrirModalPrivilegios(); return true; }
+        catch(_e){ return false; }
+      }
+      return false;
+    } catch(e1) { return false; }
+  };
+  let _tries = 0;
+  const _iv = setInterval(function(){
+    _tries++;
+    if (tickConfigurar()) { clearInterval(_iv); return; }
+    if (_tries > 14) {
+      clearInterval(_iv);
+      try { abrirModalPrivilegios(); } catch(_e){}
+    }
+  }, 120);
 }
 
 
