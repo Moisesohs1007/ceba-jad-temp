@@ -10805,9 +10805,35 @@ function _buildAulasFromUserData(d) {
                .filter(a => a.grado && a.seccion);
   const seen = new Set();
   aulas = aulas.filter(a => { const k = [a.ciclo,a.grado,a.seccion].join('|'); if(seen.has(k)) return false; seen.add(k); return true; });
-  // ATENCIÓN: NO usamos fallback legacy (tutorGrado + tutorSeccion) aquí.
+  // ==== Fix runtime TUTOR_RAW (definitivo): ====
+  // Si el update de Supabase omitió guardar tutor_aulas_json por constraints de schema,
+  // PERO sí llegó a guardar el campo tutor_raw (texto libre ORIGINAL del Excel), re-parseamos
+  // AQUÍ en runtime para no depender de que Supabase haya persistido el array json.
+  // Esto es la RED contra fallos de Modo Reparación que no salvó tutor_aulas_json.
+  if (!aulas.length) {
+    const tutorRawTxt = norm(d.tutor_raw || d.tutorRaw || '');
+    if (tutorRawTxt) {
+      try {
+        const parsed = (typeof _parseTutorColumnaExcelAulas === 'function') ? _parseTutorColumnaExcelAulas(tutorRawTxt) : [];
+        if (Array.isArray(parsed) && parsed.length) {
+          // Unificar ciclo canónico y normalizar
+          const normalizedParsed = parsed
+            .map(a => ({
+              ciclo: _canonCicloJS((a && a.ciclo) || ''),
+              grado: String((a && a.grado) || '').trim(),
+              seccion: String((a && a.seccion) || '').trim().toUpperCase()
+            }))
+            .filter(a => a.grado && a.seccion);
+          const seen2 = new Set();
+          const unicas = normalizedParsed.filter(a => { const k = [a.ciclo,a.grado,a.seccion].join('|'); if(seen2.has(k)) return false; seen2.add(k); return true; });
+          if (unicas.length) aulas = unicas;
+        }
+      } catch (_eRaw) { console.warn('[buildAulasFromUserData] tutor_raw parse falló', _eRaw); }
+    }
+  }
+  // ATENCIÓN: NO usamos fallback legacy (tutorGrado + tutorSeccion strings sueltos) AQUÍ.
   // Motivo: en CEBA muchos tutores tienen 5+ aulas de múltiples ciclos (Magloria).
-  // Si tutorAulas/tutor_aulas_json está VACÍO (por fallo del parser en import antiguo),
+  // Si tutorAulas/tutor_aulas_json Y tutor_raw están VACÍOS (fallo total del parser),
   // NO inventamos una sola aula "1A" — porque eso le asigna el grado 1A DE TODOS LOS CICLOS
   // y luego en renderAlumnos() con Nivel=AVANZADO le muestra 38 alumnos que NO son suyos.
   // Si quedan vacías → el scope queda vacío → ve 0 filas, y el admin debe repararlo.
@@ -20804,68 +20830,74 @@ async function _adminActualizarUsuario(uid, payload) {
       }
     } catch (_readErr) { existingKeys = null; }
 
-    // Construir safeUpdate: orden de campos con y sin dependencia a columnas NUEVAS (tutor_raw/tutor_aulas_json).
-    const newColumns = new Set(['tutor_raw','tutor_aulas_json','grados_asignados_json','tutorGrado','tutorSeccion','asignaciones','restringir','esTutor']);
-    const baseSafe = {}; // campos que existen en versiones ANTIGUAS de la tabla (seguros)
-    const newSafe = {};  // campos nuevos o que podrían faltar
+    // CAMPOS NUCLEARES (NUNCA se deben quitar por fallback — los necesitamos para el scope):
+    //   restringir, asignaciones, esTutor, tutor_raw (TEXTO SIMPLE — casi sin constraints)
+    // CAMPOS PROBLEMÁTICOS (pueden dar "not-null constraint" si Supabase los definió así):
+    //   tutorGrado, tutorSeccion (son los únicos que dan "tutor_grado violates not-null")
+    // CAMPOS NUEVOS JSON (probablemente no existan en columnas todavía):
+    //   tutor_aulas_json, grados_asignados_json
+    // CAMPOS SEGUROS (siempre existirán):
+    //   nombre, cargo, telefono
+    const colsNucleoTutor = new Set(['restringir','asignaciones','esTutor','tutor_raw']);
+    const colsSegurasViejas = new Set(['nombre','cargo','telefono']);
+    const colsProblematicasNotNull = new Set(['tutorGrado','tutorSeccion']);
+    const colsNuevasJson = new Set(['tutor_aulas_json','grados_asignados_json']);
+
+    // Construir safeUpdate: orden de campos según categoría
+    const baseSeguro = {}; // colsSegurasViejas + colsNucleoTutor → NUNCA fallan
+    const newJson = {};    // colsNuevasJson → posible "column not found"
+    const notNullCols = {}; // colsProblematicasNotNull → posible "not-null constraint"
     allCandidates.forEach(k => {
       if(!Object.prototype.hasOwnProperty.call(updateData, k)) return;
       let v = updateData[k];
-      // ===== Fix NOT NULL / type constraints dinámico =====
-      // - Nunca enviar null ni undefined → si el valor es null/undefined se OMITE la columna
-      //   (Supabase conservará el valor que ya tenía, evitando "violates not-null").
-      // - Números que debieran ser string: telefono (si llega número lo pasamos a string).
-      // - tutorGrado / tutorSeccion → string vacío o '' si no hay.
-      if (v === null || v === undefined) return; // skip, no enviar
+      if (v === null || v === undefined) {
+        // Para cols nucleares: si es bool false (restringir=false, esTutor=false) SÍ enviar.
+        //     Para arrays/objs nulos: no enviar (mejor conservar el anterior en la DB).
+        if (colsNucleoTutor.has(k) && typeof v === 'boolean') { /* dejar pasar */ }
+        else { return; } // skip el resto
+      }
       if (v && typeof v.toDate === 'function') v = v; // dejar timestamp intacto
       if (k === 'telefono' && typeof v === 'number') v = String(v);
-      if ((k === 'tutorGrado' || k === 'tutorSeccion') && (v === null || v === undefined)) return;
-      // Filtrar por existencia de la columna, si es que logramos leer el doc
+      // Filtrar por existencia de la columna (si logramos leer el doc actual)
       const col = _camelToSnake(k);
       const colExistente = existingKeys == null ? true : (existingKeys.has(col) || existingKeys.has(k));
-      if (newColumns.has(k)) {
-        if (colExistente) newSafe[k] = v;
-      } else {
-        if (colExistente) baseSafe[k] = v;
-      }
+      if (!colExistente) return; // columna NUEVA y no existe en la tabla → NUNCA mandar (evita error directo)
+
+      if (colsSegurasViejas.has(k) || colsNucleoTutor.has(k)) baseSeguro[k] = v;
+      else if (colsProblematicasNotNull.has(k)) {
+        // tutorGrado / tutorSeccion: SOLO enviar si NO son string vacío (riesgo NOT NULL)
+        if (String(v || '').trim() !== '') notNullCols[k] = String(v || '').trim();
+      } else if (colsNuevasJson.has(k)) newJson[k] = v;
     });
 
-    const safeUpdate = Object.assign({}, baseSafe, newSafe);
-    if(!Object.keys(safeUpdate).length) return { ok:false, error:'Nada que actualizar' };
-
-    // Estrategia multi-intento:
-    //   1) update completo (campos antiguos + nuevos)
-    //   2) fallback campos antiguos
-    //   3) fallback ultra-limpio: SOLO campos que sabemos están 100% en todas las versiones
-    //      (nombre, cargo, telefono, restringir, asignaciones, esTutor).
-    // Cada reintento limpia las columnas que causaron "not-null" o "column not found".
-    const cleanObj = (obj, stripKeys) => {
+    // Estrategia multi-intento (DE MAS SEGURO A MENOS SEGURO):
+    //   1) baseSeguro + notNullCols (no-vacías) + newJson
+    //   2) baseSeguro + notNullCols (no-vacías)  — sin JSON nuevos
+    //   3) baseSeguro                         — SIN tutorGrado/tutorSeccion
+    //   4) baseSeguro SIN restringir/ asig booleanos si fallaron
+    const cleanObj = (obj) => {
       const out = {};
       Object.entries(obj || {}).forEach(([k, v]) => {
-        if (stripKeys && stripKeys.has(k)) return;
         if (v === null || v === undefined) return;
         out[k] = v;
       });
       return out;
     };
+    const obj1 = cleanObj(Object.assign({}, baseSeguro, notNullCols, newJson));
+    const obj2 = cleanObj(Object.assign({}, baseSeguro, notNullCols));
+    const obj3 = cleanObj(baseSeguro);
+    const plan = [obj1, obj2, obj3];
     let attempts = [];
-    const plan = [safeUpdate];
-    if (Object.keys(newSafe).length > 0) {
-      plan.push(baseSafe);
-      plan.push(cleanObj(baseSafe, new Set(['tutorGrado','tutorSeccion'])));
-    } else {
-      plan.push(cleanObj(baseSafe, new Set(['tutorGrado','tutorSeccion'])));
-    }
     let lastErr = null, finalOk = false;
     for (let i = 0; i < plan.length; i++) {
-      let obj = plan[i] || {};
-      // Siempre limpiar null/undefined justo antes de enviar
+      let obj = plan[i];
       obj = cleanObj(obj);
       if (!Object.keys(obj).length) continue;
       try {
         await db.collection('usuarios').doc(uid).update(obj);
         finalOk = true;
-        attempts.push(i === 0 ? 'Update completo OK' : `Fallback intento ${i + 1} OK`);
+        const keys = Object.keys(obj).join(', ');
+        attempts.push((i === 0 ? 'Update completo' : `Fallback intento ${i + 1}`) + ' OK · cols: ' + keys);
         break;
       } catch (_e) {
         lastErr = _e;
@@ -20874,7 +20906,7 @@ async function _adminActualizarUsuario(uid, payload) {
         const notNullError = msg.includes('not-null') || msg.includes('violates not-null');
         if (!columnError && !notNullError) {
           attempts.push(`Intento ${i + 1} falló (no recuperable): ${(_e && _e.message) || String(_e)}`);
-          break; // error no recuperable
+          break;
         }
         attempts.push(`Intento ${i + 1} falló: ${(_e && _e.message) || String(_e)}`);
       }
