@@ -8869,6 +8869,7 @@ async function onGradoChangeRegistro() {
   const grado = document.getElementById('filter-grado').value;
   // Guardar sección previa para restaurarla si sigue siendo válida
   const seccionPrevia = document.getElementById('filter-seccion').value;
+  const nivelElegidoPorUsuario = document.getElementById('filter-nivel').value;
 
   if(grado && grado !== 'TODOS') {
     // Auto-detectar nivel del grado
@@ -8885,7 +8886,26 @@ async function onGradoChangeRegistro() {
         if(match) nivelAuto = String(match[campo]||'').trim();
       } catch(_) {}
     }
-    if(nivelAuto) document.getElementById('filter-nivel').value = nivelAuto;
+    // Si el usuario YA habia elegido un nivel explicitamente, chequear si en ese nivel
+    // existen alumnos con el grado seleccionado. Si SI existen: NO pisar el nivel elegido.
+    // (evita que en CEBA grado=2 le cambie de AVANZADO a INICIAL por duplicado en cfg.grados)
+    if(nivelElegidoPorUsuario && nivelElegidoPorUsuario !== nivelAuto) {
+      try {
+        const todos = await DB.getAlumnos();
+        const _cfgR = typeof configCache !== 'undefined' ? configCache : cfg;
+        const existeEnNivelElegido = todos.some(a => {
+          if(String(a.grado||'').trim() !== String(grado).trim()) return false;
+          return _matchNivel(a, nivelElegidoPorUsuario, _cfgR, todos);
+        });
+        if(!existeEnNivelElegido && nivelAuto) {
+          document.getElementById('filter-nivel').value = nivelAuto;
+        }
+      } catch(_) {
+        if(nivelAuto) document.getElementById('filter-nivel').value = nivelAuto;
+      }
+    } else if(nivelAuto) {
+      document.getElementById('filter-nivel').value = nivelAuto;
+    }
     await poblarFiltroSeccion('filter-seccion', grado);
   } else {
     // Grado vacío o TODOS → repoblar sección sin filtro de grado
@@ -9213,7 +9233,45 @@ async function renderRegistro() {
     if(!filas.length) {
       tbody.innerHTML = '';
       empty.style.display = 'block';
-      empty.querySelector('p').textContent = 'No hay registros con ese filtro';
+      // Si no hay registros, detectar si existen ALUMNOS que coincidan con el filtro actual
+      // (nivel / grado / seccion / busqueda). Si existen: sugerir activar checkbox Sin registro
+      // para que aparezcan filas vacias por alumno/dia (User instruction: no devolver 0 a ciegas).
+      (async () => {
+        try {
+          const _cfgEmpty = typeof configCache !== 'undefined' ? configCache : await getConfig();
+          const todosA = await getAlumnosFiltrados();
+          const qn2 = (q||'').trim();
+          const coinciden = todosA.filter(a => {
+            if(nivel && nivel !== 'TODOS' && !_matchNivel(a, nivel, _cfgEmpty, todosA)) return false;
+            if(grado && grado !== 'TODOS' && (a.grado||'') !== grado) return false;
+            if(seccion && seccion !== 'TODOS' && (a.seccion||'') !== seccion) return false;
+            if(qn2) {
+              const nombre = ((a.apellidos||'')+' '+(a.nombres||'')).trim() || (a.nombre||'');
+              if(!(nombre.toLowerCase().includes(qn2) || (a.id||'').toLowerCase().includes(qn2))) return false;
+            }
+            return true;
+          });
+          const chk = document.getElementById('chk-registro-sin-registro');
+          const hayFiltro = !!(q || (nivel && nivel !== 'TODOS') || (grado && grado !== 'TODOS') || (seccion && seccion !== 'TODOS'));
+          if(hayFiltro && coinciden.length > 0) {
+            const n = coinciden.length;
+            const chkOn = !!(chk && chk.checked);
+            const accion = chkOn
+              ? `Se encontraron ${n} alumno${n!==1?'s':''} pero no tienen registros de ingreso/salida en estas fechas.`
+              : `Se encontraron ${n} alumno${n!==1?'s':''} sin registros en estas fechas. Activa \"Mostrar Sin registro\" para ver filas por alumno/día.`;
+            const btnHtml = (chk || chkOn) ? '' : ` <button id="btn-reg-activar-sr" style="margin-top:8px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">Activar \"Mostrar Sin registro\"</button>`;
+            empty.querySelector('p').innerHTML = accion + btnHtml;
+            if(!chkOn) {
+              const bb = document.getElementById('btn-reg-activar-sr');
+              if(bb && chk) bb.addEventListener('click', () => { chk.checked = true; renderRegistro(); });
+            }
+          } else {
+            empty.querySelector('p').textContent = 'No hay registros con ese filtro';
+          }
+        } catch(_e2) {
+          empty.querySelector('p').textContent = 'No hay registros con ese filtro';
+        }
+      })();
       return;
     }
     empty.style.display = 'none';
