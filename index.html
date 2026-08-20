@@ -19870,6 +19870,10 @@ function _normImportKey(k) {
     .replace(/[^\wáéíóúñü_]/gi, '');
 }
 
+function _camelToSnake(str) {
+  return String(str || '').replace(/([A-Z])/g, c => '_' + c.toLowerCase());
+}
+
 function _getRowVal(row, keys) {
   for(const k of keys) {
     if(row[k] != null && String(row[k]).trim() !== '') return row[k];
@@ -20672,14 +20676,72 @@ async function _adminActualizarUsuario(uid, payload) {
   if(!uid) return { ok:false, status:404, error:'No se encontró usuario con ese email' };
   try {
     const { email, password, rol, ...updateData } = payload || {};
-    // Campos seguros para reparación / actualización de perfil
-    const safeUpdate = {};
-    ['nombre','cargo','telefono','restringir','asignaciones','esTutor','tutorGrado','tutorSeccion','tutor_aulas_json','tutor_raw','grados_asignados_json'].forEach(k => {
-      if(Object.prototype.hasOwnProperty.call(updateData, k)) safeUpdate[k] = updateData[k];
+    // Todos los campos que MANDAMOS a Supabase (candidatos)
+    const allCandidates = ['nombre','cargo','telefono','restringir','asignaciones','esTutor','tutorGrado','tutorSeccion','tutor_aulas_json','tutor_raw','grados_asignados_json'];
+    // Primero: leer el doc actual para saber qué keys EXISTEN en el schema (así evitamos errores
+    // "column X not found in schema cache" cuando se añadió un campo nuevo al payload pero
+    // la columna aún no existe en la tabla Supabase).
+    let existingKeys = null;
+    try {
+      const snap = await db.collection('usuarios').doc(uid).get();
+      if (snap && snap.exists && typeof snap.data === 'function') {
+        const d = snap.data() || {};
+        existingKeys = new Set(Object.keys(d || {}));
+      }
+    } catch (_readErr) { existingKeys = null; }
+
+    // Construir safeUpdate: orden de campos con y sin dependencia a columnas NUEVAS (tutor_raw/tutor_aulas_json).
+    const newColumns = new Set(['tutor_raw','tutor_aulas_json','grados_asignados_json','tutorGrado','tutorSeccion','asignaciones','restringir','esTutor']);
+    const baseSafe = {}; // campos que existen en versiones ANTIGUAS de la tabla (seguros)
+    const newSafe = {};  // campos nuevos o que podrían faltar
+    allCandidates.forEach(k => {
+      if(!Object.prototype.hasOwnProperty.call(updateData, k)) return;
+      // Filtrar por existencia de la columna, si es que logramos leer el doc
+      const col = _camelToSnake(k);
+      const colExistente = existingKeys == null ? true : (existingKeys.has(col) || existingKeys.has(k));
+      if (newColumns.has(k)) {
+        if (colExistente) newSafe[k] = updateData[k];
+      } else {
+        if (colExistente) baseSafe[k] = updateData[k];
+      }
     });
+
+    const safeUpdate = Object.assign({}, baseSafe, newSafe);
     if(!Object.keys(safeUpdate).length) return { ok:false, error:'Nada que actualizar' };
-    await db.collection('usuarios').doc(uid).update(safeUpdate);
-    return { ok:true, status:200 };
+
+    // Estrategia: primero intentar el update completo.
+    // Si falla con error tipo "column not found" / "schema cache", volver a intentar solo los baseSafe (campos viejos).
+    let attempts = [];
+    const plan = [safeUpdate];
+    if (Object.keys(newSafe).length > 0) plan.push(baseSafe);
+    let lastErr = null, finalOk = false;
+    for (let i = 0; i < plan.length; i++) {
+      const obj = plan[i] || {};
+      if (!Object.keys(obj).length) continue;
+      try {
+        await db.collection('usuarios').doc(uid).update(obj);
+        finalOk = true;
+        if (i === 0) {
+          attempts.push('Update completo OK');
+        } else {
+          attempts.push('Fallback: actualizados solo campos antiguos (columnas nuevas no existen).');
+        }
+        break;
+      } catch (_e) {
+        lastErr = _e;
+        const msg = String((_e && (_e.message || _e)) || '').toLowerCase();
+        // Si el error NO es de columna faltante, ya no reintentes
+        const columnError = msg.includes('column') && (msg.includes('not found') || msg.includes('schema cache'));
+        if (!columnError) break;
+        attempts.push(`Intento ${i + 1} falló por schema: ${(_e && _e.message) || String(_e)}`);
+      }
+    }
+    if (finalOk) {
+      // Devolvemos ok + nota si hubo fallback
+      const note = (attempts.length > 1) ? ' · Fallback (algunos campos nuevos omitidos)' : '';
+      return { ok:true, status:200, note, attempts };
+    }
+    return { ok:false, status:500, error: (lastErr && lastErr.message) || String(lastErr || 'Error'), attempts };
   } catch(e) {
     return { ok:false, status:500, error: e?.message || String(e) };
   }
