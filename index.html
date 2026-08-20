@@ -6577,7 +6577,16 @@ function doLogout() {
 async function recargarMisTutorias() {
   try {
     if(!currentUser) { toast('Debes iniciar sesión primero', 'error'); return; }
-    const was = showLoader && typeof showLoader === 'function' ? showLoader('🔄 Recargando tus tutorías y privilegios...') : null;
+    // Mini-overlay de carga esquina abajo-derecha (no requiere showLoader global)
+    let overlay = document.getElementById('reload-tutorias-overlay');
+    if(!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'reload-tutorias-overlay';
+      overlay.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:99999;background:var(--surface, #0f172a);color:var(--text, #fff);border:1px solid var(--border, #1e293b);border-radius:14px;padding:12px 16px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+      document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = '<div class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="width:16px;height:16px;border-width:2px;"></div><span>🔄 Recargando tus tutorías y privilegios...</span>';
+    overlay.style.display = 'flex';
     try {
       // 1) Borrar cache local de usuario y dashboard para que lea FRESCO desde Supabase.
       try { sessionStorage.removeItem('asmqr_userCache_' + currentUser.uid); } catch(_) {}
@@ -6588,7 +6597,7 @@ async function recargarMisTutorias() {
       try { sessionStorage.removeItem('_cfgCache'); } catch(_) {}
       try { _dashInicioCache = null; _dashInicioCacheTs = 0; _dashInicioPromise = null; } catch(_) {}
       try { window.alumnosCache = null; } catch(_) {}
-      try { DB && DB.invalidarAlumnos && DB.invalidarAlumnos(); } catch(_) {}
+      try { if (typeof DB !== 'undefined' && DB && DB.invalidarAlumnos) DB.invalidarAlumnos(); } catch(_) {}
       // 2) Volver a leer usuario DOC desde Supabase DIRECTAMENTE (no cache).
       let uData = null;
       try {
@@ -6606,14 +6615,20 @@ async function recargarMisTutorias() {
       // 4) Volver a inicializar filtros y re-renderizar lo que esté visible.
       await inicializarFiltros({ cfg });
       try { await cargarDashboardInicio(true); } catch(_) {}
-      try { if(document.getElementById('sec-alumnos')?.classList?.contains('active')) renderAlumnos && renderAlumnos(); } catch(_) {}
-      try { if(document.getElementById('sec-asistencia')?.classList?.contains('active')) renderRegistro && renderRegistro(); } catch(_) {}
+      try { if(document.getElementById('sec-alumnos')?.classList?.contains('active') && typeof renderAlumnos === 'function') renderAlumnos(); } catch(_) {}
+      try { if(document.getElementById('sec-asistencia')?.classList?.contains('active') && typeof renderRegistro === 'function') renderRegistro(); } catch(_) {}
       // 5) Resetear toast 1 sola vez por sesión scope vacío.
       try { _warnedProfesorSinAulas = false; } catch(_) {}
-      toast('✅ Tutorías y privilegios recargados. Si seguiste viendo el aviso, pide a Admin que ejecute Modo Reparación.', 'success');
+      overlay.innerHTML = '<span style="color:#10b981;">✅</span><span>Tutorías y privilegios recargados.</span>';
+      setTimeout(() => { if(overlay) overlay.style.display = 'none'; }, 2800);
+      toast('✅ Tutorías y privilegios recargados. Si sigues sin ver alumnos, pide a Admin que confirme Modo Reparación.', 'success');
     } finally {
-      if(was && typeof was === 'function') try { was(); } catch(_) {}
-      else hideLoader && hideLoader();
+      // Si falló y el overlay sigue con el spinner, lo ocultamos en 3s.
+      setTimeout(() => {
+        if(overlay && overlay.parentNode) {
+          overlay.style.display = 'none';
+        }
+      }, 3500);
     }
   } catch(e) {
     console.error('[recargarMisTutorias]', e);
@@ -8567,70 +8582,100 @@ async function renderAlumnos() {
     if(!alumnos.length) {
       tbody.innerHTML = '';
       empty.style.display = 'block';
-      // Hint UX: si filtro nivel+grado devuelve 0, pero el MISMO grado tiene alumnos EN OTRO nivel,
-      // sugerirle al usuario que pruebe cambiando el nivel.
-      // Evita el misterio: "Mostrando 0 de 14 alumnos" sin entender por qué.
+      // Hint UX: cuando muestra 0, sugerir donde SÍ hay alumnos (para el scope del profesor).
+      // Casos soportados:
+      //   A) NIVEL + GRADO activos, pero ese grado está en OTRO nivel (el ya existente).
+      //   B) Solo NIVEL activo (Grado = '--'), pero sus alumnos están en OTROS niveles (Magloria: AVANZADO -> sugiere INICIAL/INTERMEDIO).
+      //   C) GRADO activo pero sin NIVEL (sugerir en qué niveles sí existe).
       try {
         const alumnosBase2 = await getAlumnosFiltrados();
         const prep2 = _getPreparedAlumnosView(alumnosBase2);
         let _msg = 'No se encontraron alumnos con ese filtro';
-        if(grado && grado !== 'TODOS') {
-          const _cfa = typeof configCache !== 'undefined' ? configCache : {};
-          const mismoGradoOtrosNiveles = new Map();
-          prep2.sorted.forEach(a => {
-            if(String(a.grado||'').trim() !== String(grado).trim()) return;
-            const niv = _alumnoNivelText(a, _cfa) || '-';
-            if(nivel && nivel !== 'TODOS' && niv === nivel) return;
-            const key = niv + '|' + String(a.seccion||'');
-            const cur = mismoGradoOtrosNiveles.get(key) || { n: 0, nivel: niv, sec: a.seccion };
-            cur.n++;
-            mismoGradoOtrosNiveles.set(key, cur);
-          });
-          if(mismoGradoOtrosNiveles.size > 0) {
-            let txts = [];
-            for(const it of mismoGradoOtrosNiveles.values()) txts.push(`${it.n} en ${it.nivel}${it.sec ? ' ' + it.sec : ''}`);
-            txts = txts.slice(0, 6);
-            const hint = txts.join(', ');
-            const btnHtml = (mismoGradoOtrosNiveles.size === 1)
-              ? `<br><button id="btn-aula-otros-niv" style="margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">Cambiar nivel sugerido</button>`
-              : '';
-            _msg = `Grado ${grado} no tiene alumnos en el nivel actual. Se encontraron ${mismoGradoOtrosNiveles.size} combinaciones: ${hint}${btnHtml}`;
-            setTimeout(() => {
-              const bb = document.getElementById('btn-aula-otros-niv');
-              if(!bb) return;
-              bb.addEventListener('click', async () => {
-                // Tomar el primer (único) nivel sugerido y setearlo, rerender
-                const _cfa2 = typeof configCache !== 'undefined' ? configCache : await getConfig();
-                const allB = await getAlumnosFiltrados();
-                const prepB = _getPreparedAlumnosView(allB);
-                const candidatos = prepB.sorted
-                  .filter(a => String(a.grado||'').trim() === String(grado).trim())
-                  .map(a => ({ niv: _alumnoNivelText(a,_cfa2), sec: a.seccion }))
-                  .filter(x => x.niv && x.niv !== (nivel||''));
-                if(candidatos.length) {
-                  const nSel = candidatos[0].niv;
-                  const elNiv = document.getElementById('fa-nivel');
-                  if(elNiv && [...elNiv.options].some(o => o.value === nSel)) { elNiv.value = nSel; }
-                  else {
-                    // Si no esta en las opciones, agregar una option temporal con ese nivel + TODOS
-                    if(![...elNiv.options].some(o => o.value === nSel)) {
-                      const opt = document.createElement('option');
-                      opt.value = nSel;
-                      opt.textContent = nSel;
-                      elNiv.insertBefore(opt, elNiv.firstChild);
-                    }
-                    elNiv.value = nSel;
-                  }
-                  const sSel = candidatos[0].sec;
-                  const elSec = document.getElementById('fa-seccion');
-                  if(sSel && elSec && [...elSec.options].some(o => o.value === sSel)) { elSec.value = sSel; }
-                  renderAlumnos();
-                }
-              });
-            }, 0);
-          } else if(q && !seccion) {
-            // Por si escribio una busqueda y luego no hay coincidencia
+        const _cfa = typeof configCache !== 'undefined' ? configCache : {};
+        // Map key: nivel|grado|seccion -> {n, nivel, grado, seccion}
+        const sugerenciasMap = new Map();
+        prep2.sorted.forEach(a => {
+          const niv = _alumnoNivelText(a, _cfa) || '-';
+          const g = String(a.grado || '').trim();
+          const s = String(a.seccion || '').trim();
+          // Quitar combinaciones que coinciden con filtro actual (ya mostró 0 ahí)
+          const mismoNivel = (nivel && nivel !== 'TODOS') ? niv === nivel : false;
+          const mismoGrado = (grado && grado !== 'TODOS') ? g === String(grado).trim() : false;
+          const mismaSeccion = (seccion && seccion !== 'TODOS') ? s === String(seccion).trim() : false;
+          // Si el usuario NO activó un campo, ese campo NO es criterio de exclusión
+          const coincideExactoConFiltro =
+            ((!nivel || nivel === 'TODOS') || mismoNivel) &&
+            ((!grado || grado === 'TODOS') || mismoGrado) &&
+            ((!seccion || seccion === 'TODOS') || mismaSeccion);
+          if(coincideExactoConFiltro) return; // ya se que tiene 0, no lo sugiero
+          const key = niv + '|' + g + '|' + s;
+          const cur = sugerenciasMap.get(key) || { n: 0, nivel: niv, grado: g, sec: s };
+          cur.n++;
+          sugerenciasMap.set(key, cur);
+        });
+        // Decidir si mostrar sugerencia y cómo
+        let txts = [];
+        let sugerenciasList = [...sugerenciasMap.values()].sort((a,b)=> b.n - a.n).slice(0,8);
+        // Calcular cuántos NIVELES (distintos) tiene sugeridos
+        const nivelesSugeridos = new Set(sugerenciasList.map(x=>x.nivel).filter(Boolean));
+        const btnSugerir = [];
+
+        if (sugerenciasList.length > 0) {
+          // Caso B: solo NIVEL seleccionado, y se sugiere SOLO 1 NIVEL distinto
+          const casoB_unSoloNivel = (nivelesSugeridos.size === 1);
+          txts = sugerenciasList.map(it => `${it.n} en ${it.nivel}${it.grado ? ' Grado ' + it.grado : ''}${it.sec ? ' ' + it.sec : ''}`);
+          txts = txts.slice(0, 6);
+          let hint = txts.join(', ');
+          let btnHtml = '';
+          if (casoB_unSoloNivel && sugerenciasList.length <= 2) {
+            const nSel = sugerenciasList[0].nivel;
+            const gSel = sugerenciasList[0].grado || '';
+            const sSel = sugerenciasList[0].sec || '';
+            // Único botón que cambia directamente a ese nivel/grado/sección
+            const lbl = gSel
+              ? `Usar ${nSel}${gSel ? ' / Grado ' + gSel : ''}${sSel ? ' ' + sSel : ''}`
+              : `Cambiar a Nivel ${nSel}`;
+            btnHtml = `<br><button id="btn-aula-sugerencia" data-niv="${nSel}" data-g="${gSel}" data-s="${sSel}" style="margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">✅ ${lbl}</button>`;
+          } else if (nivelesSugeridos.size > 0) {
+            // Multiples niveles: botón para el NIVEL que tenga MÁS alumnos
+            const porNivel = {};
+            sugerenciasList.forEach(it => { porNivel[it.nivel] = (porNivel[it.nivel]||0) + it.n; });
+            const topNivel = Object.entries(porNivel).sort((a,b)=>b[1]-a[1])[0];
+            if (topNivel) {
+              btnHtml = `<br><button id="btn-aula-sugerencia" data-niv="${topNivel[0]}" data-g="" data-s="" style="margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">🔄 Probar con Nivel ${topNivel[0]} (${topNivel[1]} alumnos)</button>`;
+            }
           }
+          const cab = (grado && grado !== 'TODOS')
+            ? `Grado ${grado} no tiene alumnos en el nivel actual. Se encontraron: `
+            : (nivel && nivel !== 'TODOS')
+              ? `Nivel ${nivel} no tiene alumnos para ti. Se encontraron: `
+              : `No hay alumnos aquí. Se encontraron: `;
+          _msg = cab + hint + btnHtml;
+          setTimeout(() => {
+            const bb = document.getElementById('btn-aula-sugerencia');
+            if(!bb) return;
+            bb.addEventListener('click', async () => {
+              const nSel = bb.getAttribute('data-niv') || '';
+              const gSel = bb.getAttribute('data-g') || '';
+              const sSel = bb.getAttribute('data-s') || '';
+              const elNiv = document.getElementById('fa-nivel');
+              if(nSel && elNiv) {
+                if([...elNiv.options].some(o => o.value === nSel)) { elNiv.value = nSel; }
+                else { const opt = document.createElement('option'); opt.value = nSel; opt.textContent = nSel; elNiv.insertBefore(opt, elNiv.firstChild); elNiv.value = nSel; }
+              }
+              const elG = document.getElementById('fa-grado');
+              if(gSel && elG) {
+                if([...elG.options].some(o => o.value === gSel)) { elG.value = gSel; }
+              }
+              const elS = document.getElementById('fa-seccion');
+              if(sSel && elS) {
+                if([...elS.options].some(o => o.value === sSel)) { elS.value = sSel; }
+              }
+              renderAlumnos();
+            });
+          }, 0);
+        } else if(q && !seccion) {
+          // Por si escribio una busqueda y luego no hay coincidencia
         }
         empty.querySelector('p').innerHTML = _msg;
       } catch(_ex) {
