@@ -19081,27 +19081,71 @@ async function uTutorAgregarAula(){
 }
 
 function _parseTutorColumnaExcelAulas(texto){
-  // Extrae "CICLO INICIAL 1°A°-2°A° / INTERMEDIO 1°A°-2°A°-3°A°" => array de {ciclo,grado,seccion}
+  // Extrae aulas desde la columna TUTOR libre del Excel de docentes.
+  // Acepta muchísimas variantes (CEBA y EBR):
+  //   - "CICLO INICIAL 1°A°-2°A° / INTERMEDIO 1°A°-2°A°-3°A°"  (grado con signo °)
+  //   - "CICLO INICIAL 1"A"-2"A" / INTERMEDIO 1"A"-2"A"-3"A""    (comillas dobles entre grado y sección — TU CASO MAGLORIA)
+  //   - "INICIAL 1'A' 2'A' / AVANZADO 3'B"                         (comillas simples)
+  //   - "Primaria 1A, 2A, 3B"                                        (sin separador)
+  //   - "1A 2A 3A"                                                   (sin ciclo)
+  //   - "1ªA 2ªB"                                                     (superindice ª / º)
+  //   - "1 °A"                                                        (espacio entre numero y grado)
+  // Devuelve array {ciclo,grado,seccion}
   const out = [];
   const raw = String(texto||'').trim();
   if(!raw) return out;
-  const partes = raw.split(/\s*\/\s*/).map(s => String(s||'').trim()).filter(Boolean);
-  partes.forEach(parte => {
-    const cicloMatch = parte.match(/CICLO\s+INICIAL|CICLO\s+INTERMEDIO|CICLO\s+AVANZADO|INICIAL|INTERMEDIO|AVANZADO|PRIMARIA|SECUNDARIA/i);
+
+  // Split por bloques de nivel/ciclo. El nivel se repite por bloque, asi que separamos primero por
+  // slash | punto y coma | " y " | " | " etc. Y tambien si aparece un nuevo ciclo/nivel dentro.
+  const separadores = /\s*\/\s*|\s*\|\s*|\s*;\s*|\s+y\s+/i;
+  const separadoresSecundarios = /(?=CICLO\s+INICIAL|CICLO\s+INTERMEDIO|CICLO\s+AVANZADO|\bINICIAL\b|\bINTERMEDIO\b|\bAVANZADO\b|\bINICIO\b|\bPRIMARIA\b|\bSECUNDARIA\b|\bPREESCOLAR\b)/i;
+  let bloques = [];
+  try {
+    const firstSplit = raw.split(separadores).map(s => String(s||'').trim()).filter(Boolean);
+    firstSplit.forEach(part => bloques.push(...String(part).split(separadoresSecundarios).map(s => String(s||'').trim()).filter(Boolean)));
+  } catch(_) { bloques = [raw]; }
+  if(!bloques.length) bloques = [raw];
+
+  // Unificador: convierte distintas variantes "grado-seccion" a un patron comun
+  // Regex "grupo captura todo": (grado numérico) [simbolo o nada] [espacio opcional] (letra seccion o "todas")
+  // Simbolos aceptados entre grado y sección: ° (grado) º (masculino) ª (femenino) " (com. doble) ' (com. simple) ·
+  // Tambien acepta que NO haya simbolo (ej: 1A => grado=1, seccion=A)
+  const reTodas = /\btodas\b|TODO\b|TODAS\b|TODAS\b/g;
+  const reGS = /(\d{1,2})\s*[°ºª"'·\u00b0\u00ba\u00aa]?\s*([A-Z]|TODAS|TODO)?/gim;
+
+  bloques.forEach(parte => {
+    if(!parte) return;
+    const cicloMatch = parte.match(/CICLO\s+INICIAL|CICLO\s+INTERMEDIO|CICLO\s+AVANZADO|\bINICIAL\b|\bINTERMEDIO\b|\bAVANZADO\b|\bPRIMARIA\b|\bSECUNDARIA\b|\bPREESCOLAR\b|\bINICIO\b/i);
     const ciclo = _canonCicloJS(cicloMatch ? cicloMatch[0] : '');
-    const reGS = /(\d)\s*°\s*([A-Z])?/gi;
     let m;
     while((m = reGS.exec(parte)) !== null){
       const grado = String(m[1]||'').trim();
-      const secc  = String(m[2]||'A').trim().toUpperCase();
-      if(grado){
-        const k = _aulaKey(ciclo, grado, secc);
-        if(!out.some(a => _aulaKey(a.ciclo,a.grado,a.seccion) === k)){
-          out.push({ ciclo, grado, seccion: secc });
-        }
+      let secc = (String(m[2]||'').trim().toUpperCase() || 'A');
+      if(secc === 'TODO' || secc === 'TODAS') secc = 'TODAS';
+      if(!grado) continue;
+      // Si el bloque tiene separadores guion o coma, se asume que cada ocurrencia del regex es una aula separada
+      const k = _aulaKey(ciclo, grado, secc);
+      if(!out.some(a => _aulaKey(a.ciclo,a.grado,a.seccion) === k)){
+        out.push({ ciclo, grado, seccion: secc });
       }
     }
   });
+
+  // Sin resultado: ultimo recurso — buscar patrones tipo "1A" / "2B" (pegados) sin símbolo intermedio, por si la regex
+  // anterior se perdió por caracteres raros unicode.
+  if(!out.length) {
+    const reFallback = /(^|\s|,|;|-)(\d{1,2})([A-Z])/gm;
+    let mm;
+    while((mm = reFallback.exec(raw)) !== null){
+      const grado = String(mm[2]||'').trim();
+      const secc = String(mm[3]||'A').toUpperCase();
+      if(!grado) continue;
+      const k = _aulaKey('', grado, secc);
+      if(!out.some(a => _aulaKey(a.ciclo,a.grado,a.seccion) === k)){
+        out.push({ ciclo: '', grado, seccion: secc });
+      }
+    }
+  }
   return out;
 }
 
@@ -20288,7 +20332,19 @@ async function handleImportUsuariosFile() {
       let tutorAulasJson = [];
       try {
         if(tutorColumnaExcel) tutorAulasJson = _parseTutorColumnaExcelAulas(tutorColumnaExcel);
-      } catch(_e) { tutorAulasJson = []; }
+        // Seguridad anti-parser fallido:
+        // Si el usuario lleno la columna TUTOR con texto pero el parser no logro extraer NINGUNA aula,
+        // (por ejemplo comillas raras, simbolos desconocidos, etc) lo reportamos como error de validacion
+        // para que no se guarde al docente "sin aulas" y luego vea TODO el colegio o NADA (problema Magloria).
+        if(!tutorAulasJson.length && tutorColumnaExcel.length > 5) {
+          errors.push('No se pudieron extraer aulas TUTOR desde: "' + tutorColumnaExcel + '". Ajusta formato: 1"A" / 2A / 3°A');
+        }
+      } catch(_e) {
+        tutorAulasJson = [];
+        if(tutorColumnaExcel && tutorColumnaExcel.length > 5) {
+          errors.push('Error parseando columna TUTOR: "' + tutorColumnaExcel + '"');
+        }
+      }
       if(!tutorAulasJson.length && (tutorGrado || tutorSeccion)) {
         const inferNivel = _agendaInferNivelByGrado(tutorGrado, cfg) || '';
         tutorAulasJson = [{ ciclo: _canonCicloJS(inferNivel), grado: tutorGrado, seccion: tutorSeccion.toUpperCase() }].filter(a => a.grado && a.seccion);
@@ -20300,7 +20356,30 @@ async function handleImportUsuariosFile() {
       }
       const restringir = _parseBool(_getRowVal(r, ['restringir','restrignir','restricto','restringido']));
       const asignacionesRaw = _parseAsignaciones(_getRowVal(r, ['asignaciones','asignaciones_json']));
-      const asignaciones = _normalizeAsignacionesWithCfg(asignacionesRaw || {}, cfg, _agendaInferNivelByGrado(tutorGrado, cfg)) || {};
+      let asignaciones = _normalizeAsignacionesWithCfg(asignacionesRaw || {}, cfg, _agendaInferNivelByGrado(tutorGrado, cfg)) || {};
+      // Sincronizacion de seguridad: si ES TUTOR y columna TUTOR se parseó a tutorAulasJson, PERO
+      // el usuario no llenó la columna "asignaciones" (asignaciones vacías), copiamos tutor -> asignaciones
+      // asi el profesor restringido SIEMPRE tiene grados/secciones en asignaciones aunque el Excel
+      // no la complete. Evitamos que luego quede sin filtro y vea todo o nada.
+      const esProfesor = (rol === 'profesor');
+      if(esProfesor && esTutor && tutorAulasJson.length && (!asignacionesRaw || Object.keys(asignacionesRaw).length === 0)) {
+        asignaciones = {};
+        tutorAulasJson.forEach(a => {
+          const g = String(a.grado||'').trim();
+          const s = String(a.seccion||'').trim().toUpperCase();
+          if(!g || !s || s === 'TODAS') return;
+          if(!(g in asignaciones)) asignaciones[g] = [];
+          if(!asignaciones[g].includes(s)) asignaciones[g].push(s);
+        });
+        // Normalizamos nuevamente por si se agrego
+        asignaciones = _normalizeAsignacionesWithCfg(asignaciones, cfg, _agendaInferNivelByGrado(tutorGrado, cfg)) || asignaciones;
+      }
+      // Otra sincronizacion: si columna restringir no es explicita pero ES TUTOR con aulas -> activamos restringir
+      // para que no quede "docente tutor sin restriccion".
+      let restringirFinal = rol === 'profesor' ? !!restringir : false;
+      if(esProfesor && esTutor && tutorAulasJson.length && !restringirFinal) {
+        restringirFinal = true;
+      }
       const gradosAsignadosJson = _asignacionesObjToAulasList(asignaciones) || [];
 
       const errors = [];
@@ -20354,8 +20433,8 @@ async function handleImportUsuariosFile() {
         nombre,
         cargo,
         telefono,
-        restringir: rol === 'profesor' ? !!restringir : false,
-        asignaciones: (rol === 'profesor' && restringir) ? (asignaciones || {}) : {},
+        restringir: restringirFinal,
+        asignaciones: (rol === 'profesor' && restringirFinal) ? (asignaciones || {}) : {},
         esTutor: rol === 'profesor' ? !!esTutor : false,
         tutorGrado: (rol === 'profesor' && esTutor) ? tutorGrado : null,
         tutorSeccion: (rol === 'profesor' && esTutor) ? tutorSeccion : null,
@@ -20797,6 +20876,19 @@ async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
         const cfg = cfgCached || await getConfig();
         const preferNivel = _agendaInferNivelByGrado(String(currentTutorInfo?.tutorGrado || '').trim(), cfg);
         currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(currentPrivilegios.asignaciones || {}, cfg, preferNivel) || {};
+        // Auto-sync runtime: si ES TUTOR con aulas tutor y asignaciones VACIAS, copiamos tutor -> asignaciones
+        // (para arreglar docentes importados antes del fix parser: Magloria Sulcarayme, etc).
+        // Esto evita tener que re-importar a todos los docentes.
+        if(_isTutorUser()) {
+          const tutorAsig = _profesorTutorToAsignaciones();
+          if(tutorAsig && Object.keys(tutorAsig).length > 0) {
+            if(!currentPrivilegios.asignaciones || Object.keys(currentPrivilegios.asignaciones).length === 0) {
+              currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(tutorAsig, cfg, preferNivel) || tutorAsig;
+              // Activar restringir si no lo estaba
+              if(!currentPrivilegios.restringir) currentPrivilegios.restringir = true;
+            }
+          }
+        }
       } catch(e0) {}
     } else {
       const doc = await db.collection('usuarios').doc(currentUser.uid).get();
@@ -20811,12 +20903,40 @@ async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
           const cfg = cfgCached || await getConfig();
           const preferNivel = _agendaInferNivelByGrado(String(currentTutorInfo?.tutorGrado || '').trim(), cfg);
           currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(currentPrivilegios.asignaciones || {}, cfg, preferNivel) || {};
+          if(_isTutorUser()) {
+            const tutorAsig = _profesorTutorToAsignaciones();
+            if(tutorAsig && Object.keys(tutorAsig).length > 0) {
+              if(!currentPrivilegios.asignaciones || Object.keys(currentPrivilegios.asignaciones).length === 0) {
+                currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(tutorAsig, cfg, preferNivel) || tutorAsig;
+                if(!currentPrivilegios.restringir) currentPrivilegios.restringir = true;
+              }
+            }
+          }
         } catch(e0) {}
       }
     }
   } catch(e) {
     currentPrivilegios = { restringir: false, asignaciones: {} };
   }
+}
+
+// Util runtime: convierte tutorAulas del currentTutorInfo en asignaciones obj {grado:[secciones]}
+function _profesorTutorToAsignaciones() {
+  const out = {};
+  const lista = Array.isArray(currentTutorInfo?.tutorAulas) && currentTutorInfo.tutorAulas.length
+    ? currentTutorInfo.tutorAulas.slice()
+    : (((currentTutorInfo?.tutorGrado && currentTutorInfo?.tutorSeccion))
+        ? [{ ciclo: '', grado: String(currentTutorInfo.tutorGrado||'').trim(), seccion: String(currentTutorInfo.tutorSeccion||'').trim().toUpperCase() }]
+        : []);
+  lista.forEach(a => {
+    if(!a || !a.grado || !a.seccion) return;
+    const g = String(a.grado||'').trim();
+    const s = String(a.seccion||'').trim().toUpperCase();
+    if(!g || !s || s === 'TODAS') return;
+    if(!(g in out)) out[g] = [];
+    if(!out[g].includes(s)) out[g].push(s);
+  });
+  return out;
 }
 
 // Helper: retorna LISTA de aulas efectivas del profesor actual:
@@ -20888,6 +21008,15 @@ async function getAlumnosFiltrados() {
     if(!!currentPerms?.verTodasAulas) return DB.getAlumnos();
     const asig = _profesorAsignacionesEfectivas();
     if(Object.keys(asig).length) return DB.getAlumnosScoped(asig);
+    // Seguridad: si el profesor/psicologo es RESTRINGIDO pero no tiene asignaciones ni
+    // tutorías parseadas (fallo importación), NO le devolvemos DB.getAlumnos completo
+    // (habia un bug en Magloria: le devolvia todos los alumnos). Devolvemos array vacio
+    // para obligar a que el admin configure sus aulas correctamente.
+    const _esRestringido = !!(currentPrivilegios?.restringir);
+    const _esTutor = !!((currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length) || currentTutorInfo?.tutorGrado);
+    if(_esRestringido || _esTutor) {
+      return [];
+    }
     return [];
   }
   const now = Date.now();
