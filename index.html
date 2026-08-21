@@ -6114,6 +6114,37 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   const g = primeraAula ? String(primeraAula.grado || '').trim() : String(currentTutorInfo?.tutorGrado || '').trim();
   const s = primeraAula ? String(primeraAula.seccion || '').trim().toUpperCase() : String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
   const cicloAuto = primeraAula ? String(primeraAula.ciclo || '').trim() : '';
+  // ==============================================================
+  // NUEVO: Si el profesor tiene MÁS DE 1 NIVEL distinto en su scope
+  // (ej: INICIAL + AVANZADO), NO autoseleccionamos NINGÚN FILTRO
+  // (dejamos fa-nivel / fa-grado / fa-seccion = vacíos).
+  // Así renderAlumnos() filtra solo por q (ningún criterio) y muestra
+  // TODOS los alumnos que getAlumnosFiltrados() le devuelve (todos
+  // los de su scope sin importar el nivel). Es el único modo que
+  // Orlando vea sus 38 alumnos de 1A aunque el ciclo esté mal guardado.
+  // ==============================================================
+  let _nivelesScopeUnicos = new Set();
+  try {
+    aulasList.forEach(a => {
+      const c = String(a.ciclo || '').trim();
+      if (c) {
+        const corto = _cfgKeyToNivelCorto(c);
+        if (corto) _nivelesScopeUnicos.add(corto);
+        else _nivelesScopeUnicos.add(c);
+      }
+    });
+  } catch(_) {}
+  const _tieneMultiplesNiveles = (_nivelesScopeUnicos.size >= 2);
+  const _multiplesGsS = (() => {
+    const setGs = new Set();
+    aulasList.forEach(a => {
+      const gx = String(a.grado||'').trim();
+      const sx = String(a.seccion||'').trim().toUpperCase();
+      if (gx && sx) setGs.add(gx + '|' + sx);
+    });
+    return setGs.size >= 2;
+  })();
+  const _noAutoSeleccionarFiltros = (_tieneMultiplesNiveles || _multiplesGsS);
   // FIX Orlando: SI el usuario es PROFESOR + (restringir==true o es_tutor o tiene strings legacy de tutoria)
   // y además tenemos g && s válidos → FORZAMOS haceAutoSelect=true aunque _isDocenteAula() haya
   // retornado false por cargo mal formateado (ej: "docente /ciencias" no matchea includes antiguos).
@@ -6127,10 +6158,20 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
     );
     if (condicionFuerte) _realHaceAutoSelect = true;
   }
-  if (_realHaceAutoSelect && (!g || !s)) {
-    if (nEl && nEl.options && [...(nEl.options || [])].some(o => String(o.value || '') === '') && nEl.value !== '') {
+  if (_realHaceAutoSelect && (_noAutoSeleccionarFiltros || (!g || !s))) {
+    // Limpiar TODOS los filtros a '' (ninguna selección), para que el profesor vea TODAS sus aulas
+    // y no solo la 1ra, ni sufra por datos mal catalogados.
+    if (nEl && nEl.options && [...(nEl.options || [])].some(o => String(o.value || '') === '')) {
       try { nEl.value = ''; } catch(_) {}
     }
+    if (gEl) try { gEl.value = ''; } catch(_) {}
+    if (sEl) try { sEl.value = ''; } catch(_) {}
+    if (nEl) nEl.disabled = false;
+    if (gEl) { _disableSelect(gEl.id || ''); gEl.disabled = false; }
+    if (sEl) { _disableSelect(sEl.id || ''); sEl.disabled = false; }
+    try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
+    try { if (typeof renderAlumnos === 'function') renderAlumnos(); } catch(_) {}
+    try { if (typeof mostrarEstadoInicial === 'function' && !document.getElementById('search-alumnos')?.value) mostrarEstadoInicial(); } catch(_) {}
     return;
   }
 
@@ -9215,9 +9256,13 @@ async function renderAlumnos() {
   const nivel   = document.getElementById('fa-nivel').value;
   const modalidad = document.getElementById('fa-modalidad').value;
   const q       = (document.getElementById('search-alumnos').value||'').toLowerCase();
+  const r = _normRol(currentRol);
+  const isProf = (r === 'profesor' || r === 'psicologo');
+  const aulasList = (isProf && typeof _profesorAsignacionesAulasList === 'function') ? (_profesorAsignacionesAulasList() || []) : [];
 
-  // "" = sin tocar (no muestra nada), "TODOS" = sin filtro en ese campo, valor específico = filtra
-  const filtroActivo = grado || seccion || nivel || modalidad || q;
+  // Profesor con aulas asignadas: aunque NO haya filtros UI seleccionados,
+  // MOSTRAR todos los alumnos que le corresponden (nunca mostrarEstadoInicial)
+  const filtroActivo = grado || seccion || nivel || modalidad || q || (isProf && aulasList.length > 0);
   if(!filtroActivo) { mostrarEstadoInicial(); return; }
 
   const tbody = document.getElementById('alumnos-tbody');
@@ -22629,29 +22674,39 @@ function aplicarFiltroProfesor(alumnos) {
   if(!aulasList.length) return [];
   let cfgRef = null;
   try { cfgRef = (typeof getConfigCachedOnce === 'function') ? (getConfigCachedOnce() || null) : null; } catch(_) {}
+  const aulasPrep = aulasList.map(x => {
+    const xCiclo = String(x.ciclo || '').trim().toUpperCase();
+    const xGradoRaw = String(x.grado || '').trim();
+    const xGradoNum = (xGradoRaw.match(/\d+/) || [])[0] || '';
+    const xSec = String(x.seccion || '').trim().toUpperCase();
+    const xTurno = (typeof _normModAtencion === 'function') ? _normModAtencion(x.turno || '') : (String(x.turno || '').toUpperCase());
+    return { x, xCiclo, xGradoRaw, xGradoNum, xSec, xTurno };
+  });
   return alumnos.filter(a => {
-    return aulasList.some(x => {
-      const xCiclo = String(x.ciclo || '').trim().toUpperCase();
-      const aCiclo = String(a.ciclo || '').trim().toUpperCase();
-      let cicloMatch;
-      if (!xCiclo && aCiclo) {
-        // Scope legacy sin ciclo, pero alumno SÍ tiene ciclo (CEBA) →
-        // RELAJADO: si el grado del alumno APARECE EN SÓLO 1 CICLO según cfg.grados → permitir.
-        // Si aparece en 2+ ciclos (grado 1 en INICIAL e INTERMEDIO) → denegar por ambigüedad.
-        const amb = _gradoAmbiguoCfg(a.grado, cfgRef);
-        if (amb && amb.unico && amb.ciclo) {
-          cicloMatch = (amb.ciclo === aCiclo);
-        } else {
-          cicloMatch = false;
-        }
-      } else {
-        cicloMatch = !xCiclo || !aCiclo || (xCiclo === aCiclo);
+    const aCiclo = String(a.ciclo || '').trim().toUpperCase();
+    const aGradoRaw = String(a.grado || '').trim();
+    const aGradoNum = (aGradoRaw.match(/\d+/) || [])[0] || '';
+    const aSec = String(a.seccion || '').trim().toUpperCase();
+    const aTurno = (typeof _normModAtencion === 'function') ? _normModAtencion(a.turno || '') : (String(a.turno || '').toUpperCase());
+    return aulasPrep.some(ap => {
+      const { xCiclo, xGradoRaw, xGradoNum, xSec, xTurno } = ap;
+      const gradoNumMatch = (xGradoNum && aGradoNum && xGradoNum === aGradoNum) || (xGradoRaw && xGradoRaw === aGradoRaw);
+      const seccionMatch = !xSec || !aSec || xSec === aSec;
+      const turnoMatch = !xTurno || !aTurno || xTurno === aTurno;
+      // Capa 1: Grado + Seccion son los campos más importantes (no tiene por qué fallar por ciclo)
+      if(gradoNumMatch && seccionMatch) {
+        if(!xCiclo || !aCiclo) return true;
+        if(xCiclo === aCiclo) return true;
+        // Ciclo INICIAL/INTERMEDIO agrupado en scope -> acepta INICIAL / INTERMEDIO individual
+        const xEsAgrupIniInt = (xCiclo === 'INICIAL/INTERMEDIO' || xCiclo === 'INICIAL / INTERMEDIO');
+        if(xEsAgrupIniInt && (aCiclo === 'INICIAL' || aCiclo === 'INTERMEDIO')) return true;
+        // Diagnóstico confirmó 203 alumnos TODOS con ciclo=AVANZADO. Si profesor INICIAL/INTERMEDIO
+        // tiene 1A y alumno es AVANZADO · 1 · A · Presencial, MATCHEA igual, porque es la MISMA
+        // aula en la realidad (solo está mal catalogado el ciclo). Luego se repara con Reparar Rápido.
+        if(xTurno && aTurno && xTurno === aTurno) return true;
+        return false;
       }
-      const gradoMatch = String(a.grado||'').trim() === String(x.grado||'').trim();
-      if(!cicloMatch || !gradoMatch) return false;
-      const secA = String(a.seccion || '').trim().toUpperCase();
-      const secX = String(x.seccion || '').trim().toUpperCase();
-      return !secX || secA === secX;
+      return false;
     });
   });
 }
@@ -22672,6 +22727,40 @@ async function getAlumnosFiltrados() {
     if(!!currentPerms?.verTodasAulas) return DB.getAlumnos();
     // Convertir a lista de aulas CON ciclo correcto (parseando sufijos)
     let aulasConCiclo = _profesorAsignacionesAulasList();
+    // =============================================================
+    // AMPLIACIÓN ANTI-0 (por Diagnóstico 203 alumnos TODOS AVANZADO):
+    // Si el docente tiene aula con CICLO X, agregamos también aulas
+    // con CICLO = otros valores CEBA (INICIAL/INTERMEDIO/AVANZADO)
+    // para que getAlumnosScoped devuelva alumnos aunque el ciclo
+    // en la BD esté mal catalogado. aplicarFiltroProfesor() luego
+    // refinará por grado-sección-turno (la regla verdadera).
+    // =============================================================
+    const ciclosCEBATodos = ['INICIAL','INTERMEDIO','AVANZADO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO'];
+    if (aulasConCiclo.length > 0) {
+      const ampliadas = [];
+      aulasConCiclo.forEach(aula => {
+        const aCiclo = String(aula.ciclo || '').trim().toUpperCase();
+        const esCEBA = ciclosCEBATodos.some(c => aCiclo.includes(c) || (c.includes(aCiclo) && aCiclo));
+        if (esCEBA) {
+          // Para cada aula CEBA, mandar con CICLO VACÍO + con los 3 ciclos individuales
+          // Así getAlumnosScoped (consulta DB con OR) matchea sin importar el ciclo guardado
+          ['INICIAL','INTERMEDIO','AVANZADO',''].forEach(cicloExtra => {
+            if (String(aula.ciclo || '').toUpperCase() !== cicloExtra.toUpperCase()) {
+              ampliadas.push({ ...aula, ciclo: cicloExtra });
+            }
+          });
+        }
+      });
+      aulasConCiclo = aulasConCiclo.concat(ampliadas);
+      // Deduplicar por (ciclo|grado|seccion|turno)
+      const vistos = new Set();
+      aulasConCiclo = aulasConCiclo.filter(a => {
+        const k = [String(a.ciclo||''),String(a.grado||''),String(a.seccion||''),String(a.turno||'')].join('|');
+        if (vistos.has(k)) return false;
+        vistos.add(k);
+        return true;
+      });
+    }
     // Fallback extra (nivel dios): si scope VACIO pero el usuario TIENE tutorAulas, grados_asignados_json
     // o strings legacy (tutorGrado/tutorSeccion), forzamos carga COMPLETA de alumnos y filtramos en
     // memoria mediante aplicarFiltroProfesor (que ya tiene la regla anti-ambigüedad relajada).
@@ -22690,7 +22779,20 @@ async function getAlumnosFiltrados() {
         } catch (_) {}
       }
     }
-    if(aulasConCiclo.length) return DB.getAlumnosScoped(aulasConCiclo);
+    if(aulasConCiclo.length) {
+      try {
+        const dbScoped = await DB.getAlumnosScoped(aulasConCiclo);
+        // Siempre refinar en memoria con la regla laxa (por si la BD mandó de más)
+        const refiner = aplicarFiltroProfesor(dbScoped || []);
+        if (refiner && refiner.length > 0) return refiner;
+        // Si aún vacío, fallback nivel dios para no perder alumnos
+        const todos = await DB.getAlumnos();
+        return aplicarFiltroProfesor(todos || []);
+      } catch(_e) {
+        const todos = await DB.getAlumnos();
+        return aplicarFiltroProfesor(todos || []);
+      }
+    }
     // Scope VACÍO: devolvemos [] y mostramos 1 toast por sesión (NO mostramos todo el colegio)
     if(!_warnedProfesorSinAulas) {
       _warnedProfesorSinAulas = true;
