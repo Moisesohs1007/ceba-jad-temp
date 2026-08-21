@@ -26646,14 +26646,15 @@ async function repararRapidoAlumnos() {
   const statusEl = document.getElementById('diag-status');
   if (_normRol(currentRol) !== 'admin') { toast('Solo administrador puede reparar datos', 'error'); return; }
   try {
-    if (!confirm('🛠 Reparación RÁPIDA:\n\n• Quitamos espacios en blanco al inicio/final de ciclo/grado/seccion/turno.\n• Quitamos "(Inicial)"/"(Intermedio)" del campo GRADO (no lo almacenamos ahí — el ciclo va en el campo ciclo de la DB).\n• Grado se queda SOLO con el número (ej: "1 (Inicial)" → "1").\n• Si ciclo=INICIAL/INTERMEDIO → lo deducimos por grado (1-3=INICIAL, 4-6=INTERMEDIO).\n• Sección se normaliza a letra mayúscula sola.\n• Turno se normaliza (Presencial/Semipresencial/Virtual).\n• Ciclo/turno/seccion vacíos los DEJAMOS vacíos (no inventamos).\n\n¿Continuar?')) return;
+    if (!confirm('🛠 Reparación RÁPIDA (segura CEBA):\n\nPASOS:\n1) Quitamos espacios en blanco al inicio/final en ciclo/grado/seccion/turno.\n2) Quitamos "(Inicial)"/"(Intermedio)" del campo GRADO (solo lo dejamos como número: "1 (Inicial)" → "1").\n3) Si ciclo = INICIAL/INTERMEDIO agrupado → lo deducimos por grado (1-3=INICIAL, 4-6=INTERMEDIO).\n4) Sección → letra mayúscula sola.\n5) Turno → normalizado a Presencial / Semipresencial / Virtual.\n6) [RECLASIFICACIÓN CICLO SEGURA]:\n   • Presencial + Grado 1-3 → ciclo = INICIAL\n   • Presencial + Grado 4-6 → ciclo = INTERMEDIO\n   • Virtual / Semipresencial (cualquier grado) → ciclo = AVANZADO\n\nCiclo/turno/seccion VACÍOS los DEJAMOS vacíos (NO inventamos datos).\n\n¿Continuar?')) return;
     statusEl.style.display = 'block';
     statusEl.style.background = 'rgba(96,165,250,0.08)';
     statusEl.style.color = '#93c5fd';
     statusEl.textContent = 'Reparando... no cierres esta pestaña.';
     showLoader('Reparando datos alumnos...');
     const all = await DB.getAlumnos();
-    let upd = 0, fixes = { cicloDeducido: 0, sufijoLimpio: 0, espacios: 0 };
+    let upd = 0, fixes = { cicloDeducido: 0, sufijoLimpio: 0, espacios: 0, cicloReclasificado: 0 };
+    const cicloCebas = new Set(['INICIAL','INTERMEDIO','AVANZADO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO']);
     for (const a of all) {
       let changed = false;
       // 1) trim whitespaces
@@ -26675,21 +26676,43 @@ async function repararRapidoAlumnos() {
         }
       }
       // 3) ciclo INICIAL/INTERMEDIO agrupado → deducir por grado numérico
-      const cicloUp = String(a.ciclo || '').toUpperCase();
+      let cicloUp = String(a.ciclo || '').toUpperCase();
       if ((cicloUp === 'INICIAL/INTERMEDIO' || cicloUp === 'INICIAL / INTERMEDIO') && a.grado) {
         const gnum = parseInt(String(a.grado).match(/\d+/)?.[0] || '0', 10);
         if (gnum >= 1 && gnum <= 3) { a.ciclo = 'INICIAL'; changed = true; fixes.cicloDeducido++; }
         else if (gnum >= 4 && gnum <= 6) { a.ciclo = 'INTERMEDIO'; changed = true; fixes.cicloDeducido++; }
+        cicloUp = String(a.ciclo || '').toUpperCase();
       }
       // 4) seccion mayúscula y solo letra
       if (a.seccion) {
         const s = String(a.seccion).trim().toUpperCase().match(/[A-Z]/)?.[0] || '';
         if (s && s !== String(a.seccion)) { a.seccion = s; changed = true; fixes.espacios++; }
       }
-      // 5) turno normalizado
+      // 5) turno normalizado (ANTES de reclasificar ciclo para leer la modalidad correcta)
       if (a.turno) {
         const nt = (typeof _normModAtencion === 'function') ? _normModAtencion(a.turno) : a.turno;
         if (nt && nt !== String(a.turno)) { a.turno = nt; changed = true; }
+      }
+      // 6) RECLASIFICACIÓN CICLO SEGURA (solo CEBA, no toca EBR)
+      const esCicloCEBA = cicloCebas.has(cicloUp);
+      const turnoNorm = (typeof _normModAtencion === 'function') ? _normModAtencion(a.turno || '') : String(a.turno || '').toUpperCase();
+      const gnum2 = parseInt(String(a.grado || '').match(/\d+/)?.[0] || '0', 10);
+      if (esCicloCEBA && turnoNorm) {
+        // Caso A: PRESENCIAL + Grado 1..6 → debe ser INICIAL (1-3) o INTERMEDIO (4-6)
+        if (turnoNorm === 'PRESENCIAL' && gnum2 >= 1 && gnum2 <= 6) {
+          const cicloEsperado = (gnum2 <= 3) ? 'INICIAL' : 'INTERMEDIO';
+          if (String(a.ciclo || '').toUpperCase() !== cicloEsperado.toUpperCase()) {
+            a.ciclo = cicloEsperado;
+            changed = true;
+            fixes.cicloReclasificado++;
+          }
+        }
+        // Caso B: SEMIPRESENCIAL / VIRTUAL → debe ser AVANZADO (solo CEBA)
+        if ((turnoNorm === 'VIRTUAL' || turnoNorm === 'SEMIPRESENCIAL') && String(a.ciclo || '').toUpperCase() !== 'AVANZADO') {
+          a.ciclo = 'AVANZADO';
+          changed = true;
+          fixes.cicloReclasificado++;
+        }
       }
       if (changed) { await DB.saveAlumno(a); upd++; }
     }
@@ -26697,8 +26720,8 @@ async function repararRapidoAlumnos() {
     statusEl.style.background = 'rgba(16,185,129,0.08)';
     statusEl.style.color = '#86efac';
     statusEl.style.border = '1px solid rgba(16,185,129,0.3)';
-    statusEl.textContent = `✅ Reparación completada · ${upd}/${all.length} alumnos actualizados · cicloDeducido=${fixes.cicloDeducido} · sufijosLimpios=${fixes.sufijoLimpio} · espaciosNormalizados=${fixes.espacios}.`;
-    toast(`Reparado: ${upd} alumnos`, 'success');
+    statusEl.textContent = `✅ Reparación completada · ${upd}/${all.length} alumnos actualizados · cicloDeducido=${fixes.cicloDeducido} · sufijosLimpios=${fixes.sufijoLimpio} · espaciosNormalizados=${fixes.espacios} · cicloReclasificado=${fixes.cicloReclasificado}.`;
+    toast(`Reparado: ${upd} alumnos (${fixes.cicloReclasificado} reclasificados ciclo)`, 'success');
     setTimeout(() => runDiagnosticoAlumnos(), 500);
   } catch (e) {
     console.error(e);
