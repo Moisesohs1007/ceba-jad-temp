@@ -22201,19 +22201,19 @@ async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
         const cfg = cfgCached || await getConfig();
         const preferNivel = _agendaInferNivelByGrado(String(currentTutorInfo?.tutorGrado || '').trim(), cfg);
         currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(currentPrivilegios.asignaciones || {}, cfg, preferNivel) || {};
-        // Auto-sync runtime: si ES TUTOR con aulas tutor y asignaciones VACIAS, copiamos tutor -> asignaciones
-        // (para arreglar docentes importados antes del fix parser: Magloria Sulcarayme, etc).
-        // Esto evita tener que re-importar a todos los docentes.
-        if(_isTutorUser()) {
+        // Auto-sync runtime: si el usuario tiene TUTOR_AULAS (vengan de TUTOR checkbox o de grados_asignados_json)
+        // y asignaciones está VACÍO → copiamos tutor_aulas → asignaciones.
+        // IMPORTANTE: NO encerramos en if(_isTutorUser()) porque un docente puede ser NO tutor PERO tener
+        // grados_asignados_json (asignación manual en usuario) → si no mergeamos aquí, ve 0 alumnos.
+        try {
           const tutorAsig = _profesorTutorToAsignaciones();
           if(tutorAsig && Object.keys(tutorAsig).length > 0) {
             if(!currentPrivilegios.asignaciones || Object.keys(currentPrivilegios.asignaciones).length === 0) {
               currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(tutorAsig, cfg, preferNivel) || tutorAsig;
-              // Activar restringir si no lo estaba
               if(!currentPrivilegios.restringir) currentPrivilegios.restringir = true;
             }
           }
-        }
+        } catch(e1) {}
       } catch(e0) {}
     } else {
       const doc = await db.collection('usuarios').doc(currentUser.uid).get();
@@ -22228,7 +22228,8 @@ async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
           const cfg = cfgCached || await getConfig();
           const preferNivel = _agendaInferNivelByGrado(String(currentTutorInfo?.tutorGrado || '').trim(), cfg);
           currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(currentPrivilegios.asignaciones || {}, cfg, preferNivel) || {};
-          if(_isTutorUser()) {
+          // (mismo merge SIN guarda if(_isTutorUser) - ver explicación arriba)
+          try {
             const tutorAsig = _profesorTutorToAsignaciones();
             if(tutorAsig && Object.keys(tutorAsig).length > 0) {
               if(!currentPrivilegios.asignaciones || Object.keys(currentPrivilegios.asignaciones).length === 0) {
@@ -22236,7 +22237,7 @@ async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
                 if(!currentPrivilegios.restringir) currentPrivilegios.restringir = true;
               }
             }
-          }
+          } catch(e1) {}
         } catch(e0) {}
       }
     }
@@ -22272,17 +22273,30 @@ function _profesorAsignacionesAulasList() {
   const asigObj = (currentPrivilegios && typeof currentPrivilegios.asignaciones === 'object') ? currentPrivilegios.asignaciones : {};
   let list = Array.isArray(currentTutorInfo?.gradosAsignados) ? currentTutorInfo.gradosAsignados.slice() :
              _asignacionesObjToAulasList(asigObj);
-  // Añadir aulas del tutor CEBA (multiples) — SOLO desde tutorAulas[] la LISTA parseada,
-  // NUNCA desde legacy tutorGrado/tutorSeccion sueltos (ver explicación en _buildAulasFromUserData).
-  if(_isTutorUser()) {
-    const tutorList = Array.isArray(currentTutorInfo?.tutorAulas) && currentTutorInfo.tutorAulas.length
-      ? currentTutorInfo.tutorAulas.slice()
-      : [];
-    tutorList.forEach(a => {
-      if(!a || !a.grado || !a.seccion) return;
-      const k = [_canonCicloJS(a.ciclo||''), String(a.grado||'').trim(), String(a.seccion||'').trim().toUpperCase()].join('|');
-      if(!list.some(x => [_canonCicloJS(x.ciclo||''), String(x.grado||'').trim(), String(x.seccion||'').trim().toUpperCase()].join('|') === k)) list.push(a);
-    });
+  // Añadir aulas del tutor CEBA (multiples) desde tutorAulas[] la LISTA parseada.
+  // IMPORTANTE: NO encerramos en if(_isTutorUser()) porque docente NO tutor puede tener
+  // tutor_aulas_json / tutor_raw con aulas cargadas (asignaciones manuales sin checkbox tutor →
+  // si no mergeamos aqui las aulas → 0 alumnos.
+  const tutorList = Array.isArray(currentTutorInfo?.tutorAulas) && currentTutorInfo.tutorAulas.length
+    ? currentTutorInfo.tutorAulas.slice()
+    : [];
+  tutorList.forEach(a => {
+    if(!a || !a.grado || !a.seccion) return;
+    const k = [_canonCicloJS(a.ciclo||''), String(a.grado||'').trim(), String(a.seccion||'').trim().toUpperCase()].join('|');
+    if(!list.some(x => [_canonCicloJS(x.ciclo||''), String(x.grado||'').trim(), String(x.seccion||'').trim().toUpperCase()].join('|') === k)) list.push(a);
+  });
+  // ULTIMO FALLBACK (red contra 0): si las rama else):
+  // Si aún así y solo tenemos legacy strings tutorGrado/tutorSeccion PERO son no hay nada cargadas como aulas → agregarla como ultima ratio final.
+  if (!list.length) {
+    try {
+      const g = String(currentTutorInfo?.tutorGrado || '').trim();
+      const s = String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
+      if (g && s) {
+        let c = '';
+        try { c = _canonCicloJS(_agendaInferNivelByGrado(g, null) || ''); } catch(_) {}
+        list.push({ ciclo: c, grado: g, seccion: s });
+      }
+    } catch(_) {}
   }
   return list.filter(a => a && a.grado && a.seccion);
 }
@@ -22384,7 +22398,25 @@ async function getAlumnosFiltrados() {
   if(r === 'profesor' || r === 'psicologo') {
     if(!!currentPerms?.verTodasAulas) return DB.getAlumnos();
     // Convertir a lista de aulas CON ciclo correcto (parseando sufijos)
-    const aulasConCiclo = _profesorAsignacionesAulasList();
+    let aulasConCiclo = _profesorAsignacionesAulasList();
+    // Fallback extra (nivel dios): si scope VACIO pero el usuario TIENE tutorAulas, grados_asignados_json
+    // o strings legacy (tutorGrado/tutorSeccion), forzamos carga COMPLETA de alumnos y filtramos en
+    // memoria mediante aplicarFiltroProfesor (que ya tiene la regla anti-ambigüedad relajada).
+    // Esto garantiza que NUNCA se devuelva [] si de verdad el docente tiene algo asignado.
+    if (!aulasConCiclo.length) {
+      const tieneDatos = (
+        (currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length > 0) ||
+        (currentTutorInfo?.gradosAsignados && currentTutorInfo.gradosAsignados.length > 0) ||
+        (String(currentTutorInfo?.tutorGrado || '').trim() && String(currentTutorInfo?.tutorSeccion || '').trim())
+      );
+      if (tieneDatos) {
+        try {
+          const todos = await DB.getAlumnos();
+          const filtrados = aplicarFiltroProfesor(todos || []);
+          if (filtrados && filtrados.length > 0) return filtrados;
+        } catch (_) {}
+      }
+    }
     if(aulasConCiclo.length) return DB.getAlumnosScoped(aulasConCiclo);
     // Scope VACÍO: devolvemos [] y mostramos 1 toast por sesión (NO mostramos todo el colegio)
     if(!_warnedProfesorSinAulas) {
@@ -22392,10 +22424,13 @@ async function getAlumnosFiltrados() {
       try {
         if(typeof toast === 'function') {
           const _esT = _isTutorUser();
+          const _cicloTieneStr = !!(currentTutorInfo && (String(currentTutorInfo.tutorGrado||'').trim() || (currentTutorInfo.tutorAulas && currentTutorInfo.tutorAulas.length)));
           const msg = _esT
-            ? '⚠️ Tienes TUTORÍAS asignadas pero no se pudieron cargar las aulas. Contacta al administrador para que use Modo Reparación en Usuarios.'
+            ? (_cicloTieneStr
+                ? '⚠️ Tienes grados asignados pero no se pudieron vincular. Abre tu usuario y GUARDA de nuevo para regenerar los datos.'
+                : '⚠️ Tienes TUTORÍAS asignadas pero no se pudieron cargar las aulas. Contacta al administrador para que use Modo Reparación en Usuarios.')
             : '⚠️ No tienes aulas asignadas. Contacta al administrador para configurar tus secciones.';
-          toast(msg, 'warning', 12000);
+          toast(msg, 'warning', 15000);
         }
       } catch(_e) {}
     }
