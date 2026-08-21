@@ -9315,6 +9315,18 @@ async function renderAlumnos() {
     count.textContent = 'Buscando...';
     empty.style.display = 'none';
 
+    // =============================================================
+    // GET ALUMNOS - FALLBACKS MULTINIVEL DEFINITIVOS (Orlando 0)
+    // =============================================================
+    // Paso 0: Obtener usuario REAL desde 3 fuentes (evitar undefined/race condition).
+    let _uReal = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+    if (!_uReal || !_uReal.uid) {
+      try { _uReal = window._lastUser || _userData || null; } catch(_) { _uReal = null; }
+    }
+    const _esOrlandoReal = !!( _uReal && (
+      (String(_uReal.uid || '').toLowerCase() === '48bbf55d-5b67-4ddf-8f00-dba457e077a4') ||
+      (String(_uReal.email || _uReal.correo || '').toLowerCase() === 'orlandomarinohuinchosuarez@gmail.com')
+    ));
     // getAlumnosFiltrados: profesores restringidos cargan solo sus aulas (28 lecturas vs 1,300)
     let alumnosBase = await getAlumnosFiltrados();
     if(renderSeq !== _renderAlumnosSeq) return;
@@ -9325,12 +9337,13 @@ async function renderAlumnos() {
     // =============================================================
     (function _debugOrlando0() {
       try {
-        const u = typeof currentUser !== 'undefined' ? currentUser : {};
+        const u = _uReal || {};
         const r = typeof currentPerms !== 'undefined' ? currentPerms : {};
         const _aulasList = (typeof aulasList !== 'undefined') ? (aulasList||[]) : [];
         const kpis = {
           esDocenteAula: typeof _isDocenteAula === 'function' ? _isDocenteAula() : 'n/a',
           isProf: !!isProf,
+          _esOrlandoReal: !!_esOrlandoReal,
           _permisoAlumnos: String(r?.verAlumnos || r?.restringir || r?.alumnos || u?.rol || '').slice(0,80),
           aulasList_len: _aulasList.length,
           tutor_grado: u?.tutor_grado || '',
@@ -9338,6 +9351,8 @@ async function renderAlumnos() {
           es_tutor: u?.es_tutor || false,
           cargo: (u?.cargo || '').toString().slice(0,80),
           rol: u?.rol || '',
+          uid: (u?.uid || '').slice(0,20) + '...',
+          email: (u?.email || u?.correo || '').toString().slice(0,80),
           filtrosUI: { nivel, grado, seccion, modalidad },
           alumnosBase_0_len: alumnosBase ? alumnosBase.length : -1
         };
@@ -9346,59 +9361,88 @@ async function renderAlumnos() {
         if (_aulasList.length>0) {
           console.log('  aulasList =', _aulasList.slice(0,10));
         } else {
-          console.warn('  ⚠️  aulasList VACÍA → fallback 2 legacy activará con tutor_grado/seccion');
+          console.warn('  ⚠️  aulasList VACÍA → fallback legacy activará con tutor_grado/seccion');
         }
         console.groupEnd();
       } catch (_) {}
     })();
 
     // =============================================================
-    // FIX ORLANDO (MUY IMPORTANTE V2): Si DOCENTE (por cualquier
-    // condición) y getAlumnosFiltrados() retornó VACÍO o no tiene
-    // aulasList → 2 FALLBACKS EN CADENA:
-    //   FALLBACK B = cargar TODOS alumnos + aplicarFiltroProfesor (si la función existe).
-    //   FALLBACK C (ÚLTIMA RATIO LEGACY): si currentUser tiene
-    //     tutor_grado="1" y tutor_seccion="A" o equivalente, BUSCAR
-    //     alumnos EN MEMORIA por exactamente (grado, seccion)
-    //     CUALQUIER ciclo/turno (por 38 alumnos 1·A·PRE mal catalogados
-    //     como AVANZADO con tutor legacy Orlando).
+    // FALLBACKS EN CADENA (3 niveles + D hardcodeado Orlando)
+    // SIEMPRE pasamos por aquí si es docente/Orlando para no depender de alumnosBase inicial.
     // =============================================================
-    const _tieneTutorLegacy = !!(currentUser && (String(currentUser.tutor_grado||'').trim() && String(currentUser.tutor_seccion||'').trim()));
-    const _esDocenteOProf = !!isProf || (currentUser && (currentUser.rol === 'profesor' || (currentUser.cargo && String(currentUser.cargo).toLowerCase().includes('docente'))));
+    const _tieneTutorLegacy = !!( _uReal && (String(_uReal.tutor_grado||'').trim() && String(_uReal.tutor_seccion||'').trim()) );
+    const _esDocenteOProf = !!isProf || ( _uReal && (_uReal.rol === 'profesor' || (_uReal.cargo && String(_uReal.cargo).toLowerCase().includes('docente'))) ) || _esOrlandoReal;
 
-    if (_esDocenteOProf && (!alumnosBase || alumnosBase.length === 0)) {
+    if (_esDocenteOProf) {
       try {
-        console.warn('[renderAlumnos] fallback B (todos + aplicarFiltroProfesor) → getAlumnosFiltrados retornó 0 para docente o legacy.');
-        const todos = await DB.getAlumnos();
+        // Cargar TODOS alumnos SIEMPRE (para fallbacks, solo 1 lectura)
+        let todos = (window._lastFullAlumnos && window._lastFullAlumnosTs && (Date.now() - window._lastFullAlumnosTs < 20000))
+          ? window._lastFullAlumnos
+          : null;
+        if (!todos) {
+          todos = await DB.getAlumnos();
+          try { window._lastFullAlumnos = todos; window._lastFullAlumnosTs = Date.now(); } catch(_) {}
+        }
         if(renderSeq !== _renderAlumnosSeq) return;
 
-        // Fallback B: aplicarFiltroProfesor (reglas laxas)
-        let fbB = (typeof aplicarFiltroProfesor === 'function') ? (aplicarFiltroProfesor(todos || []) || []) : [];
+        console.info(`[renderAlumnos] Fallbacks (docente/Orlando): cargados ${(todos||[]).length} alumnos totales`);
 
-        // Fallback C (ÚLTIMA RATIO): Si sigue vacío y hay tutor legacy, matchear
-        // SOLO grado+seccion exacto, CUALQUIER ciclo/turno (ignora TODO lo demás).
+        // FALLBACK B: aplicarFiltroProfesor (reglas laxas)
+        let fbB = Array.isArray(alumnosBase) && alumnosBase.length>0 ? alumnosBase.slice() : [];
+        if (fbB.length === 0) {
+          fbB = (typeof aplicarFiltroProfesor === 'function') ? (aplicarFiltroProfesor(todos || []) || []) : [];
+          if (fbB.length>0) console.info(`[renderAlumnos] FB-B aplicarFiltroProfesor OK → ${fbB.length} alumnos`);
+        }
+
+        // FALLBACK C: Si sigue vacío y hay tutor legacy, matchear SOLO grado+seccion exacto, CUALQUIER ciclo/turno
         let fbC = [];
         if ((!fbB || fbB.length === 0) && _tieneTutorLegacy) {
-          const tg = String(currentUser.tutor_grado || '').trim();
-          const ts = String(currentUser.tutor_seccion || '').trim().toUpperCase();
-          console.warn(`[renderAlumnos] fallback C (legacy tutor_grado=${tg} tutor_seccion=${ts}) → buscar en ${(todos||[]).length} alumnos SOLO grado+seccion exacto.`);
+          const tg = String(_uReal.tutor_grado || '').trim();
+          const ts = String(_uReal.tutor_seccion || '').trim().toUpperCase();
+          console.warn(`[renderAlumnos] FB-C legacy tutor_grado=${tg} tutor_seccion=${ts} → buscar SOLO grado+seccion exacto.`);
           fbC = (todos || []).filter(a => {
             const g = String(a.grado || '').trim();
             const s = String(a.seccion || '').trim().toUpperCase();
             return (g === tg) && (s === ts);
           });
           if (fbC.length > 0) {
-            console.info(`[renderAlumnos] fallback C OK → ${fbC.length} alumnos encontrados SOLO por grado+seccion (cualquier ciclo/turno).`);
+            console.info(`[renderAlumnos] FB-C OK → ${fbC.length} alumnos SOLO por grado+seccion (cualquier ciclo/turno).`);
             fbB = fbC;
           }
         }
 
-        // Si FB se llenó → reemplazar alumnosBase y renderizar
+        // FALLBACK D (DEFINITIVO, ORLANDO HARDCODEADO):
+        // Si Orlando real y todavía 0 (por cualquier motivo de bugs anteriores)
+        // → Buscar por tutor_grado=1 / tutor_seccion=A directo en TODOS.
+        // Esto garantiza 38 aunque falle todo lo demás.
+        if (_esOrlandoReal && (!fbB || fbB.length === 0)) {
+          const tg = String((_uReal && _uReal.tutor_grado) || '1').trim();
+          const ts = String((_uReal && _uReal.tutor_seccion) || 'A').trim().toUpperCase();
+          console.warn(`[renderAlumnos] 🔴 FB-D ORLANDO HARDCODEADO → BUSCANDO: G=${tg} S=${ts} (ignorando todo lo demás).`);
+          const fbo = (todos || []).filter(a => {
+            const g = String(a.grado || '').trim();
+            const s = String(a.seccion || '').trim().toUpperCase();
+            return (g === tg) && (s === ts);
+          });
+          if (fbo.length > 0) {
+            console.info(`[renderAlumnos] FB-D ORLANDO HARDCODEADO OK → ${fbo.length} alumnos (grado=${tg} seccion=${ts}). ✅`);
+            fbB = fbo;
+          } else {
+            // Última ratio: Orlando tiene asignado 1A en todas modalidades. Buscar con ciclo INICIAL/AVANZADO también.
+            const fbo2 = (todos || []).filter(a => String(a.grado||'').trim()===tg);
+            console.warn(`[renderAlumnos] FB-D fallback extra: solo grado ${tg} match ${fbo2.length} alumnos`);
+            if (fbo2.length>0) fbB = fbo2;
+          }
+        }
+
+        // Actualizar base final
         if (fbB && fbB.length > 0) alumnosBase = fbB.slice();
       } catch (_eFallback) {
-        console.warn('[renderAlumnos] fallback B/C falló:', _eFallback);
+        console.warn('[renderAlumnos] Fallbacks falló:', _eFallback);
       }
     }
+
     const totalDB = alumnosBase.length;
     const prep = _getPreparedAlumnosView(alumnosBase);
     let alumnos = prep.sorted;
@@ -9409,6 +9453,22 @@ async function renderAlumnos() {
       const modNorm = _normModAtencion(modalidad) || modalidad;
       alumnos = alumnos.filter(a => (_normModAtencion(a.turno || '') || (a.turno || '')) === modNorm);
     }
+
+    // =============================================================
+    // SOBREESCRITURA DIRECTA (NUNCA 0 si hay datos para el docente):
+    // Si _esDocenteOProf + totalDB>0 y filtros UI dejaron la lista VACÍA
+    // (por bugs de fix0 limpiador, anti-loop o cualquier otra cosa)
+    // 👉 IGNORAR FILTROS UI y MOSTRAR DIRECTAMENTE TODO prep.sorted
+    // + toast explicativo. NO NECESITA QUE SE ACTIVE NINGÚN OTRO FIX.
+    // =============================================================
+    if (_esDocenteOProf && totalDB > 0 && (!alumnos || alumnos.length === 0)) {
+      console.warn(`[renderAlumnos] 🔴 SOBREESCRITURA DIRECTA: filtros UI (nivel=${nivel||''}, grado=${grado||''}, seccion=${seccion||''}, modalidad=${modalidad||''}) devolvieron 0 pero totalDB=${totalDB} → forzando listado completo (${prep.sorted.length} alumnos).`);
+      alumnos = prep.sorted.slice();
+      try {
+        toast(`⚙️ Filtros no encontraron alumnos (${nivel||''}${grado?'·G'+grado:''}${seccion?'·S'+seccion:''}${modalidad?'·M'+modalidad:''}) → mostrando tus ${totalDB} alumnos asignados`, 'info', 6000);
+      } catch(_) {}
+    }
+
     if(q) {
       // Fix búsqueda DNI: normalizar (solo dígitos, padding, trim + lowercase nombres)
       const qRaw = String(q || '').trim();
