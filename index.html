@@ -5729,8 +5729,9 @@ function _aplicarConfigColegio(cfg) {
   if (!cfg) return;
   const nombre = String(_cfgVal(cfg, 'nombreColegio', 'nombre', COLEGIO_NOMBRE) || '').trim();
   const eslogan = String(_cfgVal(cfg, 'eslogan', 'esloganColegio', COLEGIO_ESLOGAN) || '').trim();
-  const logo = String(_cfgVal(cfg, 'logoUrl', 'logoColegio', COLEGIO_LOGO) || '').trim();
+  let logo = String(_cfgVal(cfg, 'logoUrl', 'logoColegio', COLEGIO_LOGO) || '').trim();
   const anio = String(_cfgVal(cfg, 'anio', null, COLEGIO_ANIO) || '').trim();
+  if (!logo) logo = String(COLEGIO_LOGO || 'img/logo-colegio.png').trim();
 
   const prevLogo = String(window.COLEGIO_LOGO || '').trim();
   window.COLEGIO_NOMBRE = nombre || window.COLEGIO_NOMBRE;
@@ -5742,9 +5743,33 @@ function _aplicarConfigColegio(cfg) {
     try { _logoB64 = null; } catch(e) {}
   }
 
+  // Helper: asigna src a <img> con fallback onerror a iniciales circular (evita alt "Logo institucional")
+  function setLogoImg(elId, srcLogo) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    if (!srcLogo) return;
+    el.onerror = function() {
+      try {
+        this.onerror = null;
+        this.style.display = 'none';
+        const wrapper = this.parentNode;
+        if (wrapper && !wrapper.querySelector('.app-logo-fallback')) {
+          const nom = String(window.COLEGIO_NOMBRE || 'JAD');
+          const words = nom.replace(/Institución Educativa|I\.E\.P\.?|I\.E\./gi,'').trim().split(/\s+/).filter(Boolean).slice(0,3);
+          const ini = words.map(w => w[0] || '').join('').toUpperCase().slice(0,3) || 'JAD';
+          const fb = document.createElement('div');
+          fb.className = 'app-logo-fallback';
+          fb.style.cssText = 'width:40px;height:40px;flex-shrink:0;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;background:linear-gradient(135deg,#c9a227,#f6d365);font-size:0.85rem;letter-spacing:0.5px;box-shadow:0 2px 6px rgba(0,0,0,.2);';
+          fb.textContent = ini;
+          wrapper.insertBefore(fb, this);
+        }
+      } catch(_e){}
+    };
+    el.src = srcLogo;
+  }
+
   // Header: logo + nombre + eslogan
-  const headerImg = document.getElementById('header-logo-img');
-  if (headerImg && logo) headerImg.src = logo;
+  setLogoImg('header-logo-img', logo);
   const headerTxt = document.getElementById('header-nombre-txt');
   if (headerTxt) {
     const partes = nombre.match(/^(Institución Educativa|I\.E\.P\.?|I\.E\.)\s+(.+)$/i);
@@ -5755,11 +5780,9 @@ function _aplicarConfigColegio(cfg) {
   const headerEslogan = document.getElementById('header-eslogan-txt');
   if (headerEslogan) headerEslogan.textContent = eslogan || '';
   // Login
-  const loginImg = document.getElementById('login-img-colegio');
-  if (loginImg && logo) loginImg.src = logo;
+  setLogoImg('login-img-colegio', logo);
   // Sidebar móvil
-  const msbImg = document.getElementById('msb-logo-img');
-  if (msbImg && logo) msbImg.src = logo;
+  setLogoImg('msb-logo-img', logo);
   const msbName = document.getElementById('msb-school-name');
   if (msbName) msbName.textContent = nombre;
   // Login título y eslogan
@@ -23753,7 +23776,17 @@ async function guardarInfoColegio() {
       });
       payload.grados = gradosPayload;
     }
-    if(_colegioLogoTmp) payload.logoColegio = _colegioLogoTmp;
+    if(_colegioLogoTmp) {
+      payload.logoColegio = _colegioLogoTmp;
+      payload.logoUrl     = _colegioLogoTmp;
+    } else {
+      // Mantener sincronizados logoUrl ↔ logoColegio para que helpers _cfgVal siempre encuentren
+      const existente = String(cfg.logoUrl || cfg.logoColegio || '').trim();
+      if (existente) {
+        payload.logoColegio = existente;
+        payload.logoUrl     = existente;
+      }
+    }
     await db.collection('config').doc('general').set(payload, { merge: true });
     invalidateConfig();
     let newCfg;
@@ -23841,6 +23874,9 @@ async function guardarModalidadSuperAdmin() {
       niveles: nivelesPayload,
       grados: gradosPayload,
     };
+    // Preservar logo (no borrar al cambiar modalidad)
+    const logoExist = String(cfg.logoUrl || cfg.logoColegio || '').trim();
+    if (logoExist) { payload.logoUrl = logoExist; payload.logoColegio = logoExist; }
     await db.collection('config').doc('general').set(payload, { merge: true });
     invalidateConfig();
     // Sincronizar valor al (oculto) selector original para que guardarInfoColegio() se mantenga consistente
