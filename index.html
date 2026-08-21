@@ -8939,9 +8939,10 @@ async function saveAlumno() {
     }
     DB.bumpAlumnosVersion(); // Notificar a otros dispositivos
     _invalidarCacheAlumnos();
+    console.info('[saveAlumno] OK guardado:', JSON.stringify(alumno, null, 2));
     closeModal('modal-alumno');
-    renderAlumnos();
-    updateStats();
+    // Forzar render después de un pequeño retraso para que cache purgado se recargue
+    setTimeout(() => { renderAlumnos(); updateStats(); }, 200);
   } catch(e) {
     const msg = (e && e.message) ? e.message : String(e || 'Error desconocido');
     toast('Error al guardar: ' + msg, 'error');
@@ -9271,7 +9272,12 @@ function _getPreparedAlumnosView(alumnos) {
   const sorted = [...(Array.isArray(alumnos) ? alumnos : [])].sort(_compareAlumnoOrden);
   const searchTextById = new Map();
   sorted.forEach(a => {
-    searchTextById.set(a.id, `${a.nombres || ''} ${a.apellidos || ''} ${a.id || ''}`.toLowerCase());
+    // Fix busqueda DNI 33348249: indexar además a.id (DNI) normalizado + padding + sin espacios + nombres
+    const dni = String(a.id || '').trim();
+    const dniPad = dni.padStart(8, '0');
+    const nom = `${a.nombres || ''} ${a.apellidos || ''}`.toLowerCase();
+    const text = `${nom} ${dni} ${dniPad} ${String(a.telefono||'').trim()} ${String(a.apoderadoNombres||'').toLowerCase()} ${String(a.apoderadoApellidos||'').toLowerCase()}`;
+    searchTextById.set(a.id, text);
   });
   _alumnosRenderPrep = { source: alumnos, sorted, searchTextById };
   return _alumnosRenderPrep;
@@ -9316,8 +9322,18 @@ async function renderAlumnos() {
       alumnos = alumnos.filter(a => (_normModAtencion(a.turno || '') || (a.turno || '')) === modNorm);
     }
     if(q) {
-      const qClean = q.trim();
-      alumnos = alumnos.filter(a => (prep.searchTextById.get(a.id) || '').includes(qClean));
+      // Fix búsqueda DNI: normalizar (solo dígitos, padding, trim + lowercase nombres)
+      const qRaw = String(q || '').trim();
+      const qDigits = qRaw.replace(/\D/g, '');
+      const qDigitsPad = qDigits.padStart(8, '0');
+      const qNom = qRaw.toLowerCase();
+      alumnos = alumnos.filter(a => {
+        const hay = prep.searchTextById.get(a.id) || '';
+        if (hay.includes(qNom)) return true;
+        if (qDigits && hay.includes(qDigits)) return true;
+        if (qDigitsPad && hay.includes(qDigitsPad)) return true;
+        return false;
+      });
     }
 
     count.textContent = 'Mostrando ' + alumnos.length + ' de ' + totalDB + ' alumno' + (totalDB!==1?'s':'');
@@ -22784,7 +22800,13 @@ function aplicarFiltroProfesor(alumnos) {
 let _alumnosCacheFull = null;
 let _alumnosCacheTs = 0;
 let _warnedProfesorSinAulas = false; // flag para no tostar 15 veces por sesión
-function _invalidarCacheAlumnos() { _alumnosCacheFull = null; _alumnosCacheTs = 0; }
+function _invalidarCacheAlumnos() {
+  _alumnosCacheFull = null;
+  _alumnosCacheTs = 0;
+  // Fix alumno nuevo no aparece: además de memoria, purgar STORAGE/LSCache
+  // (DB.getAlumnos() devuelve cache viejo sin el nuevo registro agregado)
+  try { if (typeof _purgarCacheAlumnos === 'function') _purgarCacheAlumnos('saveAlumno/import'); } catch(_) {}
+}
 
 async function getAlumnosFiltrados() {
   const r = _normRol(currentRol);
