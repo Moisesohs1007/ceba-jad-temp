@@ -5267,9 +5267,8 @@
         <div class="form-group">
           <label>Ciclo / Nivel pedagógico</label>
           <select id="f-ciclo" onchange="_syncFGradosPorCiclo(); if(typeof cargarGradosPorNivel === 'function'){ cargarGradosPorNivel(); }">
-            <option value="">(EBR: dejar vacío | CEBA: INICIAL / INTERMEDIO / AVANZADO)</option>
-            <option value="INICIAL">CICLO INICIAL</option>
-            <option value="INTERMEDIO">CICLO INTERMEDIO</option>
+            <option value="">(Seleccionar)</option>
+            <option value="INICIAL/INTERMEDIO">CICLO INICIAL / INTERMEDIO</option>
             <option value="AVANZADO">CICLO AVANZADO</option>
             <option value="PRIMARIA">EBR PRIMARIA</option>
             <option value="SECUNDARIA">EBR SECUNDARIA</option>
@@ -8237,7 +8236,7 @@ function _syncFModalidadDesdeCiclo() {
       try {
         const cEl = document.getElementById('f-ciclo');
         const val = String((cEl && cEl.value) || '').trim().toUpperCase();
-        if (['INICIAL','INTERMEDIO','AVANZADO'].includes(val)) modalidad = 'CEBA';
+        if (['INICIAL','INTERMEDIO','AVANZADO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO','INI/INT','INI / INT'].includes(val)) modalidad = 'CEBA';
         else if (['PRIMARIA','SECUNDARIA'].includes(val)) modalidad = 'EBR';
       } catch(_) {}
     }
@@ -8312,6 +8311,71 @@ function _syncFGradosPorCiclo() {
   } catch(_) {}
 }
 
+function _construirFCicloOptions(modalidadSistema, cicloGuardado) {
+  try {
+    const el = document.getElementById('f-ciclo');
+    if (!el) return '';
+    const esEBR = (String(modalidadSistema || '').trim().toUpperCase() === 'EBR');
+    const cicloUI = String(cicloGuardado || '').trim().toUpperCase();
+    const esIniInt = (cicloUI === 'INICIAL' || cicloUI === 'INTERMEDIO' || cicloUI === 'INICIAL/INTERMEDIO');
+    let html = '<option value="">(Seleccionar)</option>';
+    if (esEBR) {
+      html += '<option value="PRIMARIA">EBR PRIMARIA</option>';
+      html += '<option value="SECUNDARIA">EBR SECUNDARIA</option>';
+    } else {
+      html += '<option value="INICIAL/INTERMEDIO">CICLO INICIAL / INTERMEDIO</option>';
+      html += '<option value="AVANZADO">CICLO AVANZADO</option>';
+    }
+    el.innerHTML = html;
+    let valorSeleccionar = '';
+    if (esEBR) {
+      if (cicloUI === 'PRIMARIA' || cicloUI === 'SECUNDARIA') valorSeleccionar = cicloUI;
+    } else {
+      if (esIniInt) valorSeleccionar = 'INICIAL/INTERMEDIO';
+      else if (cicloUI === 'AVANZADO') valorSeleccionar = 'AVANZADO';
+    }
+    if (valorSeleccionar) {
+      try { el.value = valorSeleccionar; } catch(_) {}
+    }
+    return valorSeleccionar;
+  } catch(_) {
+    return '';
+  }
+}
+
+function _deducirCicloDesdeGrado(gradoRaw, modalidadSistema, cfgRef) {
+  try {
+    const g = String(gradoRaw || '').trim();
+    if (!g) return '';
+    const mod = String(modalidadSistema || '').trim().toUpperCase();
+    if (mod === 'EBR') return '';
+    if (/\(INICIAL\)/i.test(g)) return 'INICIAL';
+    if (/\(INTERMEDIO\)/i.test(g)) return 'INTERMEDIO';
+    if (/\(AVANZADO\)/i.test(g)) return 'AVANZADO';
+    try {
+      if (cfgRef && cfgRef.grados && typeof cfgRef.grados === 'object') {
+        const gSinParentesis = g.replace(/\s*\(.*?\)\s*$/, '').trim();
+        const keys = Object.keys(cfgRef.grados);
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          const arr = Array.isArray(cfgRef.grados[k]) ? cfgRef.grados[k] : [];
+          const coincide = arr.some(x => {
+            const xg = String(x || '').replace(/\s*\(.*?\)\s*$/, '').trim();
+            return xg === gSinParentesis;
+          });
+          if (coincide) {
+            const up = k.toUpperCase();
+            if (up.includes('INICIAL') && !up.includes('INTERMEDIO') && !up.includes('AVANZADO')) return 'INICIAL';
+            if (up.includes('INTERMEDIO')) return 'INTERMEDIO';
+            if (up.includes('AVANZADO')) return 'AVANZADO';
+          }
+        }
+      }
+    } catch(_) {}
+    return '';
+  } catch(_) { return ''; }
+}
+
 async function openModalAlumno(id) {
   _modalLockOn();
   editingId = id || null;
@@ -8351,10 +8415,9 @@ async function openModalAlumno(id) {
     const turnoRaw = String(a.turno || '').trim();
     fTurno.value = (esEBRTemp ? turnoRaw : (_normModAtencion(turnoRaw) || turnoRaw || 'PRESENCIAL')) || '';
     if (fCiclo) {
-      // Cargar ciclo desde el alumno (CEBA)
       const cicloGuardado = String(a.ciclo || '').trim().toUpperCase();
-      if (cicloGuardado) fCiclo.value = cicloGuardado;
-      else if (esEBRTemp) _syncFCicloDesdeTurno();
+      const cicloSeleccionadoUI = _construirFCicloOptions(modalidadTemp, cicloGuardado);
+      if (!cicloSeleccionadoUI && esEBRTemp) _syncFCicloDesdeTurno();
     }
     // IMPORTANTE CEBA: tras setear f-turno y f-ciclo, aplicar la restricción según ciclo
     if (!esEBRTemp && typeof _syncFModalidadDesdeCiclo === 'function') _syncFModalidadDesdeCiclo();
@@ -8437,14 +8500,15 @@ async function openModalAlumno(id) {
       (cfgTemp.niveles||[]).forEach(n => {
         fTurno.innerHTML += `<option value="${n.nombre}">${n.nombre}</option>`;
       });
+      if (fCiclo) _construirFCicloOptions(modalidadTemp, '');
     } else {
       // CEBA: Nuevo Alumno → modalidades de atención (NO niveles). Al seleccionar f-ciclo se restringe.
       fTurno.innerHTML = '<option value="">Seleccionar</option>';
       _MODALIDADES_ATENCION.forEach(m => { fTurno.innerHTML += `<option value="${m}">${_MODALIDAD_ATENCION_LABEL[m] || m}</option>`; });
       fTurno.value = 'PRESENCIAL';
-      // Reseteamos f-ciclo y llamamos a restricción para aplicar
+      // Reseteamos f-ciclo con solo 2 opciones CEBA (INICIAL/INTERMEDIO + AVANZADO) y aplicar restricción
       if (fCiclo) {
-        fCiclo.value = '';
+        _construirFCicloOptions(modalidadTemp, '');
         if (typeof _syncFModalidadDesdeCiclo === 'function') _syncFModalidadDesdeCiclo();
       }
     }
@@ -8468,16 +8532,44 @@ async function saveAlumno() {
     const alumnos = await DB.getAlumnos();
     if(alumnos.find(a => a.id === id && a.id !== editingId)){ toast('Ese DNI ya está registrado','error'); return; }
 
+    let cfgRef = {};
+    try { cfgRef = await getConfig(); } catch(_) { cfgRef = {}; }
+
     // Ciclo helper
     const cicloEl = document.getElementById('f-ciclo');
-    const cicloRaw  = cicloEl ? String(cicloEl.value || '').trim() : '';
+    let cicloRaw  = cicloEl ? String(cicloEl.value || '').trim() : '';
     const turnoValRaw = document.getElementById('f-turno').value || '';
-    const cicloFinal = cicloRaw || _canonCicloJS(turnoValRaw || '');
 
     // Determinar si es CEBA/EBA para aplicar reglas
     let modalidadSistema = '';
-    try { const c = {}; modalidadSistema = _cfgModalidadConInferencia(c, (typeof window !== 'undefined' ? (window.alumnosCache || []) : [])); } catch(_) { modalidadSistema = ''; }
+    try { modalidadSistema = _cfgModalidadConInferencia(cfgRef, (typeof window !== 'undefined' ? (window.alumnosCache || []) : [])); } catch(_) { modalidadSistema = ''; }
     const esCEBA = modalidadSistema === 'CEBA' || modalidadSistema === 'EBA';
+
+    // UI CEBA: Si la opción virtual "INICIAL/INTERMEDIO" → deducir ciclo real INICIAL vs INTERMEDIO según el grado elegido (sufijo transparente o cfg.grados)
+    if (esCEBA && cicloRaw && cicloRaw.toUpperCase() === 'INICIAL/INTERMEDIO') {
+      const deducido = _deducirCicloDesdeGrado(grado, modalidadSistema, cfgRef);
+      if (deducido === 'INICIAL' || deducido === 'INTERMEDIO' || deducido === 'AVANZADO') {
+        cicloRaw = deducido;
+      } else {
+        // Fallback: INTERMEDIO (el más amplio)
+        cicloRaw = 'INTERMEDIO';
+      }
+    }
+    // Fallback general si no se eligió nada
+    if (!cicloRaw) cicloRaw = _canonCicloJS(turnoValRaw || '');
+    // Si al editar un alumno INICIAL o INTERMEDIO individual y vino de base de datos, mantener el ciclo individual
+    // Asegurar ciclo existente alumno editado: si editingId y tenemos ciclo DB mantener a.ciclo
+    if (esCEBA && editingId && (!cicloRaw || cicloRaw.toUpperCase() === 'INICIAL/INTERMEDIO')) {
+      try {
+        const existente = (alumnos || []).find(x => x.id === editingId);
+        const existCycle = String((existente && existente.ciclo) || '');
+        if (existCycle && (existCycle.toUpperCase() === 'INICIAL' || existCycle.toUpperCase() === 'INTERMEDIO' || existCycle.toUpperCase() === 'AVANZADO')) {
+          cicloRaw = existCycle;
+        }
+      } catch(_) {}
+    }
+
+    const cicloFinal = cicloRaw;
 
     // Normalizar turno CEBA
     let turnoFinal = turnoValRaw;
@@ -19617,6 +19709,7 @@ function _canonCicloJS(c){
   const map = {
     'CICLO INICIAL':'INICIAL','INICIAL':'INICIAL','PRE ESCOLAR':'INICIAL',
     'CICLO INTERMEDIO':'INTERMEDIO','INTERMEDIO':'INTERMEDIO',
+    'INICIAL/INTERMEDIO':'INTERMEDIO','INICIAL / INTERMEDIO':'INTERMEDIO','INI/INT':'INTERMEDIO','INI / INT':'INTERMEDIO',
     'CICLO AVANZADO':'AVANZADO','AVANZADO':'AVANZADO',
     'PRIMARIA':'PRIMARIA','EBR PRIMARIA':'PRIMARIA',
     'SECUNDARIA':'SECUNDARIA','EBR SECUNDARIA':'SECUNDARIA'
@@ -24242,7 +24335,7 @@ async function cargarGradosPorNivel(nivelParam) {
   let nivel;
   if (typeof nivelParam === 'string' && nivelParam) {
     nivel = nivelParam;
-    if (!esEBR && !['INICIAL','INTERMEDIO','AVANZADO','Inicial','Primaria','Secundaria','PRIMARIA','SECUNDARIA'].includes(String(nivel).trim())) {
+    if (!esEBR && !['INICIAL','INTERMEDIO','AVANZADO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO','INI/INT','INI / INT','Inicial','Primaria','Secundaria','PRIMARIA','SECUNDARIA'].includes(String(nivel).trim())) {
       const cicloVal = document.getElementById('f-ciclo')?.value || '';
       if (cicloVal) nivel = cicloVal;
     }
@@ -24263,8 +24356,33 @@ async function cargarGradosPorNivel(nivelParam) {
 
   // ===== CEBA: PRIORIDAD 1 → Key compuesta {MOD_CEBA} · {MOD_ATENCION}
   if(!grados.length && !esEBR) {
-    const cicloNom = String(nivel || '').trim().toUpperCase();
-    if (['INICIAL','INTERMEDIO','AVANZADO'].includes(cicloNom)) {
+    let cicloNom = String(nivel || '').trim().toUpperCase();
+    if (cicloNom === 'INICIAL/INTERMEDIO' || cicloNom === 'INICIAL / INTERMEDIO' || cicloNom === 'INI/INT' || cicloNom === 'INI / INT') {
+      // CASO ESPECIAL: Opción virtual agrupada → cargar TODOS los grados INICIAL e INTERMEDio, CONSERVANDO el sufijo "(Inicial)" / "(Intermedio)" para no colisionar.
+      const modalCEBA = 'INICIAL/INTERMEDIO';
+      const turnoVal = document.getElementById('f-turno')?.value || '';
+      const modAt = _normModAtencion(turnoVal) || 'PRESENCIAL';
+      const keyComp = `${modalCEBA} · ${modAt}`;
+      const gradosComp = gradosMap[keyComp] || gradosMap[keyComp.toUpperCase()] || gradosMap[keyComp.toLowerCase()] || [];
+      if (gradosComp && Array.isArray(gradosComp) && gradosComp.length) {
+        const setGr = new Set();
+        gradosComp.forEach(g => {
+          const gs = String(g || '').trim();
+          if (!gs) return;
+          setGr.add(gs);
+        });
+        if (setGr.size) grados = Array.from(setGr).sort((a,b) => {
+          const na = Number(String(a).replace(/\D/g,'')) || 0;
+          const nb = Number(String(b).replace(/\D/g,'')) || 0;
+          if (na && nb) {
+            if (na !== nb) return na - nb;
+            return String(a).localeCompare(String(b));
+          }
+          return String(a).localeCompare(String(b));
+        });
+      }
+    }
+    if (!grados.length && ['INICIAL','INTERMEDIO','AVANZADO'].includes(cicloNom)) {
       const modalCEBA = _modalidadDesdeCiclo(cicloNom);
       const turnoVal = document.getElementById('f-turno')?.value || '';
       const modAt = (modalCEBA === 'INICIAL/INTERMEDIO') ? 'PRESENCIAL' : (_normModAtencion(turnoVal) || 'PRESENCIAL');
