@@ -6102,7 +6102,12 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   const _asig = (currentPrivilegios && typeof currentPrivilegios.asignaciones === 'object' && currentPrivilegios.asignaciones) ? currentPrivilegios.asignaciones : {};
   const aulasList = _profesorAsignacionesAulasList(); // [ {ciclo,grado,seccion} ]
   const _noLock = String(nivelId || '').startsWith('rep-');
-  const _lockCampos = haceAutoSelect ? (_noLock ? false : (!(Object.keys(_asig || {}).length > 0) && !currentPerms?.verTodasAulas && aulasList.length > 0)) : false;
+  // Fix Orlando/NUEVO: NO bloqueamos filtros NUNCA a docentes si tienen SOLO aulas legacy
+  // (sin asignaciones estructuradas) o si hay riesgo de que 1 aula seleccionada
+  // deje 0 alumnos por datos mal catalogados. Así el profesor puede quitar filtros.
+  const _soloAulasLegacy = !(Object.keys(_asig || {}).length > 0) && !(currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length > 0) && !(currentTutorInfo?.gradosAsignados && currentTutorInfo.gradosAsignados.length > 0);
+  const _bloquear = haceAutoSelect && !_noLock && !_soloAulasLegacy && !currentPerms?.verTodasAulas && aulasList.length > 0 && aulasList.length === 1 && !_noAutoSeleccionarFiltros;
+  const _lockCampos = !!_bloquear;
   if (haceAutoSelect && !aulasList.length && !(Object.keys(_asig||{}).length) && !(currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length)) {
     // Limpiar value a '' por seguridad (no dejar en Avanzado por default del DOM)
     if (nEl && nEl.options && nEl.options[0]?.value === '' && nEl.value !== '') {
@@ -6145,6 +6150,7 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
     return setGs.size >= 2;
   })();
   const _noAutoSeleccionarFiltros = (_tieneMultiplesNiveles || _multiplesGsS);
+  let _noAutoSeleccionarFiltrosForzado = false;
   // FIX Orlando: SI el usuario es PROFESOR + (restringir==true o es_tutor o tiene strings legacy de tutoria)
   // y además tenemos g && s válidos → FORZAMOS haceAutoSelect=true aunque _isDocenteAula() haya
   // retornado false por cargo mal formateado (ej: "docente /ciencias" no matchea includes antiguos).
@@ -6158,7 +6164,21 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
     );
     if (condicionFuerte) _realHaceAutoSelect = true;
   }
-  if (_realHaceAutoSelect && (_noAutoSeleccionarFiltros || (!g || !s))) {
+  // FIX ORLANDO + docentes legacy CEBA: Si SOLO tenemos aulas legacy (no cfg inferible),
+  // grado numérico 1..6 (grado CEBA), NO forzamos el filtro UI de nivel (dejamos ''),
+  // ya que los alumnos podrían estar mal catalogados como AVANZADO. Si hay 1 solo aula
+  // legacy, nos ahorramos el bug de filtrar 0.
+  const _usaSoloLegacyGradoCEBA = (
+    _soloAulasLegacy && (!cicloAuto) &&
+    (() => {
+      try {
+        const gn = parseInt((String(g||'').match(/\d+/)||[])[0]||'0',10);
+        return (gn >= 1 && gn <= 6);
+      } catch(_) { return false; }
+    })()
+  );
+  if (_usaSoloLegacyGradoCEBA && !_noAutoSeleccionarFiltros) _noAutoSeleccionarFiltrosForzado = true;
+  if (_realHaceAutoSelect && ((_noAutoSeleccionarFiltros || _noAutoSeleccionarFiltrosForzado) || (!g || !s))) {
     // Limpiar TODOS los filtros a '' (ninguna selección), para que el profesor vea TODAS sus aulas
     // y no solo la 1ra, ni sufra por datos mal catalogados.
     if (nEl && nEl.options && [...(nEl.options || [])].some(o => String(o.value || '') === '')) {
@@ -9305,6 +9325,34 @@ async function renderAlumnos() {
     if(!alumnos.length) {
       tbody.innerHTML = '';
       empty.style.display = 'block';
+      // =============================================================
+      // FIX ORLANDO (más importante): Si el usuario es PROFESOR y
+      // getAlumnosFiltrados DEVOLVIÓ > 0 alumnos (en totalDB), pero
+      // los filtros UI actuales (nivel/grado/seccion/modalidad)
+      // filtraron a 0 (mal seleccionados por bug DOM o autoselect),
+      // 👉 LIMPIAMOS LOS FILTROS (dejamos solo búsqueda) y RE-RENDERIZAMOS
+      // para mostrarle TODOS sus alumnos de inmediato (no espera click).
+      // =============================================================
+      if (isProf && totalDB > 0) {
+        try {
+          const nEl = document.getElementById('fa-nivel');
+          const gEl = document.getElementById('fa-grado');
+          const sEl = document.getElementById('fa-seccion');
+          const mEl = document.getElementById('fa-modalidad');
+          // Solo limpiar si había algo que limpiar (no q)
+          const habiaFiltros = (nEl && nEl.value && nEl.value !== 'TODOS') || (gEl && gEl.value && gEl.value !== 'TODOS') || (sEl && sEl.value && sEl.value !== 'TODOS') || (mEl && mEl.value);
+          if (habiaFiltros) {
+            try { if (nEl && [...(nEl.options||[])].some(o => String(o.value||'') === '')) nEl.value = ''; } catch(_) {}
+            try { if (gEl) gEl.value = ''; } catch(_) {}
+            try { if (sEl) sEl.value = ''; } catch(_) {}
+            try { if (mEl) mEl.value = ''; } catch(_) {}
+            try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
+            try { toast(`✅ Se encontraron ${totalDB} alumnos para ti - mostrando todos tus asignados`, 'success', 4000); } catch(_) {}
+            renderAlumnos();
+            return;
+          }
+        } catch(_) {}
+      }
       // Hint UX: cuando muestra 0, sugerir donde SÍ hay alumnos (para el scope del profesor).
       // Casos soportados:
       //   A) NIVEL + GRADO activos, pero ese grado está en OTRO nivel (el ya existente).
