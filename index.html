@@ -16310,9 +16310,30 @@ function agendaSelectDay(fecha, mapOpt) {
 
 function _agendaInferNivelByGrado(grado, cfg) {
   const g = String(grado || '').trim();
+  if (!g) return '';
+  // Fallback si cfg === null/undefined: usar caché global config (getConfigCachedOnce).
+  // Esto evita que los scopes legacy queden con ciclo vacío.
+  let cfgRef = cfg;
+  if (!cfgRef || typeof cfgRef !== 'object' || !cfgRef.grados) {
+    try {
+      if (typeof getConfigCachedOnce === 'function') { cfgRef = getConfigCachedOnce(); }
+      else if (configCache) { cfgRef = configCache; }
+    } catch(_) {}
+  }
   try {
-    for(const [niv, list] of Object.entries((cfg && cfg.grados) ? cfg.grados : {})) {
+    // 1) Búsqueda exacta por string (incluyendo sufijos "(Inicial)"/"(Intermedio)"/"(Avanzado)")
+    for(const [niv, list] of Object.entries((cfgRef && cfgRef.grados) ? cfgRef.grados : {})) {
       if((list || []).includes(g)) return String(niv || '').trim();
+    }
+    // 2) Búsqueda por NÚMERO si no hubo match exacto (grado limpio vs grado con sufijo):
+    const gNum = (g.match(/\d+/) || [])[0];
+    if (gNum) {
+      const candidatos = [];
+      for (const [niv, list] of Object.entries((cfgRef && cfgRef.grados) ? cfgRef.grados : {})) {
+        const hit = (list || []).some(x => (String(x || '').match(/\d+/) || [])[0] === gNum);
+        if (hit) candidatos.push(String(niv || '').trim());
+      }
+      if (candidatos.length === 1) return candidatos[0];
     }
   } catch(e) {}
   return '';
@@ -22280,6 +22301,38 @@ function _profesorAsignacionesEfectivas() {
   return out;
 }
 
+// Helper: dado un grado numérico sin contexto de ciclo, decir SI es AMBIGUO o ÚNICO en la configuración.
+// Retorna: { unico: true/false, ciclo: 'INICIAL'/'INTERMEDIO'/'AVANZADO'/'' }
+// Regla: buscamos el grado (numérico puro) en TODOS los cfg.grados.* listas. Si aparece EXACTAMENTE en 1 key → único = true y ciclo = canon(key). Si aparece en 2+ keys → ambiguo.
+function _gradoAmbiguoCfg(gradoRaw, cfgOverride) {
+  try {
+    const gClean = String(gradoRaw || '').trim();
+    const gNum = (gClean.match(/\d+/) || [])[0];
+    if (!gNum) return { unico: false, ciclo: '' };
+    const cfgRef = (cfgOverride && typeof cfgOverride === 'object' && cfgOverride.grados) ? cfgOverride : (typeof getConfigCachedOnce === 'function' ? (getConfigCachedOnce() || {}) : {});
+    const mapKeysCiclo = [];
+    Object.keys(cfgRef.grados || {}).forEach(k => {
+      const list = Array.isArray(cfgRef.grados[k]) ? cfgRef.grados[k] : [];
+      const tieneGrado = list.some(x => {
+        const xNum = (String(x || '').match(/\d+/) || [])[0];
+        return xNum === gNum;
+      });
+      if (tieneGrado) {
+        const kUp = String(k || '').toUpperCase();
+        let ciclo = '';
+        if (kUp.includes('INICIAL') && !kUp.includes('INTERMEDIO') && !kUp.includes('AVANZADO')) ciclo = 'INICIAL';
+        else if (kUp.includes('INTERMEDIO') && !kUp.includes('AVANZADO')) ciclo = 'INTERMEDIO';
+        else if (kUp.includes('AVANZADO')) ciclo = 'AVANZADO';
+        else ciclo = _canonCicloJS(k);
+        if (ciclo) mapKeysCiclo.push(ciclo);
+      }
+    });
+    const unicos = [...new Set(mapKeysCiclo.filter(Boolean))];
+    if (unicos.length === 1) return { unico: true, ciclo: unicos[0] };
+    return { unico: false, ciclo: '' };
+  } catch (_) { return { unico: false, ciclo: '' }; }
+}
+
 // Aplicar restricción a lista de alumnos (soporta CEBA multi-aula + ciclo y EBR legacy)
 function aplicarFiltroProfesor(alumnos) {
   const r = _normRol(currentRol);
@@ -22287,13 +22340,26 @@ function aplicarFiltroProfesor(alumnos) {
   if(!!currentPerms?.verTodasAulas) return alumnos;
   const aulasList = _profesorAsignacionesAulasList();
   if(!aulasList.length) return [];
+  let cfgRef = null;
+  try { cfgRef = (typeof getConfigCachedOnce === 'function') ? (getConfigCachedOnce() || null) : null; } catch(_) {}
   return alumnos.filter(a => {
     return aulasList.some(x => {
       const xCiclo = String(x.ciclo || '').trim().toUpperCase();
       const aCiclo = String(a.ciclo || '').trim().toUpperCase();
       let cicloMatch;
-      if (!xCiclo && aCiclo) cicloMatch = false;
-      else cicloMatch = !xCiclo || !aCiclo || (xCiclo === aCiclo);
+      if (!xCiclo && aCiclo) {
+        // Scope legacy sin ciclo, pero alumno SÍ tiene ciclo (CEBA) →
+        // RELAJADO: si el grado del alumno APARECE EN SÓLO 1 CICLO según cfg.grados → permitir.
+        // Si aparece en 2+ ciclos (grado 1 en INICIAL e INTERMEDIO) → denegar por ambigüedad.
+        const amb = _gradoAmbiguoCfg(a.grado, cfgRef);
+        if (amb && amb.unico && amb.ciclo) {
+          cicloMatch = (amb.ciclo === aCiclo);
+        } else {
+          cicloMatch = false;
+        }
+      } else {
+        cicloMatch = !xCiclo || !aCiclo || (xCiclo === aCiclo);
+      }
       const gradoMatch = String(a.grado||'').trim() === String(x.grado||'').trim();
       if(!cicloMatch || !gradoMatch) return false;
       const secA = String(a.seccion || '').trim().toUpperCase();
@@ -22778,6 +22844,17 @@ function _construirConfigDefaults() {
 const CONFIG_DEFAULTS = _construirConfigDefaults();
 
 let configCache = null;
+
+// Helper SINCRONO para runtime matching de scopes: devuelve la caché de config sin
+// disparar una consulta async. Si no hay caché, retorna defaults.
+function getConfigCachedOnce() {
+  if (configCache && typeof configCache === 'object') return configCache;
+  try {
+    const lsConfig = (typeof LSC !== 'undefined' && LSC && LSC.get) ? LSC.get('config') : null;
+    if (lsConfig && typeof lsConfig === 'object') return lsConfig;
+  } catch (_) {}
+  return (typeof CONFIG_DEFAULTS !== 'undefined') ? CONFIG_DEFAULTS : { secciones: ['A','B','C','D'], grados: {}, niveles: [] };
+}
 
 function _normalizarConfig(cfg) {
   if(!cfg || typeof cfg !== 'object') return cfg;

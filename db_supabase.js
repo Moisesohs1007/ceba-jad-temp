@@ -96,19 +96,47 @@ const DB = {
       .map(_normAlumno)
       .filter(a => {
         // match con cualquier aula de la lista.
-        // SEGURIDAD ANTI-AMBIGÜEDAD CEBA:
+        // SEGURIDAD ANTI-AMBIGÜEDAD CEBA (versión relajada v2):
         //   Si la BD guarda `ciclo` en los alumnos (modalidad CEBA/EBA) y la aula del scope
         //   NO trae ciclo (x.ciclo = '' vacío, legado de asignaciones obj {grado:[secs]} sin ciclo)
-        //   → NO se matchea para evitar que "grado 1 sección A" devuelva 1A de INICIAL,
-        //     INTERMEDIO y AVANZADO al mismo tiempo (bug de Magloria: 38 alumnos equivocados).
+        //   → PERMITIR match SÓLO SI el grado numérico APARECE EN UN SOLO CICLO según cfg.grados.
+        //     Si aparece en 2+ ciclos (grado 1 en INICIAL e INTERMEDIO) → NO coincide (ambiguo).
         //   En EBR donde alumnos.ciclo está vacío → cicloMatch sigue siendo true y funciona igual.
+        const cfgRef = (typeof window.getConfigCachedOnce === 'function')
+          ? (window.getConfigCachedOnce() || {})
+          : ((typeof window.getConfig === 'function') ? (window.configCache || {}) : {});
+        const gradoAmbiguoCfg = (gradoRaw, oCfg) => {
+          try {
+            const gClean = String(gradoRaw || '').trim();
+            const gNum = (gClean.match(/\d+/) || [])[0];
+            if (!gNum) return { unico: false, ciclo: '' };
+            const gRef = (oCfg && oCfg.grados) ? oCfg : {};
+            const cycles = [];
+            Object.keys(gRef.grados || {}).forEach(k => {
+              const list = Array.isArray(gRef.grados[k]) ? gRef.grados[k] : [];
+              const ok = list.some(x => (String(x || '').match(/\d+/) || [])[0] === gNum);
+              if (!ok) return;
+              const kUp = String(k || '').toUpperCase();
+              let c = '';
+              if (kUp.includes('INICIAL') && !kUp.includes('INTERMEDIO') && !kUp.includes('AVANZADO')) c = 'INICIAL';
+              else if (kUp.includes('INTERMEDIO') && !kUp.includes('AVANZADO')) c = 'INTERMEDIO';
+              else if (kUp.includes('AVANZADO')) c = 'AVANZADO';
+              else if (typeof window._canonCicloJS === 'function') c = window._canonCicloJS(k) || '';
+              if (c) cycles.push(c);
+            });
+            const u = [...new Set(cycles.filter(Boolean))];
+            if (u.length === 1) return { unico: true, ciclo: u[0] };
+            return { unico: false, ciclo: '' };
+          } catch (_) { return { unico: false, ciclo: '' }; }
+        };
         return aulasList.some(x => {
           const xCiclo = String(x.ciclo || '').trim().toUpperCase();
           const aCiclo = String(a.ciclo || '').trim().toUpperCase();
           let cicloMatch;
           if (!xCiclo && aCiclo) {
-            // Scope legado sin ciclo, pero alumno SÍ tiene ciclo (CEBA) → NO coincide (ambiguo/seguro).
-            cicloMatch = false;
+            const amb = gradoAmbiguoCfg(a.grado, cfgRef);
+            if (amb && amb.unico && amb.ciclo) cicloMatch = (amb.ciclo === aCiclo);
+            else cicloMatch = false;
           } else {
             cicloMatch = !xCiclo || !aCiclo || (xCiclo === aCiclo);
           }
