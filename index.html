@@ -5270,6 +5270,7 @@
             <option value="">(Seleccionar)</option>
             <option value="INICIAL/INTERMEDIO">CICLO INICIAL / INTERMEDIO</option>
             <option value="AVANZADO">CICLO AVANZADO</option>
+            <option value="INICIAL">EBR INICIAL</option>
             <option value="PRIMARIA">EBR PRIMARIA</option>
             <option value="SECUNDARIA">EBR SECUNDARIA</option>
           </select>
@@ -8231,13 +8232,14 @@ function _syncFModalidadDesdeCiclo() {
       const gAl = (typeof window !== 'undefined' && window.alumnosCache) ? window.alumnosCache : [];
       if (typeof _cfgModalidadConInferencia === 'function') modalidad = _cfgModalidadConInferencia(gCfg, gAl);
     } catch(_) { modalidad = ''; }
-    // 2) Si aún vacío, inspeccionar f-ciclo (CEBA/EBR tiene valores distintos)
+    // 2) Si aún vacío, inspeccionar f-ciclo (CEBA/EBR tiene valores distintos excepto INICIAL que es ambiguo)
     if (!modalidad) {
       try {
         const cEl = document.getElementById('f-ciclo');
         const val = String((cEl && cEl.value) || '').trim().toUpperCase();
-        if (['INICIAL','INTERMEDIO','AVANZADO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO','INI/INT','INI / INT'].includes(val)) modalidad = 'CEBA';
+        if (['INTERMEDIO','AVANZADO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO','INI/INT','INI / INT'].includes(val)) modalidad = 'CEBA';
         else if (['PRIMARIA','SECUNDARIA'].includes(val)) modalidad = 'EBR';
+        // Si val es INICIAL → no concluir (existe en CEBA y EBR), pasar a fallbacks 3 y 4
       } catch(_) {}
     }
     // 3) Si aún vacío, revisar labelFTurno que inicializarFiltros dejó como "Modalidad de atención"
@@ -8320,6 +8322,7 @@ function _construirFCicloOptions(modalidadSistema, cicloGuardado) {
     const esIniInt = (cicloUI === 'INICIAL' || cicloUI === 'INTERMEDIO' || cicloUI === 'INICIAL/INTERMEDIO');
     let html = '<option value="">(Seleccionar)</option>';
     if (esEBR) {
+      html += '<option value="INICIAL">EBR INICIAL</option>';
       html += '<option value="PRIMARIA">EBR PRIMARIA</option>';
       html += '<option value="SECUNDARIA">EBR SECUNDARIA</option>';
     } else {
@@ -8329,7 +8332,7 @@ function _construirFCicloOptions(modalidadSistema, cicloGuardado) {
     el.innerHTML = html;
     let valorSeleccionar = '';
     if (esEBR) {
-      if (cicloUI === 'PRIMARIA' || cicloUI === 'SECUNDARIA') valorSeleccionar = cicloUI;
+      if (cicloUI === 'INICIAL' || cicloUI === 'PRIMARIA' || cicloUI === 'SECUNDARIA') valorSeleccionar = cicloUI;
     } else {
       if (esIniInt) valorSeleccionar = 'INICIAL/INTERMEDIO';
       else if (cicloUI === 'AVANZADO') valorSeleccionar = 'AVANZADO';
@@ -8497,8 +8500,9 @@ async function openModalAlumno(id) {
     fTurno.style.cursor = '';
     if (esEBRTemp) {
       fTurno.innerHTML = '<option value="">Seleccionar</option>';
-      (cfgTemp.niveles||[]).forEach(n => {
-        fTurno.innerHTML += `<option value="${n.nombre}">${n.nombre}</option>`;
+      let nivelesEBR = (cfgTemp.niveles && cfgTemp.niveles.length ? _nivelesPorModalidad(cfgTemp) : ['Inicial','Primaria','Secundaria']);
+      nivelesEBR.forEach(n => {
+        fTurno.innerHTML += `<option value="${n}">${n}</option>`;
       });
       if (fCiclo) _construirFCicloOptions(modalidadTemp, '');
     } else {
@@ -19707,7 +19711,7 @@ let _uTutorAulasForm = [];
 function _canonCicloJS(c){
   const x = String(c||'').trim().toUpperCase();
   const map = {
-    'CICLO INICIAL':'INICIAL','INICIAL':'INICIAL','PRE ESCOLAR':'INICIAL',
+    'CICLO INICIAL':'INICIAL','INICIAL':'INICIAL','PRE ESCOLAR':'INICIAL','EBR INICIAL':'INICIAL',
     'CICLO INTERMEDIO':'INTERMEDIO','INTERMEDIO':'INTERMEDIO',
     'INICIAL/INTERMEDIO':'INTERMEDIO','INICIAL / INTERMEDIO':'INTERMEDIO','INI/INT':'INTERMEDIO','INI / INT':'INTERMEDIO',
     'CICLO AVANZADO':'AVANZADO','AVANZADO':'AVANZADO',
