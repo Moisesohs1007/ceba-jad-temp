@@ -5975,6 +5975,66 @@ function _isDocenteAula() {
 // Flag para evitar que onChange sobrescriba la auto-selección de tutoría
 let _tutoriaLocked = false;
 
+// Helper: traducir key compuesta cfg.grados (o ciclo simple INICIAL/INTERMEDIO/AVANZADO/EBR...)
+// al valor CORTO que usan los filtros "Nivel" (que es lo que hay en <option value=...>).
+//   CEBA: retorna 'INICIAL/INTERMEDIO' o 'AVANZADO'
+//   EBR:  retorna 'Inicial' / 'Primaria' / 'Secundaria'
+function _cfgKeyToNivelCorto(keyRaw, cfgOverride) {
+  try {
+    const s = String(keyRaw || '').trim();
+    if (!s) return '';
+    const sUp = s.toUpperCase();
+    // 1) Si ya es un valor corto conocido → retornar directo
+    if (['INICIAL/INTERMEDIO','AVANZADO','Inicial','Primaria','Secundaria','INICIAL / INTERMEDIO'].includes(s)) {
+      if (s === 'INICIAL / INTERMEDIO') return 'INICIAL/INTERMEDIO';
+      return s;
+    }
+    // Detectar modalidad del sistema
+    let modal = '';
+    try {
+      if (typeof _cfgModalidadConInferencia === 'function') {
+        const c = (cfgOverride && typeof cfgOverride === 'object') ? cfgOverride : (typeof getConfigCachedOnce === 'function' ? (getConfigCachedOnce() || {}) : {});
+        modal = String(_cfgModalidadConInferencia(c, (typeof window !== 'undefined' ? window.alumnosCache : null) || null) || '').toUpperCase();
+      } else if (cfgOverride?.modalidadEducativa) modal = String(cfgOverride.modalidadEducativa).toUpperCase();
+    } catch(_) {}
+    if (!modal) modal = (sUp.includes('PRIMARIA') || sUp.includes('SECUNDARIA')) ? 'EBR' : 'CEBA';
+    if (modal === 'EBR') {
+      if (sUp.includes('INICIAL') && !sUp.includes('INTERMEDIO') && !sUp.includes('AVANZADO')) return 'Inicial';
+      if (sUp.includes('PRIMARIA')) return 'Primaria';
+      if (sUp.includes('SECUNDARIA')) return 'Secundaria';
+      return s; // legacy
+    }
+    // CEBA:
+    if (sUp.includes('AVANZADO')) return 'AVANZADO';
+    // Cualquier cosa que tenga INICIAL o INTERMEDIO (solo o combinado, no avanzado) → agrupado
+    if ((sUp.includes('INICIAL') || sUp.includes('INTERMEDIO')) && !sUp.includes('AVANZADO')) return 'INICIAL/INTERMEDIO';
+    return s;
+  } catch(_) { return String(keyRaw || '').trim(); }
+}
+
+// Helper: retorna SET de niveles CORTOS únicos que tiene el docente en su scope
+// (para no auto-seleccionar "Avanzado" si el docente solo tiene Inicial/Intermedio).
+function _nivelesCortosScopeDocente() {
+  const set = new Set();
+  try {
+    const aulas = _profesorAsignacionesAulasList();
+    aulas.forEach(a => {
+      const c = String(a.ciclo || '').trim().toUpperCase();
+      if (['INICIAL','INTERMEDIO'].includes(c)) set.add('INICIAL/INTERMEDIO');
+      else if (c === 'AVANZADO') set.add('AVANZADO');
+      else if (['INICIAL/INTERMEDIO','INI/INT'].includes(c)) set.add('INICIAL/INTERMEDIO');
+    });
+    if (set.size) return set;
+    // fallback via currentTutorInfo.ciclo legacy
+    const legacy = String(currentTutorInfo?.tutorGrado || '').trim();
+    if (legacy) {
+      const nivel = _cfgKeyToNivelCorto(legacy);
+      if (nivel) set.add(nivel);
+    }
+  } catch(_) {}
+  return set;
+}
+
 /**
  * Auto-selecciona la tutoría si el usuario es docente de aula única.
  * Bloquea los campos si se auto-selecciona.
@@ -5985,42 +6045,59 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   const aulasList = _profesorAsignacionesAulasList(); // [ {ciclo,grado,seccion} ]
   const _noLock = String(nivelId || '').startsWith('rep-');
   const _lockCampos = _noLock ? false : (!(Object.keys(_asig || {}).length > 0) && !currentPerms?.verTodasAulas && aulasList.length > 0);
-  // SI no hay aulas efectivas (ni asignaciones, ni tutorAulas parseadas), NO auto-seleccionamos
-  // nada, para evitar inventar "1-A-AVANZADO" por defecto (sino Magloria veía 38 malos).
-  // El profesor verá 0 filas o estado inicial; el admin debe usar Modo Reparación.
   if(!aulasList.length && !(Object.keys(_asig||{}).length) && !(currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length)) {
-    if (_lockCampos) {} // nada
     return;
   }
-  // Tomar la primera aula EFECTIVA (de la lista real, no legacy strings sueltos)
   const primeraAula = aulasList[0] || null;
   const g = primeraAula ? String(primeraAula.grado || '').trim() : String(currentTutorInfo?.tutorGrado || '').trim();
   const s = primeraAula ? String(primeraAula.seccion || '').trim().toUpperCase() : String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
   const cicloAuto = primeraAula ? String(primeraAula.ciclo || '').trim() : '';
   if (!g || !s) return;
 
-  _tutoriaLocked = true; // Bloquear onChange mientras se auto-selecciona
+  _tutoriaLocked = true;
 
   const nEl = document.getElementById(nivelId);
   const gEl = document.getElementById(gradoId);
   const sEl = document.getElementById(seccionId);
 
   // 1. Poblar y seleccionar nivel
-  let nivel = cicloAuto || '';
+  let nivel = '';
+  try {
+    // (A) Prioridad: ciclo de la aula efectiva
+    if (cicloAuto) nivel = _cfgKeyToNivelCorto(cicloAuto, options.cfg);
+  } catch(_) {}
   if (nEl) {
     let cfg = options.cfg || null;
     try { if(!cfg) cfg = await getConfig(); } catch(e0) {}
     await poblarFiltroNivel(nivelId, null, { cfg, alumnos: options.alumnos });
     if(!nivel) {
-      nivel = (cfg ? _agendaInferNivelByGrado(g, cfg) : '') || [...(nEl.options || [])].find(o => o.value && o.value !== 'TODOS')?.value || '';
-      if (!nivel) {
-        const alumnos = Array.isArray(options.alumnos) ? options.alumnos : await getAlumnosFiltrados();
-        nivel = alumnos[0]?.turno || '';
-      }
+      // (B) Inferir por grado, traducir a valor corto
+      try {
+        const keyLarga = cfg ? _agendaInferNivelByGrado(g, cfg) : '';
+        nivel = keyLarga ? _cfgKeyToNivelCorto(keyLarga, cfg) : '';
+      } catch(_) {}
+    }
+    if(!nivel) {
+      // (C) Fallback SEGURO: seleccionar el PRIMER nivel del SCOPE del docente que exista en las options
+      // (NUNCA seleccionar la primera option ciegamente - era el bug que seteaba AVANZADO sin razón).
+      try {
+        const nivelesScope = _nivelesCortosScopeDocente();
+        const opts = [...(nEl.options || [])].map(o => String(o.value || ''));
+        for (const nCandidato of nivelesScope) {
+          if (opts.includes(nCandidato)) { nivel = nCandidato; break; }
+        }
+      } catch(_) {}
+    }
+    if(!nivel) {
+      // (D) Ultimo ratio: si solo hay 1 option (sin contar "" y TODOS), seleccionar esa.
+      try {
+        const unicas = [...(nEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
+        if (unicas.length === 1) nivel = unicas[0];
+      } catch(_) {}
     }
     if (nivel) {
-      if (![...nEl.options].some(o => o.value === nivel)) await poblarFiltroNivel(nivelId, null, { cfg, alumnos: options.alumnos });
-      if([...nEl.options].some(o => o.value === nivel)) nEl.value = nivel;
+      if (![...(nEl.options || [])].some(o => String(o.value || '') === nivel)) await poblarFiltroNivel(nivelId, null, { cfg, alumnos: options.alumnos });
+      if([...(nEl.options || [])].some(o => String(o.value || '') === nivel)) nEl.value = nivel;
       nEl.disabled = _lockCampos;
     }
   }
@@ -6028,7 +6105,7 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   // 2. Poblar y seleccionar grado
   if (gEl) {
     await poblarFiltroGrado(gradoId, nivel, { cfg: options.cfg, alumnos: options.alumnos });
-    if (![...gEl.options].some(o => o.value === g)) {
+    if (![...(gEl.options || [])].some(o => String(o.value || '') === g)) {
       gEl.innerHTML = `<option value="${g}">${g}</option>`;
     }
     gEl.value = g;
@@ -6038,20 +6115,19 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   // 3. Poblar y seleccionar sección
   if (sEl) {
     await poblarFiltroSeccion(seccionId, g, { cfg: options.cfg, alumnos: options.alumnos });
-    if (![...sEl.options].some(o => o.value === s)) {
+    if (![...(sEl.options || [])].some(o => String(o.value || '') === s)) {
       sEl.innerHTML = `<option value="${s}">${s}</option>`;
     }
     sEl.value = s;
     sEl.disabled = _lockCampos;
   }
 
-  // Asegurar que los valores quedan puestos tras un pequeño delay
   setTimeout(() => {
     if (nEl && !nEl.value) nEl.value = nivel;
     if (gEl && !gEl.value) gEl.value = g;
     if (sEl && !sEl.value) sEl.value = s;
-    _tutoriaLocked = false; // Desbloquear onChange
-  }, 150);
+    _tutoriaLocked = false;
+  }, 200);
 }
 function _rolLabel(r) {
   const v = _normRol(r);
@@ -6809,6 +6885,59 @@ async function recargarMisTutorias() {
   }
 }
 
+/**
+ * Purga CACHÉS de alumnos y scopes (cuando cambia la sesión de usuario, para evitar:
+ *   - Moises → Orlando Marino (caches vacías de usuarios anteriores
+ *   - Alumnos importados no se veian hasta el mismo usuario, etc.)
+ * No toca config, sesión Firebase ni login, solo datos volátiles.
+ */
+function _purgarCacheAlumnos(motivo = '') {
+  try {
+    // 1) Caches en memoria del index.html
+    if (typeof _alumnosCacheFull !== undefined) _alumnosCacheFull = null;
+    if (typeof _alumnosCacheTs !== undefined) _alumnosCacheTs = 0;
+    if (typeof _renderAlumnosSeq !== undefined) _renderAlumnosSeq = 0;
+    if (typeof _warnedProfesorSinAulas !== undefined) _warnedProfesorSinAulas = false;
+    if (typeof configCache !== undefined) configCache = null;
+    // 2) LSC (cache LS caché de Supabase db_supabase.js (scoped, alumnos)
+    try {
+      if (typeof LSC !== 'undefined' && LSC && typeof LSC.clear === 'function') {
+        const keys = LSC.keys ? (LSC.keys() || []) : Object.keys(localStorage || {});
+        keys.forEach(k => {
+          const kn = String(k || '');
+          if (!kn) return;
+          // eliminar keys de alumnos, scopes, stats.
+          if (
+            kn.startsWith('scoped:') ||
+            kn.startsWith('alumnos:') ||
+            kn.startsWith('stats:') ||
+            kn.startsWith('aulas:') ||
+            kn.includes('alumnosCache') ||
+            kn === 'asignaciones'
+          ) {
+            try { LSC.remove(kn); } catch(_) {}
+          }
+        });
+      }
+    } catch(_) {}
+    // 3) localStorage Supabase keys directo scope de alumnos cacheado con cacheStorage
+    try {
+      const allKeys = Object.keys(localStorage || {});
+      allKeys.forEach(k => {
+        if (k.startsWith('sb-') && k.includes('alumnos')) { try { localStorage.removeItem(k); } catch(_) {} }
+        if (k.startsWith('scoped:') || k.startsWith('alumnos:v')) { try { localStorage.removeItem(k); } catch(_) {} }
+        if (k.includes('asmqr_usercache:')) { try { localStorage.removeItem(k); } catch(_) {} }
+      });
+      sessionStorage.removeItem('asmqr_lastUidLogin');
+    } catch(_) {}
+    // 4) Cache interna Supabase (si la hay)
+    try { if (typeof DB === 'object' && DB && DB._purgarCacheInterno === 'function') DB._purgarCacheInterno(); } catch(_) {}
+    console.debug('[cache purge]', motivo || 'ok');
+  } catch(eTotal) {
+    console.warn('[cache purge falló]', eTotal);
+  }
+}
+
 // Escuchar cambios de sesión
 auth.onAuthStateChanged(async user => {
   if(user) {
@@ -6873,6 +7002,17 @@ auth.onAuthStateChanged(async user => {
     const uData = doc.data() || {};
     _setCurrentUsuarioCache(user.uid, uData);
     currentUser = user;
+    // --- PURGA DE CACHÉS SI LA SESIÓN ES DE UN USUARIO DISTINTO AL ÚLTIMO LOGIN ---
+    // Evita caches mezclados entre sesiones Moises admin → Orlando Marino docente (causa 0 alumnos).
+    try {
+      const uidActual = String(user.uid || '').trim();
+      let uidAnterior = '';
+      try { uidAnterior = String(sessionStorage.getItem('asmqr_lastUidLogin') || '').trim(); } catch(_) {}
+      if (uidActual && uidAnterior && uidActual !== uidAnterior) {
+        _purgarCacheAlumnos('sesion-nueva-uid-distinto');
+      }
+      try { sessionStorage.setItem('asmqr_lastUidLogin', uidActual); } catch(_) {}
+    } catch(_ePurge) {}
     currentRol = _normRol(uData.rol);
     const px = (uData.permisosExtra && typeof uData.permisosExtra === 'object') ? uData.permisosExtra : {};
     currentPerms = {
