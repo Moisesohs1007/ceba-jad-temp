@@ -6185,6 +6185,26 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
     })()
   );
   if (_usaSoloLegacyGradoCEBA && !_noAutoSeleccionarFiltros) _noAutoSeleccionarFiltrosForzado = true;
+  // FIX Req4 (user VERBATIM): "ni bien se abre gestion de aluamnos ya parece la lista y no dberia ser asi"
+  // Para docentes LEGACY CEBA (solo aulas tutor_grado/tutor_seccion sin asignaciones estructuradas ciclo),
+  // si el grado es 1..6 → NUNCA auto-seleccionar filtros (nivel/grado/seccion). Dejar todos vacíos.
+  // El usuario DEBE seleccionar manualmente. Así mostramos mostrarEstadoInicial() al abrir.
+  const _esDocenteLegacyCEBANoAuto = (() => {
+    if (!isProf) return false;
+    if (!g) return false;
+    try {
+      const gn = parseInt((String(g||'').match(/\d+/)||[])[0]||'0', 10);
+      if (!(gn >= 1 && gn <= 6)) return false;
+    } catch(_) { return false; }
+    // Condición legacy: sin tutorAulas estructuradas ni asignaciones estructuradas con ciclo
+    const noAsigEstruct = !(Object.keys(_asig||{}).length);
+    const noTutorAulasStruct = !(currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length > 0);
+    const noGradosAsign = !(currentTutorInfo?.gradosAsignados && currentTutorInfo.gradosAsignados.length > 0);
+    if (!(noAsigEstruct && noTutorAulasStruct && noGradosAsign)) return false;
+    // Además si NO hay cicloAuto (aula legacy sin ciclo) → OK forzar no-auto
+    return !cicloAuto;
+  })();
+  if (_esDocenteLegacyCEBANoAuto) _noAutoSeleccionarFiltrosForzado = true;
   if (_realHaceAutoSelect && ((_noAutoSeleccionarFiltros || _noAutoSeleccionarFiltrosForzado) || (!g || !s))) {
     // Limpiar TODOS los filtros a '' (ninguna selección), para que el profesor vea TODAS sus aulas
     // y no solo la 1ra, ni sufra por datos mal catalogados.
@@ -9301,9 +9321,35 @@ async function renderAlumnos() {
   const isProf = (r === 'profesor' || r === 'psicologo');
   const aulasList = (isProf && typeof _profesorAsignacionesAulasList === 'function') ? (_profesorAsignacionesAulasList() || []) : [];
 
-  // Profesor con aulas asignadas: aunque NO haya filtros UI seleccionados,
-  // MOSTRAR todos los alumnos que le corresponden (nunca mostrarEstadoInicial)
-  const filtroActivo = grado || seccion || nivel || modalidad || q || (isProf && aulasList.length > 0);
+  // Helper filtro válido (ignora placeholders '-- Grado --', 'Seleccionar', etc.)
+  const _filtroValido = (v, extraNo) => {
+    v = String(v||'').trim();
+    if (!v) return false;
+    if (v === 'TODOS') return false;
+    if (v === '--') return false;
+    if (v.startsWith('-- ') || v.endsWith(' --')) return false;
+    if (/Seleccionar/i.test(v)) return false;
+    if (Array.isArray(extraNo) && extraNo.some(x => String(x||'').trim() === v)) return false;
+    return true;
+  };
+  // Valores reales de filtros (sin placeholders)
+  const _vGrado   = _filtroValido(grado) ? String(grado).trim() : '';
+  const _vSeccion = _filtroValido(seccion) ? String(seccion).trim() : '';
+  const _vNivel   = _filtroValido(nivel) ? String(nivel).trim() : '';
+  const _vMod     = _filtroValido(modalidad) ? String(modalidad).trim() : '';
+  const _vQ       = String(q||'').trim();
+
+  // ------------------------------------------------------------------
+  // CONDICIÓN DE MOSTRAR (ESTRICTA, volviendo al comportamiento ORIGINAL):
+  // ------------------------------------------------------------------
+  // - Admin/Director/etc: necesitan algún filtro UI o búsqueda
+  // - Profesor: si ALGÚN FILTRO está seleccionado (grado/seccion/nivel/modalidad/o q) → mostramos
+  // - Profesor SIN FILTROS → NO mostramos listado automáticamente (se queda en mostrarEstadoInicial)
+  //   * Se espera a que el auto-select de tutoria le seleccione sus aulas (o lo haga manual)
+  // - EXCEPCIÓN SAFE: Si el profesor ya tiene SU FILTRO UI seleccionado por auto-select en carga
+  //   anterior (fa-nivel/fa-grado/fa-seccion tienen valor real) → mostramos.
+  const profTieneFiltroReal = isProf && (_vGrado || _vSeccion || _vNivel || _vMod || _vQ);
+  const filtroActivo = _vGrado || _vSeccion || _vNivel || _vMod || _vQ || (!isProf && aulasList.length > 0) || profTieneFiltroReal;
   if(!filtroActivo) { mostrarEstadoInicial(); return; }
 
   const tbody = document.getElementById('alumnos-tbody');
@@ -9315,266 +9361,123 @@ async function renderAlumnos() {
     count.textContent = 'Buscando...';
     empty.style.display = 'none';
 
-    // =============================================================
-    // GET ALUMNOS - FALLBACKS MULTINIVEL DEFINITIVOS (Orlando 0)
-    // =============================================================
     // Paso 0: Obtener usuario REAL desde 3 fuentes (evitar undefined/race condition).
     let _uReal = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
     if (!_uReal || !_uReal.uid) {
       try { _uReal = window._lastUser || _userData || null; } catch(_) { _uReal = null; }
     }
-    const _esOrlandoReal = !!( _uReal && (
-      (String(_uReal.uid || '').toLowerCase() === '48bbf55d-5b67-4ddf-8f00-dba457e077a4') ||
-      (String(_uReal.email || _uReal.correo || '').toLowerCase() === 'orlandomarinohuinchosuarez@gmail.com')
-    ));
-    // getAlumnosFiltrados: profesores restringidos cargan solo sus aulas (28 lecturas vs 1,300)
+    const _esDocenteOProf = !!isProf || ( _uReal && (_uReal.rol === 'profesor' || (_uReal.cargo && String(_uReal.cargo).toLowerCase().includes('docente'))) );
+
+    // ------------------------------------------------------------------
+    // CARGA DE ALUMNOS: método original + fallback laxos (SOLO para docentes)
+    // ------------------------------------------------------------------
     let alumnosBase = await getAlumnosFiltrados();
     if(renderSeq !== _renderAlumnosSeq) return;
 
-    // =============================================================
-    // DEPURACIÓN Orlando (consola): Muestra el estado de variables clave POR QUÉ 0.
-    // Moises/Orlando: F12 → Consola verás tabla. No afecta UX.
-    // =============================================================
-    (function _debugOrlando0() {
+    // Si el docente obtiene 0 alumnos (por scope/ciclo mal guardado) → 2 fallbacks
+    if (_esDocenteOProf && (!alumnosBase || alumnosBase.length === 0)) {
       try {
-        const u = _uReal || {};
-        const r = typeof currentPerms !== 'undefined' ? currentPerms : {};
-        const _aulasList = (typeof aulasList !== 'undefined') ? (aulasList||[]) : [];
-        const kpis = {
-          esDocenteAula: typeof _isDocenteAula === 'function' ? _isDocenteAula() : 'n/a',
-          isProf: !!isProf,
-          _esOrlandoReal: !!_esOrlandoReal,
-          _permisoAlumnos: String(r?.verAlumnos || r?.restringir || r?.alumnos || u?.rol || '').slice(0,80),
-          aulasList_len: _aulasList.length,
-          tutor_grado: u?.tutor_grado || '',
-          tutor_seccion: u?.tutor_seccion || '',
-          es_tutor: u?.es_tutor || false,
-          cargo: (u?.cargo || '').toString().slice(0,80),
-          rol: u?.rol || '',
-          uid: (u?.uid || '').slice(0,20) + '...',
-          email: (u?.email || u?.correo || '').toString().slice(0,80),
-          filtrosUI: { nivel, grado, seccion, modalidad },
-          alumnosBase_0_len: alumnosBase ? alumnosBase.length : -1
-        };
-        console.groupCollapsed('%c[renderAlumnos] Debug Orlando 0', 'color:#ff6b6b;font-weight:bold');
-        console.table ? console.table(kpis) : console.log(kpis);
-        if (_aulasList.length>0) {
-          console.log('  aulasList =', _aulasList.slice(0,10));
-        } else {
-          console.warn('  ⚠️  aulasList VACÍA → fallback legacy activará con tutor_grado/seccion');
-        }
-        console.groupEnd();
-      } catch (_) {}
-    })();
-
-    // =============================================================
-    // FALLBACKS EN CADENA (3 niveles + D hardcodeado Orlando)
-    // SIEMPRE pasamos por aquí si es docente/Orlando para no depender de alumnosBase inicial.
-    // =============================================================
-    const _tieneTutorLegacy = !!( _uReal && (String(_uReal.tutor_grado||'').trim() && String(_uReal.tutor_seccion||'').trim()) );
-    const _esDocenteOProf = !!isProf || ( _uReal && (_uReal.rol === 'profesor' || (_uReal.cargo && String(_uReal.cargo).toLowerCase().includes('docente'))) ) || _esOrlandoReal;
-
-    if (_esDocenteOProf) {
-      try {
-        // Cargar TODOS alumnos SIEMPRE (para fallbacks, solo 1 lectura)
-        let todos = (window._lastFullAlumnos && window._lastFullAlumnosTs && (Date.now() - window._lastFullAlumnosTs < 20000))
-          ? window._lastFullAlumnos
-          : null;
-        if (!todos) {
-          todos = await DB.getAlumnos();
-          try { window._lastFullAlumnos = todos; window._lastFullAlumnosTs = Date.now(); } catch(_) {}
-        }
+        const todos = await DB.getAlumnos();
         if(renderSeq !== _renderAlumnosSeq) return;
-
-        console.info(`[renderAlumnos] Fallbacks (docente/Orlando): cargados ${(todos||[]).length} alumnos totales`);
-
-        // FALLBACK B: aplicarFiltroProfesor (reglas laxas)
-        let fbB = Array.isArray(alumnosBase) && alumnosBase.length>0 ? alumnosBase.slice() : [];
-        if (fbB.length === 0) {
-          fbB = (typeof aplicarFiltroProfesor === 'function') ? (aplicarFiltroProfesor(todos || []) || []) : [];
-          if (fbB.length>0) console.info(`[renderAlumnos] FB-B aplicarFiltroProfesor OK → ${fbB.length} alumnos`);
-        }
-
-        // FALLBACK C: Si sigue vacío y hay tutor legacy, matchear SOLO grado+seccion exacto, CUALQUIER ciclo/turno
-        let fbC = [];
-        if ((!fbB || fbB.length === 0) && _tieneTutorLegacy) {
+        // FB-B: aplicarFiltroProfesor (reglas laxas)
+        let fbB = (typeof aplicarFiltroProfesor === 'function') ? (aplicarFiltroProfesor(todos || []) || []) : [];
+        // FB-C: ÚLTIMA RATIO legacy tutor grado/seccion (CUALQUIER ciclo/turno)
+        if ((!fbB || fbB.length === 0) && _uReal && (String(_uReal.tutor_grado||'').trim() && String(_uReal.tutor_seccion||'').trim())) {
           const tg = String(_uReal.tutor_grado || '').trim();
           const ts = String(_uReal.tutor_seccion || '').trim().toUpperCase();
-          console.warn(`[renderAlumnos] FB-C legacy tutor_grado=${tg} tutor_seccion=${ts} → buscar SOLO grado+seccion exacto.`);
-          fbC = (todos || []).filter(a => {
+          const fbC = (todos || []).filter(a => {
             const g = String(a.grado || '').trim();
             const s = String(a.seccion || '').trim().toUpperCase();
             return (g === tg) && (s === ts);
           });
           if (fbC.length > 0) {
-            console.info(`[renderAlumnos] FB-C OK → ${fbC.length} alumnos SOLO por grado+seccion (cualquier ciclo/turno).`);
+            console.info(`[renderAlumnos] FB-C legacy tutor → ${fbC.length} alumnos (grado=${tg} seccion=${ts}).`);
             fbB = fbC;
           }
         }
-
-        // FALLBACK D (DEFINITIVO, ORLANDO HARDCODEADO):
-        // Si Orlando real y todavía 0 (por cualquier motivo de bugs anteriores)
-        // → Buscar por tutor_grado=1 / tutor_seccion=A directo en TODOS.
-        // Esto garantiza 38 aunque falle todo lo demás.
-        if (_esOrlandoReal && (!fbB || fbB.length === 0)) {
-          const tg = String((_uReal && _uReal.tutor_grado) || '1').trim();
-          const ts = String((_uReal && _uReal.tutor_seccion) || 'A').trim().toUpperCase();
-          console.warn(`[renderAlumnos] 🔴 FB-D ORLANDO HARDCODEADO → BUSCANDO: G=${tg} S=${ts} (ignorando todo lo demás).`);
-          const fbo = (todos || []).filter(a => {
-            const g = String(a.grado || '').trim();
-            const s = String(a.seccion || '').trim().toUpperCase();
-            return (g === tg) && (s === ts);
-          });
-          if (fbo.length > 0) {
-            console.info(`[renderAlumnos] FB-D ORLANDO HARDCODEADO OK → ${fbo.length} alumnos (grado=${tg} seccion=${ts}). ✅`);
-            fbB = fbo;
-          } else {
-            // Última ratio: Orlando tiene asignado 1A en todas modalidades. Buscar con ciclo INICIAL/AVANZADO también.
-            const fbo2 = (todos || []).filter(a => String(a.grado||'').trim()===tg);
-            console.warn(`[renderAlumnos] FB-D fallback extra: solo grado ${tg} match ${fbo2.length} alumnos`);
-            if (fbo2.length>0) fbB = fbo2;
-          }
-        }
-
-        // Actualizar base final
         if (fbB && fbB.length > 0) alumnosBase = fbB.slice();
-      } catch (_eFallback) {
-        console.warn('[renderAlumnos] Fallbacks falló:', _eFallback);
+      } catch (_e) {
+        console.warn('[renderAlumnos] fallbacks docente falló:', _e);
       }
     }
+
+    // ------------------------------------------------------------------
+    // DEPURACIÓN (Consola): 1 solo grupo por render
+    // ------------------------------------------------------------------
+    try {
+      console.groupCollapsed('%c[renderAlumnos]', 'color:#3b82f6;font-weight:bold');
+      console.table ? console.table({
+        totalDB: alumnosBase.length,
+        filtrosUI: { grado, seccion, nivel, modalidad, q },
+        filtrosVal: { g:_vGrado, s:_vSeccion, n:_vNivel, m:_vMod, q:_vQ },
+        isProf: !!isProf, aulasList_len: aulasList.length,
+        profTieneFiltroReal: !!profTieneFiltroReal, filtroActivo: !!filtroActivo
+      }) : console.log(...arguments);
+      console.groupEnd();
+    } catch(_) {}
 
     const totalDB = alumnosBase.length;
     const prep = _getPreparedAlumnosView(alumnosBase);
 
-    // =============================================================
-    // POBLAR OPTIONS DE FILTROS UI CON VALORES REALES DEL DOCENTE:
-    // Después de determinar alumnosBase (lo que el profesor sí tiene),
-    // llenamos fa-grado y fa-seccion con las opciones que SÍ tienen datos.
-    // Así Grado y Seccion NUNCA se quedan en "--" sin opciones válidas.
-    // =============================================================
-    (function poblarFiltrosDesdeAlumnosBase() {
-      try {
-        if (!_esDocenteOProf || totalDB === 0) return;
+    // ------------------------------------------------------------------
+    // POBLAR FA-GRADO / FA-SECCION CON OPCIONES REALES (SOLO UNA VEZ POR
+    // CAMBIO DE DATOS): si el valor actual NO está en las nuevas opciones
+    // válidas → lo reemplazamos por '' (no auto-seleccionar lo que exista
+    // si NO era el seleccionado).
+    // ------------------------------------------------------------------
+    try {
+      if (_esDocenteOProf && totalDB > 0) {
         const gSel = document.getElementById('fa-grado');
         const sSel = document.getElementById('fa-seccion');
-        const nSel = document.getElementById('fa-nivel');
-        const mSel = document.getElementById('fa-modalidad');
-        if (!gSel || !sSel) return;
-        const _cfgF = typeof configCache !== 'undefined' ? configCache : {};
-
-        // Valores únicos que sí existen en el scope del profesor
-        const setGs = new Set();
-        const setSs = new Set();
-        const setNs = new Set();
-        const setMs = new Set();
+        const setGs = new Set(), setSs = new Set();
         (prep.sorted || []).forEach(a => {
           const g = String(a.grado || '').trim();
           const s = String(a.seccion || '').trim();
-          const niv = _alumnoNivelText(a, _cfgF) || '';
-          const mod = _normModAtencion(a.turno || '') || String(a.turno || '').trim();
           if (g) setGs.add(g);
           if (s) setSs.add(s);
-          if (niv) setNs.add(niv);
-          if (mod) setMs.add(mod);
         });
-
-        // --- GRADO ---
-        const curG = String(gSel.value || '').trim();
         const arrGs = [...setGs].sort();
-        const _tienePlaceholderG = [...(gSel.options||[])].some(o => String(o.value||'') === '');
-        if (arrGs.length > 0) {
-          // Reconstruir options (placeholder + values reales)
-          let htmlG = '';
-          if (_tienePlaceholderG) htmlG += '<option value="">-- Grado --</option>';
-          arrGs.forEach(g => { htmlG += `<option value="${g}">${g}</option>`; });
-          gSel.innerHTML = htmlG;
-          // Seleccionar: si había un valor actual válido, mantener; si no, si hay 1 solo → auto-seleccionarlo
-          if (arrGs.includes(curG)) gSel.value = curG;
-          else if (arrGs.length === 1) gSel.value = arrGs[0];
-        }
-
-        // --- SECCION ---
-        const curS = String(sSel.value || '').trim();
         const arrSs = [...setSs].sort();
-        const _tienePlaceholderS = [...(sSel.options||[])].some(o => String(o.value||'') === '');
-        if (arrSs.length > 0) {
-          let htmlS = '';
-          if (_tienePlaceholderS) htmlS += '<option value="">-- Sección --</option>';
-          arrSs.forEach(s => { htmlS += `<option value="${s}">${s}</option>`; });
-          sSel.innerHTML = htmlS;
-          if (arrSs.includes(curS)) sSel.value = curS;
-          else if (arrSs.length === 1) sSel.value = arrSs[0];
+        if (gSel && arrGs.length > 0) {
+          const curG = String(gSel.value||'').trim();
+          const tienePlace = [...(gSel.options||[])].some(o => String(o.value||'') === '');
+          let html = '';
+          if (tienePlace) html += '<option value="">-- Grado --</option>';
+          arrGs.forEach(g => { html += `<option value="${g}">${g}</option>`; });
+          gSel.innerHTML = html;
+          // SOLO mantener curG si EXISTÍA en arrGs. Si placeholder '' → mantener.
+          if (arrGs.includes(curG) || curG === '') gSel.value = curG;
+          else gSel.value = '';
         }
-
-        // Si Grado o Seccion se quedaron en '--' y hay options, seleccionar el primero no vacío para no filtrar a 0.
-        if (!String(gSel.value||'').trim() && gSel.options && gSel.options.length > 0) {
-          const first = [...gSel.options].find(o => String(o.value||'').trim() !== '');
-          if (first) gSel.value = first.value;
+        if (sSel && arrSs.length > 0) {
+          const curS = String(sSel.value||'').trim();
+          const tienePlace = [...(sSel.options||[])].some(o => String(o.value||'') === '');
+          let html = '';
+          if (tienePlace) html += '<option value="">-- Sección --</option>';
+          arrSs.forEach(s => { html += `<option value="${s}">${s}</option>`; });
+          sSel.innerHTML = html;
+          if (arrSs.includes(curS) || curS === '') sSel.value = curS;
+          else sSel.value = '';
         }
-        if (!String(sSel.value||'').trim() && sSel.options && sSel.options.length > 0) {
-          const first = [...sSel.options].find(o => String(o.value||'').trim() !== '');
-          if (first) sSel.value = first.value;
-        }
-      } catch (_) {
-        console.warn('[renderAlumnos] poblarFiltrosDesdeAlumnosBase falló:', _);
       }
-    })();
+    } catch (_) { console.warn('[renderAlumnos] poblar filtros falló:', _); }
 
-    // Actualizar variables locales (después poblamiento options recién hecho)
-    const nSel2 = document.getElementById('fa-nivel');
-    const gSel2 = document.getElementById('fa-grado');
-    const sSel2 = document.getElementById('fa-seccion');
-    const mSel2 = document.getElementById('fa-modalidad');
-    const qInp = document.getElementById('fa-q');
-    let nivelAct = nSel2 ? String(nSel2.value||'').trim() : (nivel || '');
-    let gradoAct = gSel2 ? String(gSel2.value||'').trim() : (grado || '');
-    let seccAct  = sSel2 ? String(sSel2.value||'').trim() : (seccion || '');
-    let modAct   = mSel2 ? String(mSel2.value||'').trim() : (modalidad || '');
-    let qAct     = qInp  ? String(qInp.value||'').trim()  : (q || '');
-
-    // Helper para considerar filtro "activo" solo si tiene valor real (no placeholder '--', vacío, 'TODOS')
-    const _filtroValido = (v, extraNo) => {
-      v = String(v||'').trim();
-      if (!v) return false;
-      if (v === 'TODOS') return false;
-      if (v === '--') return false;
-      if (v.startsWith('-- ') || v.endsWith(' --')) return false;
-      if (/Seleccionar/i.test(v)) return false;
-      if (Array.isArray(extraNo) && extraNo.some(x => String(x||'').trim() === v)) return false;
-      return true;
-    };
-
+    // ------------------------------------------------------------------
+    // APLICAR FILTROS UI (SI existen valores reales, si no → ignora)
+    // ------------------------------------------------------------------
     let alumnos = prep.sorted.slice();
-    if (_filtroValido(gradoAct)) alumnos = alumnos.filter(a => String(a.grado||'').trim() === gradoAct);
-    if (_filtroValido(seccAct))  alumnos = alumnos.filter(a => String(a.seccion||'').trim() === seccAct);
-    if (_filtroValido(nivelAct)) {
+    if (_vGrado)   alumnos = alumnos.filter(a => String(a.grado||'').trim() === _vGrado);
+    if (_vSeccion) alumnos = alumnos.filter(a => String(a.seccion||'').trim() === _vSeccion);
+    if (_vNivel) {
       const _cfg = typeof configCache !== 'undefined' ? configCache : {};
-      alumnos = alumnos.filter(a => _matchNivel(a, nivelAct, _cfg));
+      alumnos = alumnos.filter(a => _matchNivel(a, _vNivel, _cfg));
     }
-    if (_filtroValido(modAct)) {
-      const modNorm = _normModAtencion(modAct) || modAct;
+    if (_vMod) {
+      const modNorm = _normModAtencion(_vMod) || _vMod;
       alumnos = alumnos.filter(a => (_normModAtencion(a.turno || '') || String(a.turno || '').trim()) === modNorm);
     }
-
-    // =============================================================
-    // SOBREESCRITURA DIRECTA (SOLO CUANDO NO HAY FILTROS INTENCIONALES):
-    // Si el docente tiene datos (totalDB>0) pero la UI muestra 0,
-    // PERO los 4 filtros están en '--' / vacíos / 'TODOS' (es decir,
-    // el usuario NO seleccionó nada para filtrar - bug de placeholders
-    // o de poblamiento options) → forzamos listado completo.
-    // ✅ SI EL USUARIO SÍ CAMBIÓ algun filtro (Virtual / Avanzado / etc.)
-    //    → RESPETAMOS su elección (aunque de 0).
-    // =============================================================
-    const _hayFiltroIntencional = _filtroValido(gradoAct) || _filtroValido(seccAct) || _filtroValido(nivelAct) || _filtroValido(modAct);
-    if (_esDocenteOProf && totalDB > 0 && (!alumnos || alumnos.length === 0) && !_hayFiltroIntencional && !qAct) {
-      console.warn(`[renderAlumnos] 🔴 SOBREESCRITURA (sin filtros intencionales): mostrando ${prep.sorted.length} alumnos completos (placeholders bug).`);
-      alumnos = prep.sorted.slice();
-      try { toast(`⚙️ Mostrando todos tus ${totalDB} alumnos asignados`, 'info', 4000); } catch(_) {}
-    }
-
-    if(qAct) {
-      // Fix búsqueda DNI: normalizar (solo dígitos, padding, trim + lowercase nombres)
-      const qRaw = String(qAct || '').trim();
+    if (_vQ) {
+      const qRaw = _vQ;
       const qDigits = qRaw.replace(/\D/g, '');
       const qDigitsPad = qDigits.padStart(8, '0');
       const qNom = qRaw.toLowerCase();
@@ -9588,7 +9491,7 @@ async function renderAlumnos() {
     }
 
     count.textContent = 'Mostrando ' + alumnos.length + ' de ' + totalDB + ' alumno' + (totalDB!==1?'s':'');
-    console.debug('[renderAlumnos] totalDB=', totalDB, 'filtrados=', alumnos.length, 'filtrosReales:', {grado:gradoAct, seccion:seccAct, nivel:nivelAct, modalidad:modAct, hayFiltroIntencional:_hayFiltroIntencional, q: qAct||''});
+    console.debug('[renderAlumnos] filtrados=', alumnos.length, '/ totalDB=', totalDB);
     // Ayuda Moises: si busca DNI especifico (solo digitos >=7) y no sale, loguear en consola los DNIs que empiecen por ese prefijo.
     try {
       if (q && /^\d{4,}$/.test(String(q).replace(/\D/g,''))) {
@@ -9611,32 +9514,42 @@ async function renderAlumnos() {
       // =============================================================
       if (_esDocenteOProf && totalDB > 0 && alumnos.length === 0) {
         try {
-          // Limpiar filtros 0→N para docentes. Cuidado anti-loop infinito: solo UNA vez por renderSeq O si
-          // la configuración de filtros actual es DIFERENTE a la última que limpiamos.
+          // Limpiar filtros 0→N para docentes. Cuidado anti-loop infinito: solo UNA vez por renderSeq.
+          // REGLAS ESTRICTAS (Req user #2 y #3):
+          //   - NUNCA limpiar MODALIDAD (si user escoge Virtual y no hay Virtual → debe mostrar 0, no anular su elección)
+          //   - NUNCA limpiar BUSQUEDA (q)
+          //   - SOLO limpiar NIVEL / GRADO / SECCIÓN si el 0 fue causado por inconsistencia de ciclo mal catalogado,
+          //     NO si fue causado por Modalidad o búsqueda explícita del usuario.
           const nEl = document.getElementById('fa-nivel');
           const gEl = document.getElementById('fa-grado');
           const sEl = document.getElementById('fa-seccion');
           const mEl = document.getElementById('fa-modalidad');
-          const aulasNoTienenTurno = aulasList.length > 0 && aulasList.every(a => !(a && String(a.turno||'').trim()));
-          const _sigKey = [
-            nEl ? nEl.value : '',
-            gEl ? gEl.value : '',
-            sEl ? sEl.value : '',
-            mEl ? mEl.value : '',
-            aulasNoTienenTurno ? 'NT' : 'T',
-            (window._fixLastKey || '')
-          ].join('|');
-          if ((!window._fix0Run || window._fix0Run !== _sigKey) && _sigKey !== (window._fixLastKey || '')) {
-            window._fix0Run = _sigKey;
-            window._fixLastKey = _sigKey;
-            if (nEl && [...(nEl.options||[])].some(o => String(o.value||'') === '')) { try { nEl.value = ''; } catch(_) {} }
-            if (gEl) try { gEl.value = ''; } catch(_) {}
-            if (sEl) try { sEl.value = ''; } catch(_) {}
-            if (mEl) try { mEl.value = ''; } catch(_) {}
-            try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
-            try { toast(`✅ Se encontraron ${totalDB} alumnos para ti - mostrando todos tus asignados`, 'success', 4000); } catch(_) {}
-            setTimeout(() => renderAlumnos(), 50);
-            return;
+          // Si el 0 es por MODALIDAD o por BÚSQUEDA (q) → NO tocar nada (es decisión del usuario, mostrar empty)
+          const el0PorModOQuery = !!_vMod || !!_vQ;
+          if (el0PorModOQuery) {
+            // Mostrar empty y sugerencias (abajo), NO limpiar filtros
+          } else {
+            const aulasNoTienenTurno = aulasList.length > 0 && aulasList.every(a => !(a && String(a.turno||'').trim()));
+            const _sigKey = [
+              nEl ? nEl.value : '',
+              gEl ? gEl.value : '',
+              sEl ? sEl.value : '',
+              mEl ? mEl.value : '',
+              aulasNoTienenTurno ? 'NT' : 'T',
+              (window._fixLastKey || '')
+            ].join('|');
+            if ((!window._fix0Run || window._fix0Run !== _sigKey) && _sigKey !== (window._fixLastKey || '')) {
+              window._fix0Run = _sigKey;
+              window._fixLastKey = _sigKey;
+              if (nEl && [...(nEl.options||[])].some(o => String(o.value||'') === '')) { try { nEl.value = ''; } catch(_) {} }
+              if (gEl) try { gEl.value = ''; } catch(_) {}
+              if (sEl) try { sEl.value = ''; } catch(_) {}
+              // mEl NUNCA se limpia (si user seleccionó Virtual → Virtual se mantiene)
+              try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
+              try { toast(`✅ Se encontraron ${totalDB} alumnos para ti - mostrando todos tus asignados`, 'success', 4000); } catch(_) {}
+              setTimeout(() => renderAlumnos(), 50);
+              return;
+            }
           }
         } catch(_) {}
       }
@@ -23693,20 +23606,12 @@ function _matchNivel(obj, nivelSel, cfg, alumnosArr) {
   const f = _nivelFieldName(cfg, alumnosArr);
   const valObj = String(obj && obj[f] || '').trim();
   const nivel = String(nivelSel).trim();
-  // CEBA: INICIAL/INTERMEDIO agrupado incluye alumnos con ciclo INICIAL o INTERMEDIO
-  // TAMBIÉN alumnos mal catalogados AVANZADO · Presencial · grado 1..6 (antes de ejecutar Reparar Rápido).
-  // Así Orlando / Moises verán alumnos aunque los datos sigan en AVANZADO sin reparar.
+  // CEBA: INICIAL/INTERMEDIO agrupado incluye alumnos con ciclo INICIAL o INTERMEDIO estrictamente.
+  // NUNCA incluye alumnos de ciclo AVANZADO aunque sean Presencial grado 1..6 (el usuario debe
+  // seleccionar Nivel=AVANZADO para ver esos alumnos; o ejecutar 🛠 Reparar Rápido para reclasificarlos).
   if (nivel === 'INICIAL/INTERMEDIO' || nivel === 'INICIAL / INTERMEDIO') {
     const c = String((obj||{}).ciclo || '').trim().toUpperCase();
     if (c === 'INICIAL' || c === 'INTERMEDIO') return true;
-    if (c === 'AVANZADO') {
-      const t = (typeof _normModAtencion === 'function') ? _normModAtencion((obj||{}).turno || '') : String((obj||{}).turno || '').toUpperCase();
-      if (t === 'PRESENCIAL') {
-        const gRaw = String((obj||{}).grado || '').trim();
-        const gNum = parseInt((gRaw.match(/\d+/)||[])[0]||'0', 10);
-        if (gNum >= 1 && gNum <= 6) return true;
-      }
-    }
     return false;
   }
   if (valObj === nivel) return true;
