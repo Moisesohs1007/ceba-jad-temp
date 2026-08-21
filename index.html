@@ -24361,21 +24361,61 @@ async function cargarGradosPorNivel(nivelParam) {
   // ===== CEBA: PRIORIDAD 1 → Key compuesta {MOD_CEBA} · {MOD_ATENCION}
   if(!grados.length && !esEBR) {
     let cicloNom = String(nivel || '').trim().toUpperCase();
-    if (cicloNom === 'INICIAL/INTERMEDIO' || cicloNom === 'INICIAL / INTERMEDIO' || cicloNom === 'INI/INT' || cicloNom === 'INI / INT') {
-      // CASO ESPECIAL: Opción virtual agrupada → cargar TODOS los grados INICIAL e INTERMEDio, CONSERVANDO el sufijo "(Inicial)" / "(Intermedio)" para no colisionar.
+    const esAgrupadoIniInt = (cicloNom === 'INICIAL/INTERMEDIO' || cicloNom === 'INICIAL / INTERMEDIO' || cicloNom === 'INI/INT' || cicloNom === 'INI / INT');
+    if (esAgrupadoIniInt) {
+      // CASO ESPECIAL: Opción virtual agrupada → cargar TODOS los grados INICIAL e INTERMEDIO, CONSERVANDO el sufijo "(Inicial)" / "(Intermedio)" para no colisionar.
       const modalCEBA = 'INICIAL/INTERMEDIO';
       const turnoVal = document.getElementById('f-turno')?.value || '';
       const modAt = _normModAtencion(turnoVal) || 'PRESENCIAL';
       const keyComp = `${modalCEBA} · ${modAt}`;
       const gradosComp = gradosMap[keyComp] || gradosMap[keyComp.toUpperCase()] || gradosMap[keyComp.toLowerCase()] || [];
+      const setGr = new Set();
       if (gradosComp && Array.isArray(gradosComp) && gradosComp.length) {
-        const setGr = new Set();
         gradosComp.forEach(g => {
           const gs = String(g || '').trim();
-          if (!gs) return;
-          setGr.add(gs);
+          if (gs) setGr.add(gs);
         });
-        if (setGr.size) grados = Array.from(setGr).sort((a,b) => {
+      }
+      // ===== FALLBACK ROBUSTO: si key compuesta INICIAL/INTERMEDIO no existe todavía, buscar TODAS las keys
+      // de cfg.grados que contengan INICIAL o INTERMEDIO (individuales o compuestas) y mergear.
+      if (!setGr.size) {
+        const keysIniInt = Object.keys(gradosMap).filter(k => {
+          const up = String(k||'').toUpperCase();
+          return (up.includes('INICIAL') || up.includes('INTERMEDIO')) && !up.includes('AVANZADO');
+        });
+        keysIniInt.forEach(key => {
+          const arr = gradosMap[key];
+          if (!arr || !Array.isArray(arr)) return;
+          const keyUp = key.toUpperCase();
+          const keyContieneSoloInicial = keyUp.includes('INICIAL') && !keyUp.includes('INTERMEDIO') && !keyUp.includes('INICIAL/INTERMEDIO');
+          const keyContieneSoloIntermedio = keyUp.includes('INTERMEDIO') && !keyUp.includes('INICIAL/INTERMEDIO');
+          arr.forEach(g => {
+            const gs = String(g || '').trim();
+            if (!gs) return;
+            const tieneSufijo = /\((inicial|intermedio|avanzado)\)/i.test(gs);
+            if (tieneSufijo) {
+              // ya viene etiquetado, no tocar
+              setGr.add(gs);
+              return;
+            }
+            // Añadir sufijo transparente según el contexto de la key para no colisionar 1 Inicial vs 1 Intermedio
+            if (keyContieneSoloInicial) setGr.add(`${gs} (Inicial)`);
+            else if (keyContieneSoloIntermedio) setGr.add(`${gs} (Intermedio)`);
+            else {
+              // key tipo INICIAL/INTERMEDIO simple → no sabemos, intentar inferir por grado numérico (1-3 Inicial, 4-6 Intermedio) — fallback genérico sin sufijo si no es numérico
+              const n = parseInt(String(gs).replace(/\D/g,''), 10);
+              if (!isNaN(n) && n > 0) {
+                if (n <= 3) setGr.add(`${gs} (Inicial)`);
+                else setGr.add(`${gs} (Intermedio)`);
+              } else {
+                setGr.add(gs);
+              }
+            }
+          });
+        });
+      }
+      if (setGr.size) {
+        grados = Array.from(setGr).sort((a,b) => {
           const na = Number(String(a).replace(/\D/g,'')) || 0;
           const nb = Number(String(b).replace(/\D/g,'')) || 0;
           if (na && nb) {
@@ -24419,10 +24459,11 @@ async function cargarGradosPorNivel(nivelParam) {
     const k = Object.keys(gradosMap).find(x => String(x||'').trim().toLowerCase() === nivelNorm);
     if(k) grados = gradosMap[k] || [];
   }
-  // ===== CEBA: si el nivel es ciclo solo (INICIAL) y no hay grados, unir las 2 MODALIDADES CEBA y filtrar por el ciclo.
+  // ===== CEBA: si el nivel es ciclo solo (INICIAL) o agrupado INICIAL/INTERMEDIO y no hay grados, unir TODAS las keys y filtrar.
   if(!grados.length && !esEBR) {
     const cicloNom = String(nivel || '').trim().toUpperCase();
-    if (['INICIAL','INTERMEDIO','AVANZADO'].includes(cicloNom)) {
+    const esAgrupadoIniInt = (cicloNom === 'INICIAL/INTERMEDIO' || cicloNom === 'INICIAL / INTERMEDIO' || cicloNom === 'INI/INT' || cicloNom === 'INI / INT');
+    if (['INICIAL','INTERMEDIO','AVANZADO'].includes(cicloNom) || esAgrupadoIniInt) {
       const setGr = new Set();
       const modalidadesKeys = Object.keys(gradosMap).filter(k => {
         const up = String(k||'').toUpperCase();
@@ -24438,16 +24479,39 @@ async function cargarGradosPorNivel(nivelParam) {
           if (tieneSufijo) {
             const matchSuf = gs.match(/\(([^)]+)\)/);
             const sufCiclo = matchSuf ? _canonCicloJS(matchSuf[1]) : '';
-            if (sufCiclo === cicloNom) {
+            if (esAgrupadoIniInt) {
+              if (sufCiclo === 'INICIAL' || sufCiclo === 'INTERMEDIO') setGr.add(gs);
+            } else if (sufCiclo === cicloNom) {
               setGr.add(gs.replace(/\s*\([^)]+\)\s*$/g, '').trim() || gs);
             }
           } else {
             const keyUp = String(key).toUpperCase();
             let loContiene = false;
-            if (cicloNom === 'INICIAL' && keyUp.includes('INICIAL')) loContiene = true;
-            if (cicloNom === 'INTERMEDIO' && (keyUp.includes('INTERMEDIO') || keyUp.includes('INICIAL/INTERMEDIO'))) loContiene = true;
-            if (cicloNom === 'AVANZADO' && keyUp.includes('AVANZADO')) loContiene = true;
-            if (loContiene) setGr.add(gs);
+            if (esAgrupadoIniInt) {
+              loContiene = keyUp.includes('INICIAL') || keyUp.includes('INTERMEDIO') || keyUp.includes('INICIAL/INTERMEDIO');
+            } else {
+              if (cicloNom === 'INICIAL' && keyUp.includes('INICIAL')) loContiene = true;
+              if (cicloNom === 'INTERMEDIO' && (keyUp.includes('INTERMEDIO') || keyUp.includes('INICIAL/INTERMEDIO'))) loContiene = true;
+              if (cicloNom === 'AVANZADO' && keyUp.includes('AVANZADO')) loContiene = true;
+            }
+            if (loContiene) {
+              // Para el agrupado, si el grado no tiene sufijo se lo añadimos por contexto para no colisionar
+              if (esAgrupadoIniInt && !/\((inicial|intermedio)\)/i.test(gs)) {
+                const keyContieneSoloInicial = keyUp.includes('INICIAL') && !keyUp.includes('INTERMEDIO') && !keyUp.includes('INICIAL/INTERMEDIO');
+                const keyContieneSoloIntermedio = keyUp.includes('INTERMEDIO') && !keyUp.includes('INICIAL/INTERMEDIO');
+                if (keyContieneSoloInicial) setGr.add(`${gs} (Inicial)`);
+                else if (keyContieneSoloIntermedio) setGr.add(`${gs} (Intermedio)`);
+                else {
+                  const n = parseInt(String(gs).replace(/\D/g,''), 10);
+                  if (!isNaN(n) && n > 0) {
+                    if (n <= 3) setGr.add(`${gs} (Inicial)`);
+                    else setGr.add(`${gs} (Intermedio)`);
+                  } else setGr.add(gs);
+                }
+              } else {
+                setGr.add(gs);
+              }
+            }
           }
         });
       });
@@ -24463,8 +24527,18 @@ async function cargarGradosPorNivel(nivelParam) {
     try {
       const alumnos = await getAlumnosFiltrados();
       const campoMatch = esEBR ? 'turno' : 'ciclo';
+      const cicloNomUp = String(nivel || '').trim().toUpperCase();
+      const esAgrupado = (cicloNomUp === 'INICIAL/INTERMEDIO' || cicloNomUp === 'INICIAL / INTERMEDIO' || cicloNomUp === 'INI/INT' || cicloNomUp === 'INI / INT');
       const fromAlumnos = [...new Set(alumnos
-        .filter(a => String((a||{})[campoMatch]||'').trim().toLowerCase() === nivelNorm)
+        .filter(a => {
+          const cv = String((a||{})[campoMatch]||'').trim();
+          const cvUp = cv.toUpperCase();
+          if (esAgrupado) {
+            return (cvUp === 'INICIAL' || cvUp === 'INTERMEDIO' || cvUp === 'INICIAL/INTERMEDIO');
+          } else {
+            return cvUp === cicloNomUp || cv.toLowerCase() === nivelNorm;
+          }
+        })
         .map(a => a.grado)
         .filter(Boolean)
       )].sort();
