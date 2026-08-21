@@ -6106,8 +6106,6 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   // (sin asignaciones estructuradas) o si hay riesgo de que 1 aula seleccionada
   // deje 0 alumnos por datos mal catalogados. Así el profesor puede quitar filtros.
   const _soloAulasLegacy = !(Object.keys(_asig || {}).length > 0) && !(currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length > 0) && !(currentTutorInfo?.gradosAsignados && currentTutorInfo.gradosAsignados.length > 0);
-  const _bloquear = haceAutoSelect && !_noLock && !_soloAulasLegacy && !currentPerms?.verTodasAulas && aulasList.length > 0 && aulasList.length === 1 && !_noAutoSeleccionarFiltros;
-  const _lockCampos = !!_bloquear;
   if (haceAutoSelect && !aulasList.length && !(Object.keys(_asig||{}).length) && !(currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length)) {
     // Limpiar value a '' por seguridad (no dejar en Avanzado por default del DOM)
     if (nEl && nEl.options && nEl.options[0]?.value === '' && nEl.value !== '') {
@@ -6151,6 +6149,12 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   })();
   const _noAutoSeleccionarFiltros = (_tieneMultiplesNiveles || _multiplesGsS);
   let _noAutoSeleccionarFiltrosForzado = false;
+  // =============================================================
+  // IMPORTANTE: Mover después de declarar _noAutoSeleccionarFiltros (HOISTING FIX ReferenceError Orlando).
+  // Anteriormente estaba antes (L6109) y rompía todo en CEBA user no-admin.
+  // =============================================================
+  const _bloquear = haceAutoSelect && !_noLock && !_soloAulasLegacy && !currentPerms?.verTodasAulas && aulasList.length > 0 && aulasList.length === 1 && !_noAutoSeleccionarFiltros;
+  const _lockCampos = !!_bloquear;
   // FIX Orlando: SI el usuario es PROFESOR + (restringir==true o es_tutor o tiene strings legacy de tutoria)
   // y además tenemos g && s válidos → FORZAMOS haceAutoSelect=true aunque _isDocenteAula() haya
   // retornado false por cargo mal formateado (ej: "docente /ciencias" no matchea includes antiguos).
@@ -9337,6 +9341,15 @@ async function renderAlumnos() {
     }
 
     count.textContent = 'Mostrando ' + alumnos.length + ' de ' + totalDB + ' alumno' + (totalDB!==1?'s':'');
+    console.debug('[renderAlumnos] totalDB=', totalDB, 'filtrados=', alumnos.length, 'filtros:', {grado, seccion, nivel, modalidad, q: q||''});
+    // Ayuda Moises: si busca DNI especifico (solo digitos >=7) y no sale, loguear en consola los DNIs que empiecen por ese prefijo.
+    try {
+      if (q && /^\d{4,}$/.test(String(q).replace(/\D/g,''))) {
+        const qD = String(q).replace(/\D/g,'').slice(0, 8);
+        const cand = (prep.sorted || []).filter(a => String((a||{}).id||'').trim().startsWith(qD)).slice(0, 10).map(a => a.id + ' - ' + (a.apellidos||'') + ' ' + (a.nombres||''));
+        if (cand.length > 0) console.info('[buscar DNI] sugerencias para "' + qD + '":', cand);
+      }
+    } catch(_) {}
 
     if(!alumnos.length) {
       tbody.innerHTML = '';
@@ -9351,21 +9364,27 @@ async function renderAlumnos() {
       // =============================================================
       if (isProf && totalDB > 0) {
         try {
-          const nEl = document.getElementById('fa-nivel');
-          const gEl = document.getElementById('fa-grado');
-          const sEl = document.getElementById('fa-seccion');
-          const mEl = document.getElementById('fa-modalidad');
-          // Solo limpiar si había algo que limpiar (no q)
-          const habiaFiltros = (nEl && nEl.value && nEl.value !== 'TODOS') || (gEl && gEl.value && gEl.value !== 'TODOS') || (sEl && sEl.value && sEl.value !== 'TODOS') || (mEl && mEl.value);
-          if (habiaFiltros) {
-            try { if (nEl && [...(nEl.options||[])].some(o => String(o.value||'') === '')) nEl.value = ''; } catch(_) {}
-            try { if (gEl) gEl.value = ''; } catch(_) {}
-            try { if (sEl) sEl.value = ''; } catch(_) {}
-            try { if (mEl) mEl.value = ''; } catch(_) {}
-            try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
-            try { toast(`✅ Se encontraron ${totalDB} alumnos para ti - mostrando todos tus asignados`, 'success', 4000); } catch(_) {}
-            renderAlumnos();
-            return;
+          // Protección anti-loop infinito: este FIX (limpiar filtros y re-render) solo corre
+          // UNA SOLA VEZ por renderSeq. Si después de limpiar sigue 0 → paramos.
+          const _fixKey = 'fix0_' + (renderSeq || Date.now());
+          if (!window._fix0Run || window._fix0Run !== _fixKey) {
+            window._fix0Run = _fixKey;
+            const nEl = document.getElementById('fa-nivel');
+            const gEl = document.getElementById('fa-grado');
+            const sEl = document.getElementById('fa-seccion');
+            const mEl = document.getElementById('fa-modalidad');
+            // Solo limpiar si había algo que limpiar (no q)
+            const habiaFiltros = (nEl && nEl.value && nEl.value !== 'TODOS') || (gEl && gEl.value && gEl.value !== 'TODOS') || (sEl && sEl.value && sEl.value !== 'TODOS') || (mEl && mEl.value);
+            if (habiaFiltros) {
+              try { if (nEl && [...(nEl.options||[])].some(o => String(o.value||'') === '')) nEl.value = ''; } catch(_) {}
+              try { if (gEl) gEl.value = ''; } catch(_) {}
+              try { if (sEl) sEl.value = ''; } catch(_) {}
+              try { if (mEl) mEl.value = ''; } catch(_) {}
+              try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
+              try { toast(`✅ Se encontraron ${totalDB} alumnos para ti - mostrando todos tus asignados`, 'success', 4000); } catch(_) {}
+              setTimeout(() => renderAlumnos(), 50);
+              return;
+            }
           }
         } catch(_) {}
       }
