@@ -2944,6 +2944,15 @@
             <option value="" selected>-- Sección --</option>
           </select>
         </div>
+        <div class="form-group" style="min-width:160px;">
+          <label>Modalidad Atención</label>
+          <select id="fa-modalidad" onchange="onModalidadChangeAlumnos()">
+            <option value="" selected>-- Modalidad --</option>
+            <option value="PRESENCIAL">Presencial</option>
+            <option value="SEMIPRESENCIAL">Semipresencial</option>
+            <option value="VIRTUAL">Virtual</option>
+          </select>
+        </div>
         <div class="search-wrap" style="flex:1;min-width:180px;margin:0;">
           <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="#64748b"><circle cx="11" cy="11" r="8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35"/></svg>
           <input type="text" id="search-alumnos" placeholder="Buscar por nombre o DNI..." oninput="onSearchAlumnos()">
@@ -2980,6 +2989,7 @@
               <th>Grado</th>
               <th>Sección</th>
               <th>Nivel</th>
+              <th>Modalidad</th>
               <th>Acciones</th>
               <th id="th-chk-all" style="display:none;"><input type="checkbox" id="chk-all" onclick="toggleSelectAll(this)" title="Seleccionar todos"></th>
             </tr>
@@ -5278,14 +5288,8 @@
           <input type="text" id="f-apellidos" placeholder="Ej: García López">
         </div>
         <div class="form-group">
-          <label>Nivel</label>
-          <select id="f-turno" onchange="cargarGradosPorNivel(); _syncFCicloDesdeTurno();">
-            <option value="">Seleccionar</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Ciclo / Nivel pedagógico</label>
-          <select id="f-ciclo" onchange="_syncFGradosPorCiclo(); if(typeof cargarGradosPorNivel === 'function'){ cargarGradosPorNivel(); }">
+          <label id="label-f-ciclo">Nivel *</label>
+          <select id="f-ciclo" onchange="_syncFGradosPorCiclo(); if(typeof cargarGradosPorNivel === 'function'){ cargarGradosPorNivel(); } _syncFModalidadDesdeCiclo();">
             <option value="">(Seleccionar)</option>
             <option value="INICIAL/INTERMEDIO">CICLO INICIAL / INTERMEDIO</option>
             <option value="AVANZADO">CICLO AVANZADO</option>
@@ -5293,6 +5297,13 @@
             <option value="PRIMARIA">EBR PRIMARIA</option>
             <option value="SECUNDARIA">EBR SECUNDARIA</option>
           </select>
+        </div>
+        <div class="form-group">
+          <label id="label-f-turno">Modalidad de atención *</label>
+          <select id="f-turno" onchange="cargarGradosPorNivel(); _syncFCicloDesdeTurno();">
+            <option value="">Seleccionar</option>
+          </select>
+          <div id="f-turno-hint-wrap" style="margin-top:4px;"></div>
         </div>
         <div class="form-group">
           <label>Grado *</label>
@@ -9129,6 +9140,7 @@ async function limpiarFiltrosAlumnos() {
   document.getElementById('fa-nivel').value   = '';
   document.getElementById('fa-grado').value   = '';
   document.getElementById('fa-seccion').value = '';
+  document.getElementById('fa-modalidad').value = '';
   document.getElementById('search-alumnos').value = '';
   await poblarFiltroGrado('fa-grado', null);
   await poblarFiltroSeccion('fa-seccion', null);
@@ -9138,7 +9150,8 @@ async function limpiarFiltrosAlumnos() {
   const n = document.getElementById('fa-nivel').value;
   const g = document.getElementById('fa-grado').value;
   const s = document.getElementById('fa-seccion').value;
-  if(n || g || s) renderAlumnos();
+  const m = document.getElementById('fa-modalidad').value;
+  if(n || g || s || m) renderAlumnos();
   else mostrarEstadoInicial();
 }
 
@@ -9200,10 +9213,11 @@ async function renderAlumnos() {
   const grado   = document.getElementById('fa-grado').value;
   const seccion = document.getElementById('fa-seccion').value;
   const nivel   = document.getElementById('fa-nivel').value;
+  const modalidad = document.getElementById('fa-modalidad').value;
   const q       = (document.getElementById('search-alumnos').value||'').toLowerCase();
 
   // "" = sin tocar (no muestra nada), "TODOS" = sin filtro en ese campo, valor específico = filtra
-  const filtroActivo = grado || seccion || nivel || q;
+  const filtroActivo = grado || seccion || nivel || modalidad || q;
   if(!filtroActivo) { mostrarEstadoInicial(); return; }
 
   const tbody = document.getElementById('alumnos-tbody');
@@ -9211,7 +9225,7 @@ async function renderAlumnos() {
   const count = document.getElementById('alumnos-count');
 
   try {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px;"><span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Cargando alumnos...</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px;"><span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Cargando alumnos...</td></tr>`;
     count.textContent = 'Buscando...';
     empty.style.display = 'none';
 
@@ -9224,6 +9238,10 @@ async function renderAlumnos() {
     if(grado   && grado   !== 'TODOS') alumnos = alumnos.filter(a => a.grado === grado);
     if(seccion && seccion !== 'TODOS') alumnos = alumnos.filter(a => a.seccion === seccion);
     if(nivel   && nivel   !== 'TODOS') { const _cfg = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfg)); }
+    if(modalidad) {
+      const modNorm = _normModAtencion(modalidad) || modalidad;
+      alumnos = alumnos.filter(a => (_normModAtencion(a.turno || '') || (a.turno || '')) === modNorm);
+    }
     if(q) {
       const qClean = q.trim();
       alumnos = alumnos.filter(a => (prep.searchTextById.get(a.id) || '').includes(qClean));
@@ -9250,18 +9268,21 @@ async function renderAlumnos() {
           const niv = _alumnoNivelText(a, _cfa) || '-';
           const g = String(a.grado || '').trim();
           const s = String(a.seccion || '').trim();
+          const am = _normModAtencion(a.turno || '') || String(a.turno || '').trim();
           // Quitar combinaciones que coinciden con filtro actual (ya mostró 0 ahí)
           const mismoNivel = (nivel && nivel !== 'TODOS') ? niv === nivel : false;
           const mismoGrado = (grado && grado !== 'TODOS') ? g === String(grado).trim() : false;
           const mismaSeccion = (seccion && seccion !== 'TODOS') ? s === String(seccion).trim() : false;
+          const mismaModalidad = modalidad ? am === (_normModAtencion(modalidad) || modalidad) : false;
           // Si el usuario NO activó un campo, ese campo NO es criterio de exclusión
           const coincideExactoConFiltro =
             ((!nivel || nivel === 'TODOS') || mismoNivel) &&
             ((!grado || grado === 'TODOS') || mismoGrado) &&
-            ((!seccion || seccion === 'TODOS') || mismaSeccion);
+            ((!seccion || seccion === 'TODOS') || mismaSeccion) &&
+            (!modalidad || mismaModalidad);
           if(coincideExactoConFiltro) return; // ya se que tiene 0, no lo sugiero
-          const key = niv + '|' + g + '|' + s;
-          const cur = sugerenciasMap.get(key) || { n: 0, nivel: niv, grado: g, sec: s };
+          const key = niv + '|' + g + '|' + s + '|' + am;
+          const cur = sugerenciasMap.get(key) || { n: 0, nivel: niv, grado: g, sec: s, mod: am };
           cur.n++;
           sugerenciasMap.set(key, cur);
         });
@@ -9275,7 +9296,7 @@ async function renderAlumnos() {
         if (sugerenciasList.length > 0) {
           // Caso B: solo NIVEL seleccionado, y se sugiere SOLO 1 NIVEL distinto
           const casoB_unSoloNivel = (nivelesSugeridos.size === 1);
-          txts = sugerenciasList.map(it => `${it.n} en ${it.nivel}${it.grado ? ' Grado ' + it.grado : ''}${it.sec ? ' ' + it.sec : ''}`);
+          txts = sugerenciasList.map(it => `${it.n} en ${it.nivel}${it.grado ? ' Grado ' + it.grado : ''}${it.sec ? ' ' + it.sec : ''}${it.mod ? ' · ' + (_MODALIDAD_ATENCION_LABEL[it.mod] || it.mod) : ''}`);
           txts = txts.slice(0, 6);
           let hint = txts.join(', ');
           let btnHtml = '';
@@ -9283,18 +9304,19 @@ async function renderAlumnos() {
             const nSel = sugerenciasList[0].nivel;
             const gSel = sugerenciasList[0].grado || '';
             const sSel = sugerenciasList[0].sec || '';
+            const mSel = sugerenciasList[0].mod || '';
             // Único botón que cambia directamente a ese nivel/grado/sección
             const lbl = gSel
-              ? `Usar ${nSel}${gSel ? ' / Grado ' + gSel : ''}${sSel ? ' ' + sSel : ''}`
+              ? `Usar ${nSel}${gSel ? ' / Grado ' + gSel : ''}${sSel ? ' ' + sSel : ''}${mSel ? ' · ' + (_MODALIDAD_ATENCION_LABEL[mSel] || mSel) : ''}`
               : `Cambiar a Nivel ${nSel}`;
-            btnHtml = `<br><button id="btn-aula-sugerencia" data-niv="${nSel}" data-g="${gSel}" data-s="${sSel}" style="margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">✅ ${lbl}</button>`;
+            btnHtml = `<br><button id="btn-aula-sugerencia" data-niv="${nSel}" data-g="${gSel}" data-s="${sSel}" data-m="${mSel}" style="margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">✅ ${lbl}</button>`;
           } else if (nivelesSugeridos.size > 0) {
             // Multiples niveles: botón para el NIVEL que tenga MÁS alumnos
             const porNivel = {};
             sugerenciasList.forEach(it => { porNivel[it.nivel] = (porNivel[it.nivel]||0) + it.n; });
             const topNivel = Object.entries(porNivel).sort((a,b)=>b[1]-a[1])[0];
             if (topNivel) {
-              btnHtml = `<br><button id="btn-aula-sugerencia" data-niv="${topNivel[0]}" data-g="" data-s="" style="margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">🔄 Probar con Nivel ${topNivel[0]} (${topNivel[1]} alumnos)</button>`;
+              btnHtml = `<br><button id="btn-aula-sugerencia" data-niv="${topNivel[0]}" data-g="" data-s="" data-m="" style="margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">🔄 Probar con Nivel ${topNivel[0]} (${topNivel[1]} alumnos)</button>`;
             }
           }
           const cab = (grado && grado !== 'TODOS')
@@ -9310,6 +9332,7 @@ async function renderAlumnos() {
               const nSel = bb.getAttribute('data-niv') || '';
               const gSel = bb.getAttribute('data-g') || '';
               const sSel = bb.getAttribute('data-s') || '';
+              const mSel = bb.getAttribute('data-m') || '';
               const elNiv = document.getElementById('fa-nivel');
               if(nSel && elNiv) {
                 if([...elNiv.options].some(o => o.value === nSel)) { elNiv.value = nSel; }
@@ -9322,6 +9345,11 @@ async function renderAlumnos() {
               const elS = document.getElementById('fa-seccion');
               if(sSel && elS) {
                 if([...elS.options].some(o => o.value === sSel)) { elS.value = sSel; }
+              }
+              const elM = document.getElementById('fa-modalidad');
+              if(mSel && elM) {
+                const mNorm = _normModAtencion(mSel) || mSel;
+                if([...elM.options].some(o => o.value === mNorm)) { elM.value = mNorm; }
               }
               renderAlumnos();
             });
@@ -9380,6 +9408,18 @@ function _labelNivelLargoAlumno(a, cfg) {
   return `${nivelLabel} · ${modAtLabel}`;
 }
 
+function _badgeModalidadAlumno(a) {
+  const modAt = _normModAtencion((a||{}).turno || '');
+  if(!modAt) return `<span style="color:#94a3b8;font-size:0.75rem;">(Sin modalidad)</span>`;
+  const mapCls = {
+    'PRESENCIAL': 'style="display:inline-block;padding:2px 8px;border-radius:999px;font-weight:700;font-size:0.75rem;background:#dcfce7;color:#166534;border:1px solid #bbf7d0;"',
+    'SEMIPRESENCIAL': 'style="display:inline-block;padding:2px 8px;border-radius:999px;font-weight:700;font-size:0.75rem;background:#fef3c7;color:#92400e;border:1px solid #fde68a;"',
+    'VIRTUAL': 'style="display:inline-block;padding:2px 8px;border-radius:999px;font-weight:700;font-size:0.75rem;background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe;"'
+  };
+  const label = _MODALIDAD_ATENCION_LABEL[modAt] || modAt;
+  return `<span ${mapCls[modAt] || ''}>${label}</span>`;
+}
+
 function _filaAlumno(a) {
   return `<tr>
     <td class="td-id">${a.id}</td>
@@ -9387,6 +9427,7 @@ function _filaAlumno(a) {
     <td>${a.grado}</td>
     <td>${a.seccion}</td>
     <td>${_alumnoNivelText(a)}</td>
+    <td>${_badgeModalidadAlumno(a)}</td>
     <td style="display:flex;gap:6px;flex-wrap:wrap;">
       <button class="btn btn-ghost btn-accion-alumno" style="padding:5px 10px;font-size:0.78rem;" onclick="showQR('${a.id}')">QR</button>
       <button class="btn btn-ghost btn-accion-alumno" style="padding:5px 10px;font-size:0.78rem;" onclick="openModalAlumno('${a.id}')">✏</button>
@@ -22976,6 +23017,11 @@ async function onGradoChangeAlumnos() {
 }
 
 function onSeccionChangeAlumnos() {
+  document.getElementById('search-alumnos').value = '';
+  renderAlumnos();
+}
+
+function onModalidadChangeAlumnos() {
   document.getElementById('search-alumnos').value = '';
   renderAlumnos();
 }
