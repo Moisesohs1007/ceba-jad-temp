@@ -3281,6 +3281,25 @@
         </div>
       </div>
 
+      <!-- Diagnóstico Datos Alumnos -->
+      <div class="card" style="margin-bottom:20px;padding:20px 24px;border:1px solid rgba(96,165,250,0.4);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-family:var(--font-display);font-size:1rem;font-weight:700;margin-bottom:2px;color:#60a5fa;">🔍 Diagnóstico Datos Alumnos</div>
+            <div style="color:var(--muted);font-size:0.82rem;">Herramienta para ver en qué ciclos/grados están realmente los alumnos importados y detectar campos vacíos o mal escritos.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="runDiagnosticoAlumnos()" style="background:#60a5fa;border-color:#60a5fa;">🔍 Ejecutar Diagnóstico</button>
+            <button class="btn" onclick="repararRapidoAlumnos()" style="background:rgba(96,165,250,0.1);border:1px solid #60a5fa;color:#93c5fd;">🛠 Reparar rápido</button>
+          </div>
+        </div>
+        <div id="diag-status" style="display:none;margin-bottom:12px;padding:10px 14px;border-radius:10px;font-size:0.83rem;"></div>
+        <div id="diag-kpis" style="display:none;display:none;margin-bottom:12px;"></div>
+        <div id="diag-result" style="max-height:320px;overflow:auto;border-radius:10px;border:1px dashed var(--border);padding:12px;font-size:0.83rem;display:none;">
+          <div style="color:var(--muted);">Pulsa <b>Ejecutar Diagnóstico</b> para ver la distribución.</div>
+        </div>
+      </div>
+
       <!-- Cuentas Apoderados -->
       <div class="card" style="margin-bottom:20px;padding:20px 24px;border:1px solid rgba(245,158,11,0.3);">
         <div style="font-family:var(--font-display);font-size:1rem;font-weight:700;margin-bottom:4px;color:#f59e0b;">👨‍👩‍👧 Cuentas de Apoderados</div>
@@ -26397,6 +26416,254 @@ async function resetearTodoElSistema() {
     statusEl.textContent = 'Error durante el reset: ' + e.message;
     console.error(e);
     toast('Error: ' + e.message, 'error');
+  }
+}
+
+function _pct(num, den) {
+  if (!den) return 0;
+  return Math.round(100 * (num || 0) / den);
+}
+
+function _pctColor(pct) {
+  if (pct >= 95) return '#10b981';
+  if (pct >= 75) return '#60a5fa';
+  if (pct >= 50) return '#f59e0b';
+  return '#ef4444';
+}
+
+async function runDiagnosticoAlumnos() {
+  const statusEl = document.getElementById('diag-status');
+  const kpisEl = document.getElementById('diag-kpis');
+  const resultEl = document.getElementById('diag-result');
+  try {
+    if (_normRol(currentRol) !== 'admin' && _normRol(currentRol) !== 'director') {
+      toast('Solo admin/director puede ejecutar diagnóstico', 'error');
+      return;
+    }
+    statusEl.style.display = 'block';
+    statusEl.style.background = 'rgba(96,165,250,0.08)';
+    statusEl.style.color = '#93c5fd';
+    statusEl.style.border = '1px solid rgba(96,165,250,0.3)';
+    statusEl.textContent = '🔍 Analizando alumnos... un momento.';
+    resultEl.style.display = 'none';
+    kpisEl.style.display = 'none';
+
+    const alumnos = await DB.getAlumnos();
+    const T = Array.isArray(alumnos) ? alumnos.length : 0;
+    if (!T) {
+      statusEl.style.background = 'rgba(239,68,68,0.08)';
+      statusEl.style.color = '#fca5a5';
+      statusEl.style.border = '1px solid rgba(239,68,68,0.35)';
+      statusEl.textContent = '⚠️ No hay alumnos en la base de datos. Importa un Excel o registra alumnos manualmente.';
+      return;
+    }
+
+    const ciclesSet = new Set(['INICIAL','INTERMEDIO','AVANZADO','INICIAL / INTERMEDIO','INICIAL/INTERMEDIO']);
+    const ciclesEBR = new Set(['INICIAL','PRIMARIA','SECUNDARIA']);
+    const cfg = (typeof getConfigCachedOnce === 'function' ? (getConfigCachedOnce() || {}) : {});
+    const modal = String(cfg.modalidadEducativa || (typeof _cfgModalidadConInferencia === 'function' ? (_cfgModalidadConInferencia(cfg, alumnos) || '') : '') || '').toUpperCase();
+
+    const stats = {
+      total: T,
+      conDni: 0, conGrado: 0, conSeccion: 0, conCiclo: 0, conTurno: 0,
+      cicloValidoCEBA: 0, cicloValidoEBR: 0,
+      gradoNum: 0, gradoConSufijo: 0, gradoRaro: 0,
+      seccionValida: 0,
+      cicloVacio: 0, turnoVacio: 0, gradoVacio: 0, seccionVacia: 0
+    };
+    const grupos = new Map();
+    const listaRaros = [];
+    for (const a of alumnos) {
+      const dni = String(a?.dni || a?.id || '').trim();
+      const cicloRaw = String(a?.ciclo || '').trim();
+      const turnoRaw = String(a?.turno || '').trim();
+      const gradoRaw = String(a?.grado || '').trim();
+      const seccionRaw = String(a?.seccion || '').trim().toUpperCase();
+
+      if (dni) stats.conDni++;
+      if (cicloRaw) stats.conCiclo++; else stats.cicloVacio++;
+      if (turnoRaw) stats.conTurno++; else stats.turnoVacio++;
+      if (gradoRaw) stats.conGrado++; else stats.gradoVacio++;
+      if (seccionRaw) stats.conSeccion++; else stats.seccionVacia++;
+
+      const cicloUp = cicloRaw.toUpperCase();
+      if (['INICIAL','INTERMEDIO','AVANZADO'].includes(cicloUp) || ciclesSet.has(cicloUp)) stats.cicloValidoCEBA++;
+      if (ciclesEBR.has(cicloUp)) stats.cicloValidoEBR++;
+
+      const g1 = gradoRaw.match(/(\d+)/);
+      if (g1) {
+        const gn = parseInt(g1[1], 10);
+        if (gn >= 1 && gn <= 6) stats.gradoNum++;
+      }
+      if (/^\s*\d+\s*\([^)]+\)\s*$/.test(gradoRaw)) stats.gradoConSufijo++;
+      if (gradoRaw && !/^\d/.test(gradoRaw.trim())) stats.gradoRaro++;
+
+      if (/^[A-Z]$/.test(seccionRaw)) stats.seccionValida++;
+
+      const key = [cicloRaw || '(SIN CICLO)', gradoRaw || '(SIN GRADO)', seccionRaw || '(SIN SECCION)', turnoRaw || '(SIN TURNO)'].join(' ⋅ ');
+      grupos.set(key, (grupos.get(key) || 0) + 1);
+
+      if (!gradoRaw || !seccionRaw || !cicloRaw || (seccionRaw && !/^[A-Z]$/.test(seccionRaw)) || (gradoRaw && !g1)) {
+        if (listaRaros.length < 40) listaRaros.push({ dni, nombres: a.nombres || '', apellidos: a.apellidos || '', cicloRaw, gradoRaw, seccionRaw, turnoRaw });
+      }
+    }
+    stats.cicloValido = (modal === 'CEBA' ? stats.cicloValidoCEBA : (modal === 'EBR' ? stats.cicloValidoEBR : stats.cicloValidoCEBA + stats.cicloValidoEBR));
+
+    const kpi = (label, val, pct, desc='') => {
+      const color = _pctColor(pct);
+      return `<div style="flex:1 1 180px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;">
+        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">${label}</div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
+          <span style="font-size:1.25rem;font-weight:700;">${val}</span>
+          <span style="font-size:0.75rem;color:${color};font-weight:700;">${pct}%</span>
+        </div>
+        ${desc ? `<div style="font-size:0.72rem;color:var(--muted);">${desc}</div>` : ''}
+      </div>`;
+    };
+    const htmlKpi = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+      ${kpi('Total Alumnos', stats.total, 100, 'DNI: '+stats.conDni)}
+      ${kpi('Con Ciclo', stats.conCiclo, _pct(stats.conCiclo, T), stats.cicloVacio+' vacíos')}
+      ${kpi('Con Grado', stats.conGrado, _pct(stats.conGrado, T), 'Numérico 1-6: '+stats.gradoNum + (stats.gradoRaro?` · Raros:${stats.gradoRaro}`:''))}
+      ${kpi('Con Sección', stats.conSeccion, _pct(stats.conSeccion, T), 'Letra A-Z: '+stats.seccionValida)}
+      ${kpi('Con Turno', stats.conTurno, _pct(stats.conTurno, T), stats.turnoVacio+' vacíos')}
+    </div>`;
+    kpisEl.innerHTML = htmlKpi;
+
+    const gruposArr = [...grupos.entries()].sort((a,b) => b[1] - a[1]);
+    let htmlG = '';
+    if (gruposArr.length > 0) {
+      htmlG += `<div style="font-weight:700;margin-bottom:6px;font-size:0.9rem;">📊 Distribución por combinación (ciclo · grado · sección · turno) — ${gruposArr.length} combinaciones</div>`;
+      htmlG += `<table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+        <thead><tr style="text-align:left;color:var(--muted);font-size:0.75rem;">
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);">#</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);">Combinación</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;">Cantidad</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;">%</th>
+        </tr></thead><tbody>`;
+      gruposArr.slice(0, 50).forEach(([k, v], i) => {
+        const p = _pct(v, T);
+        htmlG += `<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);">${i+1}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);word-break:break-word;"><code style="background:rgba(96,165,250,0.08);padding:2px 6px;border-radius:6px;">${k}</code></td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;font-weight:700;">${v}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;color:${_pctColor(p)};">${p}%</td>
+        </tr>`;
+      });
+      if (gruposArr.length > 50) {
+        htmlG += `<tr><td colspan="4" style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--muted);font-style:italic;">... y ${gruposArr.length-50} combinaciones más (revisa datos individualmente)</td></tr>`;
+      }
+      htmlG += `</tbody></table>`;
+    }
+
+    if (listaRaros.length) {
+      htmlG += `<div style="font-weight:700;margin-top:16px;margin-bottom:6px;font-size:0.9rem;color:#f59e0b;">⚠️ Muestra (${listaRaros.length}) alumnos con datos incompletos / raros</div>`;
+      htmlG += `<table style="width:100%;font-size:0.8rem;border-collapse:collapse;">
+        <thead><tr style="text-align:left;color:var(--muted);font-size:0.75rem;">
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);">DNI</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);">Nombre</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);">Ciclo</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);">Grado</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);">Sec</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);">Turno</th>
+        </tr></thead><tbody>`;
+      listaRaros.forEach(a => {
+        htmlG += `<tr>
+          <td style="padding:4px 8px;border-bottom:1px solid var(--border);">${a.dni || '-'}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid var(--border);word-break:break-word;">${(a.apellidos+' '+a.nombres).trim() || '-'}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid var(--border);color:${a.cicloRaw?'#fff':'#f59e0b'};">${a.cicloRaw || '⚠️ VACÍO'}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid var(--border);color:${/^\d/.test(String(a.gradoRaw||''))?'#fff':'#f59e0b'};">${a.gradoRaw || '⚠️ VACÍO'}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid var(--border);color:${/^[A-Z]$/.test(String(a.seccionRaw||''))?'#fff':'#f59e0b'};">${a.seccionRaw || '⚠️ VACÍO'}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid var(--border);">${a.turnoRaw || '-'}</td>
+        </tr>`;
+      });
+      htmlG += `</tbody></table>`;
+    }
+
+    resultEl.innerHTML = htmlG;
+    resultEl.style.display = 'block';
+    kpisEl.style.display = 'block';
+    statusEl.textContent = `✅ Diagnóstico completado — ${T} alumnos · ${gruposArr.length} combinaciones distintas.`;
+    statusEl.style.background = 'rgba(16,185,129,0.08)';
+    statusEl.style.color = '#86efac';
+    statusEl.style.border = '1px solid rgba(16,185,129,0.3)';
+  } catch (e) {
+    console.error(e);
+    statusEl.style.display = 'block';
+    statusEl.style.background = 'rgba(239,68,68,0.08)';
+    statusEl.style.color = '#fca5a5';
+    statusEl.style.border = '1px solid rgba(239,68,68,0.35)';
+    statusEl.textContent = '❌ Error en diagnóstico: ' + (e?.message || String(e));
+  }
+}
+
+async function repararRapidoAlumnos() {
+  const statusEl = document.getElementById('diag-status');
+  if (_normRol(currentRol) !== 'admin') { toast('Solo administrador puede reparar datos', 'error'); return; }
+  try {
+    if (!confirm('🛠 Reparación RÁPIDA:\n\n• Quitamos espacios en blanco al inicio/final de ciclo/grado/seccion/turno.\n• Quitamos "(Inicial)"/"(Intermedio)" del campo GRADO (no lo almacenamos ahí — el ciclo va en el campo ciclo de la DB).\n• Grado se queda SOLO con el número (ej: "1 (Inicial)" → "1").\n• Si ciclo=INICIAL/INTERMEDIO → lo deducimos por grado (1-3=INICIAL, 4-6=INTERMEDIO).\n• Sección se normaliza a letra mayúscula sola.\n• Turno se normaliza (Presencial/Semipresencial/Virtual).\n• Ciclo/turno/seccion vacíos los DEJAMOS vacíos (no inventamos).\n\n¿Continuar?')) return;
+    statusEl.style.display = 'block';
+    statusEl.style.background = 'rgba(96,165,250,0.08)';
+    statusEl.style.color = '#93c5fd';
+    statusEl.textContent = 'Reparando... no cierres esta pestaña.';
+    showLoader('Reparando datos alumnos...');
+    const all = await DB.getAlumnos();
+    let upd = 0, fixes = { cicloDeducido: 0, sufijoLimpio: 0, espacios: 0 };
+    for (const a of all) {
+      let changed = false;
+      // 1) trim whitespaces
+      for (const key of ['ciclo','grado','seccion','turno']) {
+        const v = String(a[key] || '');
+        const nv = v.trim();
+        if (nv !== v) { a[key] = nv; changed = true; fixes.espacios++; }
+      }
+      // 2) grado quitar sufijo / dejar numero
+      if (a.grado) {
+        const m = String(a.grado).match(/(\d+)/);
+        if (m) {
+          const soloNum = m[1];
+          if (String(a.grado) !== soloNum) {
+            fixes.sufijoLimpio++;
+            a.grado = soloNum;
+            changed = true;
+          }
+        }
+      }
+      // 3) ciclo INICIAL/INTERMEDIO agrupado → deducir por grado numérico
+      const cicloUp = String(a.ciclo || '').toUpperCase();
+      if ((cicloUp === 'INICIAL/INTERMEDIO' || cicloUp === 'INICIAL / INTERMEDIO') && a.grado) {
+        const gnum = parseInt(String(a.grado).match(/\d+/)?.[0] || '0', 10);
+        if (gnum >= 1 && gnum <= 3) { a.ciclo = 'INICIAL'; changed = true; fixes.cicloDeducido++; }
+        else if (gnum >= 4 && gnum <= 6) { a.ciclo = 'INTERMEDIO'; changed = true; fixes.cicloDeducido++; }
+      }
+      // 4) seccion mayúscula y solo letra
+      if (a.seccion) {
+        const s = String(a.seccion).trim().toUpperCase().match(/[A-Z]/)?.[0] || '';
+        if (s && s !== String(a.seccion)) { a.seccion = s; changed = true; fixes.espacios++; }
+      }
+      // 5) turno normalizado
+      if (a.turno) {
+        const nt = (typeof _normModAtencion === 'function') ? _normModAtencion(a.turno) : a.turno;
+        if (nt && nt !== String(a.turno)) { a.turno = nt; changed = true; }
+      }
+      if (changed) { await DB.saveAlumno(a); upd++; }
+    }
+    try { if (typeof _purgarCacheAlumnos === 'function') _purgarCacheAlumnos('reparacion-rapida'); } catch(_) {}
+    statusEl.style.background = 'rgba(16,185,129,0.08)';
+    statusEl.style.color = '#86efac';
+    statusEl.style.border = '1px solid rgba(16,185,129,0.3)';
+    statusEl.textContent = `✅ Reparación completada · ${upd}/${all.length} alumnos actualizados · cicloDeducido=${fixes.cicloDeducido} · sufijosLimpios=${fixes.sufijoLimpio} · espaciosNormalizados=${fixes.espacios}.`;
+    toast(`Reparado: ${upd} alumnos`, 'success');
+    setTimeout(() => runDiagnosticoAlumnos(), 500);
+  } catch (e) {
+    console.error(e);
+    statusEl.style.display = 'block';
+    statusEl.style.background = 'rgba(239,68,68,0.08)';
+    statusEl.style.color = '#fca5a5';
+    statusEl.style.border = '1px solid rgba(239,68,68,0.35)';
+    statusEl.textContent = '❌ Error reparando: ' + (e?.message || String(e));
+    toast('Error reparación', 'error');
+  } finally {
+    try { hideLoader(); } catch(_) {}
   }
 }
 
