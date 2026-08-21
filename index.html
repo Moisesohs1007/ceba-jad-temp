@@ -4600,7 +4600,7 @@
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:end;margin-top:10px;">
           <div class="form-group" style="margin:0;">
             <label>ID jornada</label>
-            <input id="ih-jor-id" type="text" placeholder="DEFAULT / PRIM_AM / SEC_PM / VIRTUAL" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9_]/g,'')">
+            <input id="ih-jor-id" type="text" placeholder="DEFAULT / INI_INT_MA / AVA_MA / ESPECIAL" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9_]/g,'')">
           </div>
           <div class="form-group" style="margin:0;">
             <label>Nombre</label>
@@ -5529,27 +5529,52 @@ function _nivelesPorModalidad(m) {
   if (esEBR) {
     return ['Inicial', 'Primaria', 'Secundaria'];
   }
-  return ['INICIAL', 'INTERMEDIO', 'AVANZADO'];
+  // CEBA / EBA: 2 MODALIDADES (no 3 ciclos × 3 modos)
+  return ['INICIAL/INTERMEDIO', 'AVANZADO'];
 }
 
 // ============================================================
-// Helpers MODALIDAD DE ATENCIÓN (CEBA): PRESENCIAL / SEMIPRESENCIAL / VIRTUAL
-//   Solo aplica para CEBA/EBA. En EBR, `turno` = Inicial/Primaria/Secundaria (Nivel pedagógico).
+// Helpers MODALIDADES CEBA: SOLO 2 MODALIDADES (no PRESENCIAL/SEMI/VIRTUAL)
+//   Modalidad 1: INICIAL / INTERMEDIO (contiene ciclos INICIAL + INTERMEDIO)
+//   Modalidad 2: AVANZADO (contiene ciclo AVANZADO)
 // ============================================================
-const _MODALIDADES_ATENCION = ['PRESENCIAL','SEMIPRESENCIAL','VIRTUAL'];
-const _MODALIDAD_ATENCION_LABEL = { 'PRESENCIAL':'Presencial', 'SEMIPRESENCIAL':'Semipresencial', 'VIRTUAL':'Virtual' };
+const _MODALIDADES_CEBA = ['INICIAL/INTERMEDIO', 'AVANZADO'];
+const _MODALIDAD_CEBA_LABEL = { 'INICIAL/INTERMEDIO': 'Inicial / Intermedio', 'AVANZADO': 'Avanzado' };
 
-function _normModAtencion(val) {
-  const s = String(val || '').trim().toUpperCase();
+function _normModalidadCEBA(val) {
+  const s = String(val || '').trim().toUpperCase().replace(/\s+/g, '');
   if (!s) return '';
-  if (s === 'PRESENCIAL' || s === 'PRESEN' || s === 'PRE' || s === 'PR' || s.startsWith('PRESEN')) return 'PRESENCIAL';
-  if (s === 'SEMIPRESENCIAL' || s === 'SEMI' || s === 'SEM' || s.startsWith('SEMI') || s === 'HIBRIDO' || s === 'HÍBRIDO') return 'SEMIPRESENCIAL';
-  if (s === 'VIRTUAL' || s === 'VIRT' || s === 'VIR' || s.startsWith('VIR') || s === 'ONLINE' || s === 'REMOTO') return 'VIRTUAL';
-  // Si no match directo, buscar substring
-  if (s.includes('PRESEN') && !s.includes('SEMI')) return 'PRESENCIAL';
-  if (s.includes('SEMI') || s.includes('HIBRI') || s.includes('HÍBRI')) return 'SEMIPRESENCIAL';
-  if (s.includes('VIRT') || s.includes('ONLINE') || s.includes('REMOTO')) return 'VIRTUAL';
-  return s; // desconocido, devolver normalizado
+  if (['INICIAL/INTERMEDIO','INICIAL-INTERMEDIO','INICIALINTERMEDIO','INICI/INTER','I+M','INICIAL','INTERMEDIO'].includes(s)) return 'INICIAL/INTERMEDIO';
+  if (['AVANZADO','AVAN','AVZ','AV'].includes(s)) return 'AVANZADO';
+  if (s.includes('INICIAL') || s.includes('INTERMEDIO') || s.includes('INICI') || s.includes('INTER')) return 'INICIAL/INTERMEDIO';
+  if (s.includes('AVANZADO') || s.includes('AVAN')) return 'AVANZADO';
+  return s;
+}
+
+// Dado un CICLO (INICIAL / INTERMEDIO / AVANZADO), devuelve MODALIDAD CEBA
+function _modalidadDesdeCiclo(ciclo) {
+  const c = String(ciclo || '').trim().toUpperCase();
+  if (!c) return '';
+  if (c === 'INICIAL' || c === 'INTERMEDIO') return 'INICIAL/INTERMEDIO';
+  if (c === 'AVANZADO') return 'AVANZADO';
+  // Fallback canon
+  const cc = _canonCicloJS(c);
+  if (cc === 'INICIAL' || cc === 'INTERMEDIO') return 'INICIAL/INTERMEDIO';
+  if (cc === 'AVANZADO') return 'AVANZADO';
+  return c;
+}
+
+// Dada una MODALIDAD CEBA, devuelve LISTA DE CICLOS (para filtros)
+function _ciclosDesdeModalidad(modalidad) {
+  const m = _normModalidadCEBA(modalidad);
+  if (m === 'INICIAL/INTERMEDIO') return ['INICIAL', 'INTERMEDIO'];
+  if (m === 'AVANZADO') return ['AVANZADO'];
+  return [];
+}
+
+// Helper legacy backward-compat (para código antiguo que aún usa _normModAtencion)
+function _normModAtencion(val) {
+  return _modalidadDesdeCiclo(val);
 }
 
 function _cfgHorarioKey(alumno, cfg, alumnosArr) {
@@ -5559,11 +5584,13 @@ function _cfgHorarioKey(alumno, cfg, alumnosArr) {
   catch(_e) { modalidad = String((cfg && cfg.modalidadEducativa) || (cfg && cfg.modalidad_educativa) || '').toUpperCase(); }
   const esEBR = modalidad === 'EBR';
   if (esEBR) return String(alumno.turno || '').trim();
-  // CEBA/EBA: key compuesta CICLO|MOD_ATENCION
+  // CEBA/EBA: key = MODALIDAD CEBA (2 opciones: INICIAL/INTERMEDIO o AVANZADO)
   const ciclo = String(alumno.ciclo || '').trim().toUpperCase();
-  const modAt = _normModAtencion(alumno.turno);
-  if (!ciclo || !modAt) return String(alumno.turno || '').trim(); // fallback si falta alguno
-  return `${ciclo}|${modAt}`;
+  const modCEBA = _modalidadDesdeCiclo(ciclo);
+  if (modCEBA) return modCEBA;
+  // Fallback por turno
+  const porTurno = _normModalidadCEBA(alumno.turno);
+  return porTurno || String(alumno.turno || '').trim();
 }
 
 function _gradosPorModalidad(m) {
@@ -5581,10 +5608,13 @@ function _gradosPorModalidad(m) {
       'Secundaria': ['7mo','8vo','9no','10mo','11mo'],
     };
   }
+  // CEBA: 2 MODALIDADES. Grados por MODALIDAD (con sufijo de ciclo para diferenciar 1 de INICIAL vs 1 de INTERMEDIO)
   return {
-    'INICIAL':     ['1','2','3','4'],
-    'INTERMEDIO':  ['1','2','3','4','5','6'],
-    'AVANZADO':    ['1','2','3','4','5','6'],
+    'INICIAL/INTERMEDIO': [
+      '1 (Inicial)','2 (Inicial)','3 (Inicial)','4 (Inicial)',
+      '1 (Intermedio)','2 (Intermedio)','3 (Intermedio)','4 (Intermedio)','5 (Intermedio)','6 (Intermedio)'
+    ],
+    'AVANZADO': ['1','2','3','4','5','6'],
   };
 }
 
@@ -5604,24 +5634,27 @@ function _horariosPorModalidad(m) {
       { nombre: 'Secundaria', horaApertura: '06:30', horaLimite: '07:45', horaCorte: '10:00', horaSalida: horasDefault.salida },
     ];
   }
-  // CEBA / EBA: 3 CICLOS × 3 MODALIDADES ATENCIÓN = 9 filas
-  const ciclosCEBA = ['INICIAL','INTERMEDIO','AVANZADO'];
-  const arr = [];
-  ciclosCEBA.forEach(ciclo => {
-    _MODALIDADES_ATENCION.forEach(modAt => {
-      arr.push({
-        nombre: `${ciclo}|${modAt}`,
-        ciclo,
-        modalAtencion: modAt,
-        // Valores base: Virtual un poquito más tarde que presencial
-        horaApertura: modAt === 'VIRTUAL' ? '09:00' : (ciclo === 'AVANZADO' ? '06:45' : horasDefault.apertura),
-        horaLimite:   modAt === 'VIRTUAL' ? '09:30' : (ciclo === 'AVANZADO' ? '07:30' : horasDefault.limite),
-        horaCorte:    modAt === 'VIRTUAL' ? '11:00' : horasDefault.corte,
-        horaSalida:   modAt === 'VIRTUAL' ? '12:00' : horasDefault.salida,
-      });
-    });
-  });
-  return arr;
+  // CEBA / EBA: 2 MODALIDADES (antes 3 ciclos × 3 modos = 9)
+  return [
+    {
+      nombre: 'INICIAL/INTERMEDIO',
+      modalidadCEBA: 'INICIAL/INTERMEDIO',
+      ciclos: ['INICIAL','INTERMEDIO'],
+      horaApertura: horasDefault.apertura,
+      horaLimite:   horasDefault.limite,
+      horaCorte:    horasDefault.corte,
+      horaSalida:   horasDefault.salida,
+    },
+    {
+      nombre: 'AVANZADO',
+      modalidadCEBA: 'AVANZADO',
+      ciclos: ['AVANZADO'],
+      horaApertura: '06:45',
+      horaLimite:   '07:30',
+      horaCorte:    horasDefault.corte,
+      horaSalida:   horasDefault.salida,
+    },
+  ];
 }
 
 // Aplica nombre, eslogan, logo y año del colegio en toda la app (fuente: config/general)
@@ -7347,8 +7380,9 @@ async function cargarDashboardInicio(force = false) {
       const ingresos = [];
 
       alumnos.forEach(a => {
-        const niv = String((a||{})[campoNivel] || a.turno || '').trim();
-        if (!niv) return;
+        const nivRaw = String((a||{})[campoNivel] || a.turno || '').trim();
+        if (!nivRaw) return;
+        const niv = usaCiclo ? (_modalidadDesdeCiclo ? _modalidadDesdeCiclo(nivRaw) || nivRaw : nivRaw) : nivRaw;
         alumnosPorNivel.set(niv, (alumnosPorNivel.get(niv) || 0) + 1);
       });
 
@@ -7356,7 +7390,8 @@ async function cargarDashboardInicio(force = false) {
         if(r.tipo !== 'INGRESO') return;
         ingresos.push(r);
         const alumnoId = r.alumnoId;
-        const niv = String(r && (usaCiclo ? (r.ciclo || '') : '') || r.turno || '').trim();
+        const nivRaw = String(r && (usaCiclo ? (r.ciclo || '') : '') || r.turno || '').trim();
+        const niv = usaCiclo && nivRaw ? (_modalidadDesdeCiclo ? _modalidadDesdeCiclo(nivRaw) || nivRaw : nivRaw) : nivRaw;
         if(!presentesSet.has(alumnoId)) {
           presentesSet.add(alumnoId);
           if(niv) presentesPorNivel.set(niv, (presentesPorNivel.get(niv) || 0) + 1);
@@ -7375,7 +7410,11 @@ async function cargarDashboardInicio(force = false) {
 
       const nivelesHtml = !niveles.length
         ? '<div style="color:var(--muted);font-size:0.82rem;text-align:center;padding:10px 0;">Sin niveles configurados</div>'
-        : niveles.map(niv => {
+        : niveles.map(nivRaw => {
+            const niv = usaCiclo ? (_modalidadDesdeCiclo ? _modalidadDesdeCiclo(nivRaw) || nivRaw : nivRaw) : nivRaw;
+            const nivLabel = (_MODALIDAD_CEBA_LABEL && typeof _MODALIDAD_CEBA_LABEL === 'object')
+              ? (_MODALIDAD_CEBA_LABEL[niv] || _MODALIDAD_CEBA_LABEL[nivRaw] || niv)
+              : niv;
             const totalNivel = alumnosPorNivel.get(niv) || 0;
             const presentesNivel = presentesPorNivel.get(niv) || 0;
             let tardanzas = 0;
@@ -7391,7 +7430,7 @@ async function cargarDashboardInicio(force = false) {
             const pEnd = pDeg + 'deg';
             const tEnd = (pDeg + tDeg) + 'deg';
             return `<div class="inicio-nivel-pta-card">
-              <div class="inicio-nivel-pta-title"><span class="dot"></span>${niv}</div>
+              <div class="inicio-nivel-pta-title"><span class="dot"></span>${nivLabel}</div>
               <div class="pta-wrap">
                 <div class="pta-donut" style="--pta-p:#16a34a;--pta-t:#f59e0b;--pta-a:#dc2626;--pta-p-end:${pEnd};--pta-t-end:${tEnd};">
                   <div class="pta-center"><div class="pct">${pPct}%</div><div class="lbl">Puntual</div></div>
@@ -8114,12 +8153,12 @@ async function openModalAlumno(id) {
     const esEBRTemp = modalidadTemp === 'EBR';
     const fTurno = document.getElementById('f-turno');
     const fCiclo = document.getElementById('f-ciclo');
-    // f-turno: EBR = Niveles (Inicial/Primaria/Secundaria) ; CEBA = Modalidades Atención
+    // f-turno: EBR = Niveles (Inicial/Primaria/Secundaria) ; CEBA = 2 Modalidades CEBA
     const optsFTurno = esEBRTemp
       ? ((cfgTemp.niveles && cfgTemp.niveles.length ? _nivelesPorModalidad(cfgTemp) : ['Inicial','Primaria','Secundaria']))
-      : _MODALIDADES_ATENCION.slice();
+      : _MODALIDADES_CEBA.slice();
     fTurno.innerHTML = '<option value="">Seleccionar</option>';
-    optsFTurno.forEach(n => { fTurno.innerHTML += `<option value="${n}">${_MODALIDAD_ATENCION_LABEL[n] || n}</option>`; });
+    optsFTurno.forEach(n => { fTurno.innerHTML += `<option value="${n}">${_MODALIDAD_CEBA_LABEL[n] || n}</option>`; });
     // Setear valor turno desde el alumno, normalizando CEBA
     const turnoRaw = String(a.turno || '').trim();
     fTurno.value = (esEBRTemp ? turnoRaw : _normModAtencion(turnoRaw) || turnoRaw) || '';
@@ -8762,9 +8801,13 @@ function _labelNivelLargoAlumno(a, cfg) {
   const nivel = _alumnoNivelText(a, _cfg);
   if (esEBR) return nivel || String((a||{}).turno || '');
   const mod = _normModAtencion((a||{}).turno || '');
-  const modLabel = mod ? (_MODALIDAD_ATENCION_LABEL[mod] || mod) : '';
+  const modLabel = mod ? (_MODALIDAD_CEBA_LABEL[mod] || mod) : '';
   if (!nivel) return modLabel || String((a||{}).turno || '');
   if (!modLabel) return nivel;
+  // CEBA 2 modalidades: evitar redundancia si ya se infiere desde el ciclo (ej: "INICIAL · Inicial / Intermedio")
+  const cicloNom = String(_alumnoNivelText(a, _cfg) || '').trim().toUpperCase();
+  const modRedundante = (cicloNom === 'INICIAL' || cicloNom === 'INTERMEDIO' || cicloNom === 'AVANZADO');
+  if (!esEBR && modRedundante) return nivel;
   return `${nivel} · ${modLabel}`;
 }
 
@@ -19477,9 +19520,27 @@ function _asignacionesObjToAulasList(asigObj) {
     if(!secList.length) return;
     secList.forEach(secc => {
       try {
-        const gStr = String(grado||'').trim();
+        const gStrRaw = String(grado||'').trim();
+        if(!gStrRaw) return;
+        // Parse key con sufijo "1 (Intermedio)" → { ciclo, grado limpio }
+        const m = gStrRaw.match(/^(.+?)\s*\((Inicial|Intermedio|Avanzado|INICIAL|INTERMEDIO|AVANZADO)\)\s*$/);
+        let ciclo = '';
+        let gStr = gStrRaw;
+        if (m) {
+          gStr = String(m[1] || '').trim();
+          ciclo = _canonCicloJS(m[2] || '');
+        }
+        // Legacy fallback: si no hay sufijo, pero el grado numérico infiere ciclo desde cfg
+        if (!ciclo && gStr && !isNaN(Number(String(gStr).replace(/\D/g,'')))) {
+          try {
+            if (typeof _agendaInferNivelByGrado === 'function') {
+              const inf = _agendaInferNivelByGrado(gStr, null);
+              if (inf) ciclo = _canonCicloJS(inf) || '';
+            }
+          } catch(_) {}
+        }
         if(!gStr) return;
-        out.push({ ciclo:'', grado:gStr, seccion: secc });
+        out.push({ ciclo, grado: gStr, seccion: secc });
       } catch(_){}
     });
   });
@@ -19495,11 +19556,18 @@ function _aulasListToAsignacionesObj(listArr) {
   const out = {};
   if(!Array.isArray(listArr)) return out;
   listArr.forEach(a => {
-    const g = String(a.grado||'').trim();
+    const gRaw = String(a.grado||'').trim();
+    const cRaw = String(a.ciclo||'').trim();
     const s = String(a.seccion||'').trim().toUpperCase();
-    if(!g || !s) return;
-    if(!(g in out)) out[g] = [];
-    if(!out[g].includes(s)) out[g].push(s);
+    if(!gRaw || !s) return;
+    // Si hay ciclo (CEBA), componer key con sufijo para desambiguar (1 Inicial vs 1 Intermedio)
+    let gKey = gRaw;
+    const cUp = (cRaw || '').toUpperCase();
+    if (cUp === 'INICIAL') gKey = `${gRaw} (Inicial)`;
+    else if (cUp === 'INTERMEDIO') gKey = `${gRaw} (Intermedio)`;
+    else if (cUp === 'AVANZADO') gKey = `${gRaw} (Avanzado)`;
+    if(!(gKey in out)) out[gKey] = [];
+    if(!out[gKey].includes(s)) out[gKey].push(s);
   });
   return out;
 }
@@ -20490,8 +20558,8 @@ async function downloadAlumnosTemplate() {
     consangVals.forEach((v, i) => { wsl.getCell(2 + i, 4).value = v; });
     wsl.getCell('E1').value = 'Ciclos (CEBA/EBR)';
     ['','INICIAL','INTERMEDIO','AVANZADO','PRIMARIA','SECUNDARIA'].forEach((v, i) => { wsl.getCell(2 + i, 5).value = v; });
-    wsl.getCell('F1').value = 'ModalidadAtencion';
-    _MODALIDADES_ATENCION.forEach((v, i) => { wsl.getCell(2 + i, 6).value = v; });
+    wsl.getCell('F1').value = 'ModalidadCEBA';
+    _MODALIDADES_CEBA.forEach((v, i) => { wsl.getCell(2 + i, 6).value = v; });
 
     // EBR: columna ciclo oculta / vacía, sin dropdown ni campo en header ejemplo
     const headers = esEBR
@@ -20572,7 +20640,7 @@ async function downloadAlumnosTemplate() {
         ]
       : [
           '33348249','Moises','Perez',
-          'PRESENCIAL',
+          'INICIAL/INTERMEDIO',
           'INICIAL',
           (gradosAll[0] || '5'),
           (secciones[0] || 'B'),
@@ -20590,7 +20658,7 @@ async function downloadAlumnosTemplate() {
     const seccEnd = Math.max(2, 1 + (secciones.length || 1));
     const consangEnd = Math.max(2, 1 + (consangVals.length || 1));
     const cicloEnd = 7; // INICIAL..SECUNDARIA
-    const modAtEnd = Math.max(2, 1 + (_MODALIDADES_ATENCION.length || 1));
+    const modAtEnd = Math.max(2, 1 + (_MODALIDADES_CEBA.length || 1));
 
     if (esEBR) {
       for(let r = 2; r <= maxRows; r++) {
@@ -21467,12 +21535,15 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
 
   const asignaciones = tempAsignaciones;
 
-  // Helper: extraer key de grados a partir del nombre de nivel (soporta CEBA INICIAL|PRESENCIAL, EBR INICIAL, etc.)
+  // Helper: extraer key de grados a partir del nombre de nivel (soporta CEBA INICIAL/INTERMEDIO, EBR Inicial, etc.)
   const cleanLabel = (n) => {
     let s = String(n || '').trim();
     if(!s) return '';
-    // Separadores comunes: | · - / y espacios múltiples → reemplazar por " · "
-    s = s.replace(/\s*[\|·\-_\/:]\s*/g, ' · ');
+    // Para CEBA 2 modalidades: mostrar "Inicial / Intermedio" en vez de INICIAL/INTERMEDIO
+    if (s === 'INICIAL/INTERMEDIO') return _MODALIDAD_CEBA_LABEL['INICIAL/INTERMEDIO'] || s;
+    if (s === 'AVANZADO') return _MODALIDAD_CEBA_LABEL['AVANZADO'] || s;
+    // Separadores comunes legacy: | · - / y espacios múltiples → reemplazar por " · "
+    s = s.replace(/\s*[\|·\-_:]\s*/g, ' · ');
     s = s.replace(/\s{2,}/g, ' ').trim();
     return s;
   };
@@ -21480,12 +21551,15 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     const raw = String(n || '').trim().toUpperCase();
     const out = new Set();
     if(raw) out.add(raw);
-    // Si trae separador (| · - /), agregar prefijo y sufijo por separado (CEBA INICIAL|PRESENCIAL → "INICIAL" es key real en cfg.grados)
+    // Normalizar a 2 modalidades CEBA (backward compat: si contiene INICIAL o INTERMEDIO → agrupar)
+    const normCEBA = _normModalidadCEBA(raw);
+    if (normCEBA) out.add(normCEBA);
+    // Si trae separador (| · - /), agregar prefijo y sufijo por separado (legacy: nombre antiguo con |)
     const parts = raw.split(/[\|·\-_\/:\s]+/).filter(Boolean);
-    parts.forEach(p => { if(p && p.length > 1) out.add(p); });
+    parts.forEach(p => { if(p && p.length > 1) { out.add(p); const nc = _normModalidadCEBA(p); if(nc) out.add(nc); } });
     // Agregar versión canon
     const canon = _canonCicloJS(raw.split(/[\|·\-_\/:\s]+/)[0] || '');
-    if(canon) out.add(canon);
+    if(canon) { out.add(canon); const ncC = _normModalidadCEBA(canon); if(ncC) out.add(ncC); }
     return Array.from(out);
   };
   // Build list of niveles: prefer cfg.niveles, si no usar las keys de cfg.grados
@@ -21790,8 +21864,9 @@ async function getAlumnosFiltrados() {
   const r = _normRol(currentRol);
   if(r === 'profesor' || r === 'psicologo') {
     if(!!currentPerms?.verTodasAulas) return DB.getAlumnos();
-    const asig = _profesorAsignacionesEfectivas();
-    if(Object.keys(asig).length) return DB.getAlumnosScoped(asig);
+    // Convertir a lista de aulas CON ciclo correcto (parseando sufijos)
+    const aulasConCiclo = _profesorAsignacionesAulasList();
+    if(aulasConCiclo.length) return DB.getAlumnosScoped(aulasConCiclo);
     // Scope VACÍO: devolvemos [] y mostramos 1 toast por sesión (NO mostramos todo el colegio)
     if(!_warnedProfesorSinAulas) {
       _warnedProfesorSinAulas = true;
@@ -21858,7 +21933,12 @@ async function poblarFiltroNivel(selectId, onchangeFn, options = {}) {
     nivelesBase.push(...nivelesOficiales);
   }
   el.innerHTML = `<option value="" disabled selected>-- Nivel --</option>${isProf ? '' : '<option value="TODOS">Todos</option>'}`;
-  nivelesBase.forEach(n => { el.innerHTML += `<option value="${n}">${n}</option>`; });
+  nivelesBase.forEach(n => {
+    const label = (_MODALIDAD_CEBA_LABEL && typeof _MODALIDAD_CEBA_LABEL === 'object')
+      ? (_MODALIDAD_CEBA_LABEL[n] || n)
+      : n;
+    el.innerHTML += `<option value="${n}">${label}</option>`;
+  });
   try {
     const opts = new Set(Array.from(el.options).map(o => o.value));
     if(el.value && !opts.has(el.value)) el.value = '';
@@ -21936,9 +22016,45 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
   const gradosConAlumnos = new Set(alumnosFiltrados.map(a => a.grado).filter(Boolean));
 
   // Intentar obtener grados ordenados desde config; si no hay, usar los de alumnos directamente
-  let gradosCfg = nivel && nivel !== 'TODOS'
-    ? (cfg.grados||{})[nivel] || []
-    : [...new Set(Object.values(cfg.grados||{}).flat())];
+  let gradosCfg = [];
+  if (nivel && nivel !== 'TODOS') {
+    // CEBA/EBA: el nivel (INICIAL/INTERMEDIO) contiene grados con sufijo "(Inicial)/(Intermedio)".
+    // Extraemos la lista correspondiente al ciclo seleccionado y QUITAMOS el sufijo para los selects de alumnos.
+    try {
+      const modal = (typeof _normModalidadCEBA === 'function') ? _normModalidadCEBA(nivel) : String(nivel).trim().toUpperCase();
+      const gradosConSufijo = (cfg.grados||{})[nivel] || (cfg.grados||{})[modal] || [];
+      if (gradosConSufijo && Array.isArray(gradosConSufijo) && gradosConSufijo.length) {
+        // Detectar si contiene sufijos (Inicial)/(Intermedio) → filtrar por el ciclo correcto
+        const tieneSufijos = gradosConSufijo.some(g => /\((Inicial|Intermedio|Avanzado)\)/i.test(String(g)));
+        if (tieneSufijos) {
+          // Si el nivel es INICIAL/INTERMEDIO, devolvemos SOLO los grados LIMPIOS (sin sufijo) únicos
+          // (ya que _filtrarPorNivel se encarga de filtrar alumnos por ciclo luego)
+          const limpios = gradosConSufijo.map(g => String(g || '').replace(/\s*\([^)]+\)\s*$/g, '').trim()).filter(Boolean);
+          gradosCfg = [...new Set(limpios)].sort((a,b) => {
+            const na = Number(String(a).replace(/\D/g,'')) || 0;
+            const nb = Number(String(b).replace(/\D/g,'')) || 0;
+            if (na && nb) return na - nb;
+            return String(a).localeCompare(String(b));
+          });
+        } else {
+          gradosCfg = gradosConSufijo.slice();
+        }
+      } else {
+        // Legacy fallback: keys sin sufijo
+        gradosCfg = (cfg.grados||{})[nivel] || [];
+      }
+    } catch(_) { gradosCfg = (cfg.grados||{})[nivel] || []; }
+  } else {
+    // TODOS los grados: juntar todos y quitar sufijos para selects
+    const allRaw = [...new Set(Object.values(cfg.grados||{}).flat())];
+    const limpios = allRaw.map(g => String(g || '').replace(/\s*\([^)]+\)\s*$/g, '').trim()).filter(Boolean);
+    gradosCfg = [...new Set(limpios)].sort((a,b) => {
+      const na = Number(String(a).replace(/\D/g,'')) || 0;
+      const nb = Number(String(b).replace(/\D/g,'')) || 0;
+      if (na && nb) return na - nb;
+      return String(a).localeCompare(String(b));
+    });
+  }
 
   // Si config no tiene grados para este nivel, caer al set de alumnos
   // (siempre: si los grados de config no coinciden con alumnos, usar los del set)
@@ -22140,12 +22256,12 @@ async function inicializarFiltros(options = {}) {
   const esEBR = modalidad === 'EBR';
   const nivelesSelectFturno = esEBR
     ? (cfg.niveles||[]).map(n => (typeof n === 'string' ? n : (n && n.nombre ? n.nombre : ''))).filter(Boolean)
-    : _MODALIDADES_ATENCION.slice();
+    : _MODALIDADES_CEBA.slice();
   const secciones = cfg.secciones || ['A','B','C','D'];
   const fTurno = document.getElementById('f-turno');
   if(fTurno) {
     fTurno.innerHTML = '<option value="">Seleccionar</option>';
-    nivelesSelectFturno.forEach(n => { fTurno.innerHTML += `<option value="${n}">${_MODALIDAD_ATENCION_LABEL[n] || n}</option>`; });
+    nivelesSelectFturno.forEach(n => { fTurno.innerHTML += `<option value="${n}">${_MODALIDAD_CEBA_LABEL[n] || n}</option>`; });
   }
   // Actualizar labels de formulario registro según modalidad
   try {
@@ -22259,7 +22375,21 @@ function _matchNivel(obj, nivelSel, cfg, alumnosArr) {
 }
 function _nivelesDesdeAlumnos(alumnosArr, cfg) {
   const alumnos = Array.isArray(alumnosArr) ? alumnosArr : [];
+  let modalidad = '';
+  try { if (typeof _cfgModalidadConInferencia === 'function') modalidad = _cfgModalidadConInferencia(cfg || {}, alumnos || []); }
+  catch(_) { modalidad = String(((cfg||{}).modalidadEducativa || (cfg||{}).modalidad_educativa || '')).toUpperCase(); }
+  const usaCiclo = (modalidad === 'CEBA' || modalidad === 'EBA');
   const f = _nivelFieldName(cfg, alumnos);
+  // Para CEBA/EBA: agrupar INICIAL+INTERMEDIO en INICIAL/INTERMEDIO (2 modalidades, no 3)
+  if (usaCiclo) {
+    const setRaw = new Set(alumnos.map(a => String(a[f] || a.ciclo || '').trim().toUpperCase()).filter(Boolean));
+    const out = new Set();
+    if (setRaw.has('INICIAL') || setRaw.has('INTERMEDIO')) out.add('INICIAL/INTERMEDIO');
+    if (setRaw.has('AVANZADO')) out.add('AVANZADO');
+    setRaw.forEach(v => { if(v && v !== 'INICIAL' && v !== 'INTERMEDIO' && v !== 'AVANZADO') out.add(v); });
+    const orden = ['INICIAL/INTERMEDIO','AVANZADO'];
+    return orden.filter(c => out.has(c)).concat([...out].filter(v => !orden.includes(v)));
+  }
   const set = new Set(alumnos.map(a => String(a[f] || '').trim()).filter(Boolean));
   const ordenCEBA = ['INICIAL','INTERMEDIO','AVANZADO'];
   if (ordenCEBA.some(c => set.has(c))) {
@@ -22275,7 +22405,25 @@ function _nivelesDesdeAlumnos(alumnosArr, cfg) {
 function _filtrarPorNivel(arr, nivelSel, cfg) {
   if (!Array.isArray(arr)) return [];
   if (!nivelSel || nivelSel === 'TODOS') return arr.slice();
-  const f = _nivelFieldName(cfg, arr);
+  let modalidad = '';
+  try { if (typeof _cfgModalidadConInferencia === 'function') modalidad = _cfgModalidadConInferencia(cfg || {}, arr || []); }
+  catch(_) { modalidad = String(((cfg||{}).modalidadEducativa || (cfg||{}).modalidad_educativa || '')).toUpperCase(); }
+  const usaCiclo = (modalidad === 'CEBA' || modalidad === 'EBA');
+  const f = usaCiclo ? 'ciclo' : _nivelFieldName(cfg, arr);
+  const nSnorm = (usaCiclo && typeof _normModalidadCEBA === 'function') ? _normModalidadCEBA(nivelSel) : String(nivelSel).trim();
+  if (usaCiclo && nSnorm === 'INICIAL/INTERMEDIO') {
+    // Filtrar alumnos con ciclo INICIAL O INTERMEDIO
+    return arr.filter(o => {
+      const c = String(o && o.ciclo ? o.ciclo : (o && o[f] ? o[f] : '')).trim().toUpperCase();
+      return (c === 'INICIAL' || c === 'INTERMEDIO');
+    });
+  }
+  if (usaCiclo && nSnorm === 'AVANZADO') {
+    return arr.filter(o => {
+      const c = String(o && o.ciclo ? o.ciclo : (o && o[f] ? o[f] : '')).trim().toUpperCase();
+      return c === 'AVANZADO';
+    });
+  }
   const nS = String(nivelSel).trim();
   return arr.filter(o => String(o && o[f] || '').trim() === nS);
 }
@@ -22719,9 +22867,23 @@ async function getLimiteByNivel(nivelOAlumno) {
     if (str) n = niveles.find(x => x && String(x.nombre || '') === str);
   }
   if (!n) {
-    // Fallback final: para CEBA si solo tengo la parte CICLO y modal PRESENCIAL default
-    const str = String(nivelOAlumno && typeof nivelOAlumno === 'object' ? ((nivelOAlumno.ciclo || '') + '|' + _normModAtencion(nivelOAlumno.turno) || (nivelOAlumno.turno || '')) : (nivelOAlumno || '')).trim();
-    n = niveles.find(x => x && (String(x.ciclo || '') === str || (x && x.nombre && x.nombre.split('|')[0] === str)));
+    // Fallback final: para CEBA si solo tengo la parte CICLO → mapear a MODALIDAD CEBA correspondiente
+    let modalCEBA = '';
+    if (nivelOAlumno && typeof nivelOAlumno === 'object' && (nivelOAlumno.ciclo || nivelOAlumno.turno)) {
+      modalCEBA = _modalidadDesdeCiclo(nivelOAlumno.ciclo || nivelOAlumno.turno || '');
+    } else {
+      const str = String(nivelOAlumno || '').trim();
+      modalCEBA = _normModalidadCEBA(str);
+    }
+    if (modalCEBA) {
+      n = niveles.find(x => x && (
+        String(x.nombre || '').trim().toUpperCase() === modalCEBA ||
+        String(x.modalidadCEBA || '').trim().toUpperCase() === modalCEBA ||
+        (x && Array.isArray(x.ciclos) && x.ciclos.some(c => _modalidadDesdeCiclo(c) === modalCEBA))
+      ));
+    }
+    // Si aún no, fallback a cualquier nivel que exista
+    if (!n && niveles.length) n = niveles[0];
   }
   return n ? n.horaLimite : '08:00';
 }
@@ -22732,23 +22894,30 @@ async function getHorarioByNivel(nivelOAlumno) {
   let n = null;
   let key = '';
   if (nivelOAlumno && typeof nivelOAlumno === 'object') {
-    // Nuevo API: paso alumno object completo → usar composite key
     key = _cfgHorarioKey(nivelOAlumno, cfg, null);
     if (key) n = niveles.find(x => x && String(x.nombre || '') === key);
   }
   if (!n) {
-    // Legacy API: paso string, o key compuesta no encontró → buscar exact string
     const str = String(nivelOAlumno && typeof nivelOAlumno === 'object' ? (nivelOAlumno.turno || '') : (nivelOAlumno || '')).trim();
     if (str) n = niveles.find(x => x && String(x.nombre || '') === str);
   }
   if (!n) {
-    // Fallback extra: si no encontramos y hay alumno obj, intentar match por ciclo + default PRESENCIAL
-    if (nivelOAlumno && typeof nivelOAlumno === 'object') {
-      const ciclo = String((nivelOAlumno||{}).ciclo || '').trim().toUpperCase();
-      if (ciclo) {
-        n = niveles.find(x => x && String(x.nombre || '') === (ciclo + '|PRESENCIAL'));
-      }
+    // Fallback extra: si hay alumno obj, mapear ciclo → MODALIDAD CEBA
+    let modalCEBA = '';
+    if (nivelOAlumno && typeof nivelOAlumno === 'object' && (nivelOAlumno.ciclo || nivelOAlumno.turno)) {
+      modalCEBA = _modalidadDesdeCiclo(nivelOAlumno.ciclo || nivelOAlumno.turno || '');
     }
+    if (!modalCEBA && nivelOAlumno) {
+      modalCEBA = _normModalidadCEBA(nivelOAlumno);
+    }
+    if (modalCEBA) {
+      n = niveles.find(x => x && (
+        String(x.nombre || '').trim().toUpperCase() === modalCEBA ||
+        String(x.modalidadCEBA || '').trim().toUpperCase() === modalCEBA ||
+        (x && Array.isArray(x.ciclos) && x.ciclos.some(c => _modalidadDesdeCiclo(c) === modalCEBA))
+      ));
+    }
+    if (!n && niveles.length) n = niveles[0];
   }
   return {
     horaApertura: n?.horaApertura || '07:00',
@@ -22809,10 +22978,12 @@ async function renderConfig() {
     // Merge strategy: exact nombre match → merge horas de cfgNivelesOld. Else: para CEBA, fallback al entry legacy sin pipe (h.ciclo == cfgNivelesOld[i].nombre)
     horariosBase = expected.map(h => {
       let existente = cfgNivelesOld.find(x => x && String(x.nombre || '') === String(h.nombre || ''));
-      if (!existente && !esEBR && h.ciclo) {
-        // Buscar legacy entry INICIAL (antes |) — usar como fallback PRESENCIAL (y extender a todas modalid de ese ciclo)
-        const legacy = cfgNivelesOld.find(x => x && String(x.nombre || '').trim().toUpperCase() === String(h.ciclo || '').trim().toUpperCase());
-        if (legacy) existente = legacy;
+      if (!existente && !esEBR && h.ciclos && h.ciclos.length) {
+        // Buscar legacy entry INICIAL / INTERMEDIO / AVANZADO — usar horas del primero que exista como fallback
+        for (const c of h.ciclos) {
+          const legacy = cfgNivelesOld.find(x => x && String(x.nombre || '').trim().toUpperCase() === String(c || '').trim().toUpperCase());
+          if (legacy) { existente = legacy; break; }
+        }
       }
       return existente ? Object.assign({}, h, {
         horaApertura: existente.horaApertura || h.horaApertura,
@@ -22971,63 +23142,45 @@ async function renderConfig() {
       </div>
     `).join('');
   } else {
-    // CEBA/EBA: 3 grupos = CICLOS. Cada grupo = 3 sub-tarjetas (PRESENCIAL / SEMIPRESENCIAL / VIRTUAL)
-    // horariosBase es [INICIAL|PRE, INICIAL|SEMI, INICIAL|VIRT, INTER|PRE, ..., AVAN|VIRT] = 9 items.
-    const ciclos = nombresEsperados.slice(); // ['INICIAL','INTERMEDIO','AVANZADO']
-    const modBadgeColor = { 'PRESENCIAL':'#1D9E75', 'SEMIPRESENCIAL':'#8B5CF6', 'VIRTUAL':'#2563EB' };
-    const grupoHtmlList = [];
-    ciclos.forEach((cicloNombre, idxCiclo) => {
-      const itemsCiclo = [];
-      for(let k = 0; k < 3; k++) {
-        const idxGlobal = idxCiclo * 3 + k;
-        itemsCiclo.push(horariosBase[idxGlobal]);
-      }
-      const cardsModHtml = itemsCiclo.map((n, k) => {
-        const idxGlobal = idxCiclo * 3 + k;
-        const modAt = n && n.modalAtencion ? n.modalAtencion : _MODALIDADES_ATENCION[k];
-        const modLabel = _MODALIDAD_ATENCION_LABEL[modAt] || modAt;
-        const color = modBadgeColor[modAt] || 'var(--accent)';
-        return `
-          <div style="padding:10px 12px;background:rgba(255,255,255,0.02);border-radius:10px;border:1px solid rgba(255,255,255,0.06);">
-            <div style="font-weight:600;font-size:0.82rem;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
-              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};"></span>${modLabel}
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <div class="form-group" style="flex:1;min-width:120px;margin:0;">
-                <label style="font-size:0.7rem;">🟢 Apertura</label>
-                <input type="time" id="cfg-apertura-${idxGlobal}" value="${n.horaApertura||'07:00'}">
-              </div>
-              <div class="form-group" style="flex:1;min-width:120px;margin:0;">
-                <label style="font-size:0.7rem;">⚠️ Límite puntual</label>
-                <input type="time" id="cfg-hora-${idxGlobal}" value="${n.horaLimite||'08:00'}">
-              </div>
-              <div class="form-group" style="flex:1;min-width:120px;margin:0;">
-                <label style="font-size:0.7rem;">🔴 Corte</label>
-                <input type="time" id="cfg-corte-${idxGlobal}" value="${n.horaCorte||'10:30'}">
-              </div>
-              <div class="form-group" style="flex:1;min-width:120px;margin:0;">
-                <label style="font-size:0.7rem;">🚪 Salida</label>
-                <input type="time" id="cfg-salida-${idxGlobal}" value="${n.horaSalida||'13:00'}">
-              </div>
-            </div>
+    // CEBA/EBA: 2 MODALIDADES (no 3 ciclos × 3 modos)
+    const modBadgeColor = { 'INICIAL/INTERMEDIO':'#1D9E75', 'AVANZADO':'#2563EB' };
+    nivelesEl.innerHTML = horariosBase.map((n,i) => {
+      const nomModal = n && n.nombre ? String(n.nombre) : String(_MODALIDADES_CEBA[i] || '');
+      const label = _MODALIDAD_CEBA_LABEL[nomModal] || nomModal;
+      const color = modBadgeColor[nomModal] || 'var(--accent)';
+      const sub = nomModal === 'INICIAL/INTERMEDIO' ? '(contiene ciclos Inicial + Intermedio)' : '(contiene ciclo Avanzado)';
+      return `
+        <div style="margin-bottom:16px;padding:12px 14px;background:rgba(255,255,255,0.03);border-radius:10px;border:1px solid rgba(255,255,255,0.07);">
+          <div style="font-weight:700;font-size:0.95rem;margin-bottom:4px;color:${color};display:flex;align-items:center;gap:8px;">
+            <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};"></span>${label}
           </div>
-        `;
-      }).join('');
-      grupoHtmlList.push(`
-        <div style="margin-bottom:20px;padding:14px 16px 12px 16px;background:rgba(255,255,255,0.03);border-radius:12px;border:1px solid rgba(255,255,255,0.08);">
-          <div style="font-weight:800;font-size:1rem;margin-bottom:12px;color:var(--accent);letter-spacing:0.3px;">◆ Ciclo ${cicloNombre}</div>
-          <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));">
-            ${cardsModHtml}
+          <div style="font-size:0.75rem;color:var(--muted);margin-bottom:10px;">${sub}</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <div class="form-group" style="flex:1;min-width:130px;margin:0;">
+              <label style="font-size:0.72rem;">🟢 Apertura (desde)</label>
+              <input type="time" id="cfg-apertura-${i}" value="${n.horaApertura||'07:00'}">
+            </div>
+            <div class="form-group" style="flex:1;min-width:130px;margin:0;">
+              <label style="font-size:0.72rem;">⚠️ Límite puntualidad</label>
+              <input type="time" id="cfg-hora-${i}" value="${n.horaLimite||'08:00'}">
+            </div>
+            <div class="form-group" style="flex:1;min-width:130px;margin:0;">
+              <label style="font-size:0.72rem;">🔴 Corte ingreso (hasta)</label>
+              <input type="time" id="cfg-corte-${i}" value="${n.horaCorte||'10:30'}">
+            </div>
+            <div class="form-group" style="flex:1;min-width:130px;margin:0;">
+              <label style="font-size:0.72rem;">🚪 Salida (desde)</label>
+              <input type="time" id="cfg-salida-${i}" value="${n.horaSalida||'13:00'}">
+            </div>
           </div>
         </div>
-      `);
-    });
-    nivelesEl.innerHTML = grupoHtmlList.join('');
+      `;
+    }).join('');
   }
 
   // Grados: SIEMPRE por cfg.niveles[] keys reales
   // - EBR: 3 keys = Inicial, Primaria, Secundaria (3 inputs legacy)
-  // - CEBA: 9 keys = INICIAL|PRESENCIAL, INICIAL|SEMIPRESENCIAL, INICIAL|VIRTUAL, …, AVANZADO|VIRTUAL (agrupados por CICLO × 3 MODALIDADES, estilo horarios)
+  // - CEBA: 2 keys = INICIAL/INTERMEDIO, AVANZADO
   const gradosEl = document.getElementById('cfg-grados-list');
   if (esEBR) {
     // EBR legacy: 3 inputs
@@ -23042,44 +23195,49 @@ async function renderConfig() {
       `;
     }).join('');
   } else {
-    // CEBA: 3 grupos (CICLOS) × 3 tarjetas (Modalidad) = 9 inputs
-    const ciclos = nombresEsperados.slice(); // INICIAL, INTERMEDIO, AVANZADO
-    const modBadgeColor = { 'PRESENCIAL':'#1D9E75', 'SEMIPRESENCIAL':'#8B5CF6', 'VIRTUAL':'#2563EB' };
-    const gruposHtml = [];
-    ciclos.forEach((cicloNombre) => {
-      const tarjetasModHtml = _MODALIDADES_ATENCION.map((modAt) => {
-        const keyFull = `${cicloNombre}|${modAt}`;
-        // Prioridad valores para este input:
-        // 1) cfg.grados[keyFull] (si existe, formato nuevo, perfecto)
-        // 2) cfg.grados[cicloNombre] (formato legacy 3 inputs, extender a las 3 modalidades del ciclo)
-        // 3) gradosMapFinal[cicloNombre] = fallback hardcoded CEBA: 1,2,3,4 INICIAL / 1..6 INTER/AVAN
-        const arrFull = (cfgGrados && Object.prototype.hasOwnProperty.call(cfgGrados,keyFull) && Array.isArray(cfgGrados[keyFull])) ? cfgGrados[keyFull] : null;
-        const arrCiclo = gradosMapFinal[cicloNombre] || [];
-        const valores = (arrFull && arrFull.length) ? arrFull : arrCiclo;
-        return `
-          <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:12px 14px;">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-              <span style="font-size:0.78rem;font-weight:800;color:#fff;padding:3px 9px;border-radius:20px;background:${modBadgeColor[modAt]||'#334'};letter-spacing:0.3px;">${_MODALIDAD_ATENCION_LABEL[modAt]||modAt}</span>
-              <span style="font-size:0.82rem;color:var(--muted);">Grados correspondientes</span>
-            </div>
-            <div class="form-group" style="margin:0;">
-              <input type="text" class="cfg-grado-input" data-key="${String(keyFull)}" value="${(valores||[]).join(', ')}" placeholder="1, 2, 3, 4" style="width:100%;box-sizing:border-box;font-weight:600;">
-              <div style="font-size:0.72rem;color:var(--muted);margin-top:4px;">Separados por coma. Ej: 1, 2, 3, 4</div>
-            </div>
-          </div>
-        `;
-      }).join('');
-      gruposHtml.push(`
+    // CEBA: 2 MODALIDADES (inputs)
+    const modBadgeColor = { 'INICIAL/INTERMEDIO':'#1D9E75', 'AVANZADO':'#2563EB' };
+    const modalidades = _MODALIDADES_CEBA.slice();
+    const gruposHtml = modalidades.map((nomMod) => {
+      const label = _MODALIDAD_CEBA_LABEL[nomMod] || nomMod;
+      const color = modBadgeColor[nomMod] || 'var(--accent)';
+      let valores = [];
+      if (cfgGrados && Object.prototype.hasOwnProperty.call(cfgGrados,nomMod) && Array.isArray(cfgGrados[nomMod]) && cfgGrados[nomMod].length) {
+        valores = cfgGrados[nomMod];
+      } else if (nomMod === 'INICIAL/INTERMEDIO') {
+        const valsIni = (cfgGrados && Array.isArray(cfgGrados['INICIAL'])) ? cfgGrados['INICIAL'] : (gradosMapFinal['INICIAL'] || []);
+        const valsInt = (cfgGrados && Array.isArray(cfgGrados['INTERMEDIO'])) ? cfgGrados['INTERMEDIO'] : (gradosMapFinal['INTERMEDIO'] || []);
+        const mergeado = [];
+        valsIni.forEach(v => {
+          const vs = String(v || '').trim(); if (!vs) return;
+          mergeado.push(/\(inicial|intermedio\)/i.test(vs) ? vs : `${vs} (Inicial)`);
+        });
+        valsInt.forEach(v => {
+          const vs = String(v || '').trim(); if (!vs) return;
+          mergeado.push(/\(inicial|intermedio\)/i.test(vs) ? vs : `${vs} (Intermedio)`);
+        });
+        valores = mergeado.length ? mergeado : (gradosMapFinal[nomMod] || []);
+      } else {
+        const valsAv = (cfgGrados && Array.isArray(cfgGrados['AVANZADO'])) ? cfgGrados['AVANZADO'] : [];
+        valores = valsAv.length ? valsAv : (gradosMapFinal[nomMod] || []);
+      }
+      const sub = nomMod === 'INICIAL/INTERMEDIO' ? 'Grados de Inicial + Intermedio combinados. Usa el sufijo (Inicial) / (Intermedio) para diferenciar.' : 'Grados del ciclo Avanzado (1 a 6 normalmente).';
+      return `
         <div style="margin-bottom:22px;padding:14px 16px 12px 16px;background:linear-gradient(180deg,rgba(16,185,129,0.05),rgba(59,130,246,0.03));border:1px solid rgba(255,255,255,0.08);border-radius:14px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
-            <div style="font-weight:900;font-size:1.05rem;letter-spacing:0.3px;color:var(--accent);">◆ Ciclo ${cicloNombre}</div>
-            <button type="button" class="btn btn-ghost btn-ciclo-copy-grados" data-ciclo="${String(cicloNombre)}" style="padding:5px 11px;font-size:0.76rem;font-weight:700;">⚡ Copiar ciclo a las 3 modalidades</button>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:0.82rem;font-weight:800;color:#fff;padding:4px 10px;border-radius:20px;background:${color};letter-spacing:0.3px;">${label}</span>
+              <span style="font-weight:900;font-size:1.05rem;letter-spacing:0.3px;color:var(--accent);">🎓 Grados</span>
+            </div>
           </div>
-          <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));">
-            ${tarjetasModHtml}
+          <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:12px 14px;">
+            <div class="form-group" style="margin:0;">
+              <input type="text" class="cfg-grado-input" data-key="${String(nomMod)}" value="${(valores||[]).join(', ')}" placeholder="1 (Inicial), 2 (Inicial), ..., 6 (Intermedio)" style="width:100%;box-sizing:border-box;font-weight:600;">
+              <div style="font-size:0.72rem;color:var(--muted);margin-top:4px;">${sub}</div>
+            </div>
           </div>
         </div>
-      `);
+      `;
     });
     gradosEl.innerHTML = gruposHtml.join('');
   }
@@ -23088,27 +23246,7 @@ async function renderConfig() {
   document.getElementById('cfg-secciones').value = (cfg.secciones||[]).join(', ');
 }
 
-// CEBA: Botón "Copiar ciclo a 3 modalidades" (usa el valor de PRESENCIAL y lo replica a SEMI + VIRTUAL)
-document.addEventListener('click', function(e){
-  const btn = e.target && e.target.closest && e.target.closest('.btn-ciclo-copy-grados');
-  if(!btn) return;
-  e.preventDefault();
-  const ciclo = String(btn.getAttribute('data-ciclo') || '').trim().toUpperCase();
-  if(!ciclo) return;
-  const inputsAll = document.querySelectorAll('input.cfg-grado-input');
-  const keysByMod = {};
-  inputsAll.forEach(inp => {
-    const k = String(inp.getAttribute('data-key') || '');
-    if (!k.startsWith(ciclo+'|')) return;
-    const modAt = k.split('|')[1] || '';
-    keysByMod[modAt] = inp;
-  });
-  const src = keysByMod['PRESENCIAL'] || (Object.values(keysByMod)[0] || null);
-  if(!src) return;
-  const txt = String(src.value || '').trim();
-  Object.keys(keysByMod).forEach(m => { if(keysByMod[m] && keysByMod[m] !== src) keysByMod[m].value = txt; });
-  try { if(typeof toast === 'function') toast(`Ciclo ${ciclo}: grados copiados a 3 modalidades`, 'success', 2500); } catch(_e){}
-});
+// (Listener eliminado: botón "Copiar ciclo a 3 modalidades" ya no existe en modelo CEBA 2 modalidades)
 
 // ── Imágenes del banner ──
 var _bannerImgs = []; // array de {url, nombre} max 5
@@ -23475,24 +23613,24 @@ async function guardarHorarios() {
         modalAtencion: existente.modalAtencion || h.modalAtencion,
       }) : h;
     });
-    if (!esEBR && cfgNivelesOld.length === 3) {
-      const nombresCEBA = nombresEsperados.slice().sort();
-      const old3SoloCiclos = cfgNivelesOld.filter(o => {
-        const n = String((o||{}).nombre||'').trim().toUpperCase();
-        return !n.includes('|') && nombresCEBA.includes(n);
-      }).length === 3;
-      if (old3SoloCiclos) {
-        base = base.map(h => {
-          const legacy = cfgNivelesOld.find(o => String((o||{}).nombre||'').trim().toUpperCase() === String(h.ciclo||'').toUpperCase());
-          if (!legacy) return h;
-          return Object.assign({}, h, {
-            horaApertura: legacy.horaApertura || h.horaApertura,
-            horaLimite:   legacy.horaLimite   || h.horaLimite,
-            horaCorte:    legacy.horaCorte    || h.horaCorte,
-            horaSalida:   legacy.horaSalida   || h.horaSalida,
+    if (!esEBR && cfgNivelesOld.length > 0) {
+      // Si hay niveles viejo legacy (sin |), intentar mergear a las 2 modalidades nuevas
+      base = base.map(h => {
+        const modalKey = String((h||{}).nombre||'').trim().toUpperCase();
+        const ciclosAbarcados = (h && h.ciclos && Array.isArray(h.ciclos)) ? h.ciclos : _ciclosDesdeModalidad(modalKey);
+        let mergeH = h;
+        ciclosAbarcados.forEach(ciclo => {
+          const legacy = cfgNivelesOld.find(o => String((o||{}).nombre||'').trim().toUpperCase() === String(ciclo||'').toUpperCase());
+          if (!legacy) return;
+          mergeH = Object.assign({}, mergeH, {
+            horaApertura: legacy.horaApertura || mergeH.horaApertura,
+            horaLimite:   legacy.horaLimite   || mergeH.horaLimite,
+            horaCorte:    legacy.horaCorte    || mergeH.horaCorte,
+            horaSalida:   legacy.horaSalida   || mergeH.horaSalida,
           });
         });
-      }
+        return mergeH;
+      });
     }
   } catch(_errGH) {
     base = _horariosPorModalidad(modalActual || 'EBR');
@@ -23503,16 +23641,15 @@ async function guardarHorarios() {
     const corte    = document.getElementById('cfg-corte-'+i)?.value   || '10:30';
     const salida   = document.getElementById('cfg-salida-'+i)?.value  || '13:00';
     const toMin = s => { const [h,m] = (s||'00:00').split(':').map(Number); return h*60+m; };
-    const nombreBase = n && n.nombre ? n.nombre : String((n && n.ciclo ? (n.ciclo + '|' + (n.modalAtencion || 'PRESENCIAL')) : '')).trim();
-    const labelErr = (nombreBase && nombreBase.includes('|')) 
-      ? `Ciclo ${nombreBase.split('|')[0]} ${_MODALIDAD_ATENCION_LABEL[nombreBase.split('|')[1]] || nombreBase.split('|')[1]}`
-      : nombreBase;
+    const nombreBase = n && n.nombre ? String(n.nombre) : String(_MODALIDADES_CEBA[i] || ('NIVEL_'+(i+1))).trim();
+    const labelErr = _MODALIDAD_CEBA_LABEL[nombreBase] || nombreBase;
     if(toMin(apertura) >= toMin(limite)) { toast(`${labelErr}: La apertura debe ser antes del límite de puntualidad`, 'warning'); return null; }
     if(toMin(limite) >= toMin(corte))    { toast(`${labelErr}: El límite de puntualidad debe ser antes del corte de ingreso`, 'warning'); return null; }
     if(toMin(corte) >= toMin(salida))    { toast(`${labelErr}: El corte de ingreso debe ser antes de la hora de salida`, 'warning'); return null; }
     const payloadOut = { nombre: nombreBase, horaApertura: apertura, horaLimite: limite, horaCorte: corte, horaSalida: salida };
-    if (n && n.ciclo) payloadOut.ciclo = n.ciclo;
-    if (n && n.modalAtencion) payloadOut.modalAtencion = n.modalAtencion;
+    if (n && Array.isArray(n.ciclos) && n.ciclos.length) payloadOut.ciclos = n.ciclos.slice();
+    if (n && n.modalidadCEBA) payloadOut.modalidadCEBA = String(n.modalidadCEBA);
+    if (n && n.ciclo) payloadOut.ciclo = n.ciclo; // legacy compat
     return payloadOut;
   });
   if(niveles.some(x => x === null)) return;
@@ -23543,21 +23680,52 @@ async function guardarGrados() {
   });
 
   // ===== Backward compat CEBA: si el usuario SOLO tenía formato legacy 3 keys (INICIAL, INTERMEDIO, AVANZADO)
-  // y los inputs de 9 keys derivados están VACÍOS → completarlos con el ciclo.
+  // y los inputs de 2 keys nuevos están VACÍOS → completarlos.
   if (!esEBR) {
-    const ciclosCEBA = nombresEsperados.slice(); // INICIAL, INTERMEDIO, AVANZADO
+    const modalidadesCEBA = nombresEsperados.slice(); // ['INICIAL/INTERMEDIO','AVANZADO']
     const cfgGrados = (cfg.grados && typeof cfg.grados === 'object') ? cfg.grados : {};
-    ciclosCEBA.forEach(ciclo => {
-      const legacyArr = (gradosOut[ciclo] && gradosOut[ciclo].length) ? gradosOut[ciclo] :
-                        ((cfgGrados[ciclo] && Array.isArray(cfgGrados[ciclo])) ? cfgGrados[ciclo] : []);
-      if (!legacyArr.length) return;
-      _MODALIDADES_ATENCION.forEach(modAt => {
-        const full = `${ciclo}|${modAt}`;
-        if (!gradosOut[full] || !gradosOut[full].length) gradosOut[full] = legacyArr.slice();
-      });
-      // Agregamos tb la key legacy simple para código antiguo que podría consultarla
-      if (!gradosOut[ciclo] || !gradosOut[ciclo].length) gradosOut[ciclo] = legacyArr.slice();
+
+    // Para INICIAL/INTERMEDIO: mergear legacy INICIAL + legacy INTERMEDIO con sufijo si no lo tienen
+    const keyI = 'INICIAL/INTERMEDIO';
+    const arrINew = [];
+    const legacyIni = (gradosOut['INICIAL'] && gradosOut['INICIAL'].length) ? gradosOut['INICIAL'] : ((cfgGrados['INICIAL'] && Array.isArray(cfgGrados['INICIAL'])) ? cfgGrados['INICIAL'] : []);
+    const legacyInt = (gradosOut['INTERMEDIO'] && gradosOut['INTERMEDIO'].length) ? gradosOut['INTERMEDIO'] : ((cfgGrados['INTERMEDIO'] && Array.isArray(cfgGrados['INTERMEDIO'])) ? cfgGrados['INTERMEDIO'] : []);
+    legacyIni.forEach(v => {
+      const vs = String(v || '').trim(); if (!vs) return;
+      arrINew.push(/\(inicial|intermedio\)/i.test(vs) ? vs : `${vs} (Inicial)`);
     });
+    legacyInt.forEach(v => {
+      const vs = String(v || '').trim(); if (!vs) return;
+      arrINew.push(/\(inicial|intermedio\)/i.test(vs) ? vs : `${vs} (Intermedio)`);
+    });
+    if ((!gradosOut[keyI] || !gradosOut[keyI].length) && arrINew.length) gradosOut[keyI] = arrINew;
+
+    // Para AVANZADO: usar legacy AVANZADO simple
+    const keyA = 'AVANZADO';
+    const legacyAv = (gradosOut['AVANZADO'] && gradosOut['AVANZADO'].length) ? gradosOut['AVANZADO'] : ((cfgGrados['AVANZADO'] && Array.isArray(cfgGrados['AVANZADO'])) ? cfgGrados['AVANZADO'] : []);
+    if ((!gradosOut[keyA] || !gradosOut[keyA].length) && legacyAv.length) gradosOut[keyA] = legacyAv.slice();
+
+    // Guardar también keys legacy simple (INICIAL, INTERMEDIO, AVANZADO) para código antiguo
+    const extraerLegacySinSufijo = (arr, prefijoCiclo) => {
+      if (!Array.isArray(arr) || !arr.length) return [];
+      return arr
+        .map(x => String(x || '').trim())
+        .filter(Boolean)
+        .map(x => {
+          const re = new RegExp(`\\s*\\(${prefijoCiclo}\\)\\s*$`, 'i');
+          return x.replace(re, '').trim();
+        })
+        .filter(Boolean);
+    };
+    if (!gradosOut['INICIAL'] || !gradosOut['INICIAL'].length) {
+      gradosOut['INICIAL'] = extraerLegacySinSufijo(gradosOut['INICIAL/INTERMEDIO'] || [], 'Inicial');
+    }
+    if (!gradosOut['INTERMEDIO'] || !gradosOut['INTERMEDIO'].length) {
+      gradosOut['INTERMEDIO'] = extraerLegacySinSufijo(gradosOut['INICIAL/INTERMEDIO'] || [], 'Intermedio');
+    }
+    if (!gradosOut['AVANZADO'] || !gradosOut['AVANZADO'].length) {
+      gradosOut['AVANZADO'] = (gradosOut[keyA] && Array.isArray(gradosOut[keyA])) ? gradosOut[keyA].slice() : [];
+    }
   }
 
   // ===== Preservar entradas de cfg.grados actuales que no pertenecen a esta modalidad
@@ -23627,15 +23795,39 @@ async function cargarGradosPorNivel(nivelParam) {
     const k = Object.keys(gradosMap).find(x => String(x||'').trim().toLowerCase() === nivelNorm);
     if(k) grados = gradosMap[k] || [];
   }
-  // ===== CEBA: si el nivel es ciclo solo (INICIAL) y no hay grados, unir los 3 modalidades (PRE/SEMI/VIRT)
+  // ===== CEBA: si el nivel es ciclo solo (INICIAL) y no hay grados, unir las 2 MODALIDADES CEBA y filtrar por el ciclo.
   if(!grados.length && !esEBR) {
     const cicloNom = String(nivel || '').trim().toUpperCase();
     if (['INICIAL','INTERMEDIO','AVANZADO'].includes(cicloNom)) {
       const setGr = new Set();
-      _MODALIDADES_ATENCION.forEach(modAt => {
-        const fullKey = `${cicloNom}|${modAt}`;
-        const arr = gradosMap[fullKey];
-        if (arr && Array.isArray(arr)) arr.forEach(g => { if(g && String(g).trim()) setGr.add(String(g).trim()); });
+      const modalidadesKeys = Object.keys(gradosMap).filter(k => {
+        const up = String(k||'').toUpperCase();
+        return up.includes('INICIAL') || up.includes('INTERMEDIO') || up.includes('AVANZADO');
+      });
+      modalidadesKeys.forEach(key => {
+        const arr = gradosMap[key];
+        if (!arr || !Array.isArray(arr)) return;
+        arr.forEach(g => {
+          const gs = String(g || '').trim();
+          if (!gs) return;
+          // Si el grado tiene sufijo "(Inicial)" / "(Intermedio)", filtrar por el cicloNom
+          const tieneSufijo = /\((inicial|intermedio|avanzado)\)/i.test(gs);
+          if (tieneSufijo) {
+            const matchSuf = gs.match(/\(([^)]+)\)/);
+            const sufCiclo = matchSuf ? _canonCicloJS(matchSuf[1]) : '';
+            if (sufCiclo === cicloNom) {
+              setGr.add(gs.replace(/\s*\([^)]+\)\s*$/g, '').trim() || gs);
+            }
+          } else {
+            // Sin sufijo: agregarlo si la key de modalidad coincide con el ciclo.
+            const keyUp = String(key).toUpperCase();
+            let loContiene = false;
+            if (cicloNom === 'INICIAL' && keyUp.includes('INICIAL')) loContiene = true;
+            if (cicloNom === 'INTERMEDIO' && (keyUp.includes('INTERMEDIO') || keyUp.includes('INICIAL/INTERMEDIO'))) loContiene = true;
+            if (cicloNom === 'AVANZADO' && keyUp.includes('AVANZADO')) loContiene = true;
+            if (loContiene) setGr.add(gs);
+          }
+        });
       });
       if (setGr.size) grados = Array.from(setGr).sort((a,b) => {
         const na = Number(String(a).replace(/\D/g,'')) || 0;
@@ -23688,26 +23880,40 @@ async function actualizarTodosLosFiltros() {
   const modalidad = _cfgModalidadConInferencia(cfg, alumnosArr);
   const niveles = _nivelesPorModalidad(cfg); // INICIAL/INTERMEDIO/AVANZADO o Inicial/Primaria/Secundaria
   const secciones = cfg.secciones || ['A','B','C','D'];
-  const todosGrados = [...new Set(Object.values(cfg.grados||{}).flat())];
+  // Grados: limpiar sufijos (Inicial)/(Intermedio) para selects de alumnos
+  const todosGradosRaw = [...new Set(Object.values(cfg.grados||{}).flat())];
+  const todosGrados = [...new Set(
+    todosGradosRaw.map(g => String(g || '').replace(/\s*\([^)]+\)\s*$/g, '').trim()).filter(Boolean)
+  )].sort((a,b) => {
+    const na = Number(String(a).replace(/\D/g,'')) || 0;
+    const nb = Number(String(b).replace(/\D/g,'')) || 0;
+    if (na && nb) return na - nb;
+    return String(a).localeCompare(String(b));
+  });
 
-  // Helper to rebuild select
+  // Helper to rebuild select (soporta string simple u objeto {val, label})
   function rebuildSelect(id, opciones, addTodos=true) {
     const el = document.getElementById(id);
     if(!el) return;
     const cur = el.value;
     el.innerHTML = `<option value="" disabled selected>-- ${el.closest('.form-group')?.querySelector('label')?.textContent||''} --</option>`;
     if(addTodos) el.innerHTML += `<option value="TODOS">Todos</option>`;
-    opciones.forEach(o => { el.innerHTML += `<option value="${o}">${o}</option>`; });
+    opciones.forEach(o => {
+      const v = (o && typeof o === 'object') ? (o.val || '') : String(o || '');
+      const l = (o && typeof o === 'object') ? (o.label || v) : String(o || '');
+      if (!v) return;
+      el.innerHTML += `<option value="${v}">${l}</option>`;
+    });
     if(cur) el.value = cur;
   }
 
   // Filtros alumnos
-  rebuildSelect('fa-nivel', niveles);
+  rebuildSelect('fa-nivel', niveles.map(n => ({ val: n, label: (_MODALIDAD_CEBA_LABEL && _MODALIDAD_CEBA_LABEL[n]) || n })));
   rebuildSelect('fa-seccion', secciones);
   rebuildSelect('fa-grado', todosGrados);
 
   // Filtros registro
-  rebuildSelect('filter-nivel', niveles);
+  rebuildSelect('filter-nivel', niveles.map(n => ({ val: n, label: (_MODALIDAD_CEBA_LABEL && _MODALIDAD_CEBA_LABEL[n]) || n })));
   rebuildSelect('filter-seccion', secciones);
   rebuildSelect('filter-grado', todosGrados);
 
@@ -23715,7 +23921,7 @@ async function actualizarTodosLosFiltros() {
   const fTurno = document.getElementById('f-turno');
   if(fTurno) {
     fTurno.innerHTML = '<option value="">Seleccionar</option>';
-    niveles.forEach(n => { fTurno.innerHTML += `<option value="${n}">${n}</option>`; });
+    niveles.forEach(n => { fTurno.innerHTML += `<option value="${n}">${(_MODALIDAD_CEBA_LABEL && _MODALIDAD_CEBA_LABEL[n]) || n}</option>`; });
   }
 
   // Modal alumno — secciones
@@ -23731,7 +23937,15 @@ async function actualizarTodosLosFiltros() {
 
 async function actualizarFiltrosGrado() {
   const cfg = await getConfig();
-  const todosGrados = [...new Set(Object.values(cfg.grados||{}).flat())];
+  const todosGradosRaw = [...new Set(Object.values(cfg.grados||{}).flat())];
+  const todosGrados = [...new Set(
+    todosGradosRaw.map(g => String(g || '').replace(/\s*\([^)]+\)\s*$/g, '').trim()).filter(Boolean)
+  )].sort((a,b) => {
+    const na = Number(String(a).replace(/\D/g,'')) || 0;
+    const nb = Number(String(b).replace(/\D/g,'')) || 0;
+    if (na && nb) return na - nb;
+    return String(a).localeCompare(String(b));
+  });
   ['fa-grado','filter-grado'].forEach(id => {
     const el = document.getElementById(id);
     if(!el) return;
