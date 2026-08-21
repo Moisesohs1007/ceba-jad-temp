@@ -8160,21 +8160,56 @@ function _syncFCicloDesdeTurno() {
 //   AVANZADO → Todas las opciones (PRESENCIAL / SEMIPRESENCIAL / VIRTUAL)
 function _syncFModalidadDesdeCiclo() {
   try {
+    // Inferir modalidad CEBA/EBA con múltiples fallbacks para no depender de getConfig sync
     let modalidad = '';
-    try { if(typeof getConfig === 'function') { const c = {}; modalidad = _cfgModalidadConInferencia(c, (typeof window !== 'undefined' ? (window.alumnosCache || []) : [])); } } catch(_) { modalidad = ''; }
-    // Solo aplica para CEBA/EBA
+    // 1) Intentar con configCache global + alumnosCache global
+    try {
+      const gCfg = (typeof configCache !== 'undefined' && configCache) ? configCache : {};
+      const gAl = (typeof window !== 'undefined' && window.alumnosCache) ? window.alumnosCache : [];
+      if (typeof _cfgModalidadConInferencia === 'function') modalidad = _cfgModalidadConInferencia(gCfg, gAl);
+    } catch(_) { modalidad = ''; }
+    // 2) Si aún vacío, inspeccionar f-ciclo (CEBA/EBR tiene valores distintos)
+    if (!modalidad) {
+      try {
+        const cEl = document.getElementById('f-ciclo');
+        const val = String((cEl && cEl.value) || '').trim().toUpperCase();
+        if (['INICIAL','INTERMEDIO','AVANZADO'].includes(val)) modalidad = 'CEBA';
+        else if (['PRIMARIA','SECUNDARIA'].includes(val)) modalidad = 'EBR';
+      } catch(_) {}
+    }
+    // 3) Si aún vacío, revisar labelFTurno que inicializarFiltros dejó como "Modalidad de atención"
+    if (!modalidad) {
+      try {
+        const sel = document.getElementById('f-turno');
+        const p = sel && sel.closest ? sel.closest('.form-group') : null;
+        const lbl = p && p.querySelector ? p.querySelector('label') : null;
+        const txt = String((lbl && lbl.textContent) || '').toLowerCase();
+        if (txt.includes('atenci') || txt.includes('modalidad')) modalidad = 'CEBA';
+        else if (txt.includes('nivel')) modalidad = 'EBR';
+      } catch(_) {}
+    }
+    // 4) Por último, si hay un input f-ciclo visible, asumir CEBA
+    if (!modalidad) {
+      try {
+        const cEl = document.getElementById('f-ciclo');
+        if (cEl && cEl.offsetParent !== null) modalidad = 'CEBA';
+      } catch(_) {}
+    }
+    // Solo aplica para CEBA/EBA. EBR no hace nada.
     if (modalidad !== 'CEBA' && modalidad !== 'EBA') return;
     const tEl = document.getElementById('f-turno');
     const cEl = document.getElementById('f-ciclo');
     if(!tEl || !cEl) return;
     const ciclo = _canonCicloJS(String(cEl.value || ''));
-    const permitidas = _modalidadesAtencionPermitidasParaCiclo(ciclo);
+    const permitidas = ciclo ? _modalidadesAtencionPermitidasParaCiclo(ciclo) : _MODALIDADES_ATENCION.slice();
     // Re-poblar f-turno SOLO con las permitidas
     const cur = _normModAtencion(tEl.value) || tEl.value;
     tEl.innerHTML = '';
     if (!permitidas.length) {
-      tEl.innerHTML = '<option value="">Seleccionar</option>';
-    } else if (permitidas.length === 1) {
+      // Sin ciclo seleccionado → mostrar TODAS por defecto y habilitar
+      permitidas.push(..._MODALIDADES_ATENCION.slice());
+    }
+    if (permitidas.length === 1) {
       // SOLO una opción → mostrarla y deshabilitar el select
       const unica = permitidas[0];
       tEl.innerHTML = `<option value="${unica}">${_MODALIDAD_ATENCION_LABEL[unica] || unica}</option>`;
