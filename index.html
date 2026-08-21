@@ -9318,22 +9318,85 @@ async function renderAlumnos() {
     // getAlumnosFiltrados: profesores restringidos cargan solo sus aulas (28 lecturas vs 1,300)
     let alumnosBase = await getAlumnosFiltrados();
     if(renderSeq !== _renderAlumnosSeq) return;
+
     // =============================================================
-    // FIX ORLANDO (MUY IMPORTANTE): Si docente PROFESOR y aulasList>0 (tiene aulas
-    // asignadas), pero getAlumnosFiltrados() retorno VACÍO (por bug en scope, ciclo
-    // mal guardado, restricciones, etc.) -> FALLBACK NIVEL DIOS: cargar TODOS los
-    // alumnos del colegio y filtrar en memoria via aplicarFiltroProfesor (que ya tiene
-    // las reglas laxas). Con esto garantizamos que si de verdad tiene aulas, vea alumnos
-    // (totalDB>0 y luego el fix0 autocorrector activa).
+    // DEPURACIÓN Orlando (consola): Muestra el estado de variables clave POR QUÉ 0.
+    // Moises/Orlando: F12 → Consola verás tabla. No afecta UX.
     // =============================================================
-    if (isProf && aulasList.length > 0 && (!alumnosBase || alumnosBase.length === 0)) {
+    (function _debugOrlando0() {
       try {
-        console.warn('[renderAlumnos] fallback nivel dios: getAlumnosFiltrados retornó 0 para profesor con aulas; cargando todos y filtrando en memoria.');
+        const u = typeof currentUser !== 'undefined' ? currentUser : {};
+        const r = typeof currentPerms !== 'undefined' ? currentPerms : {};
+        const _aulasList = (typeof aulasList !== 'undefined') ? (aulasList||[]) : [];
+        const kpis = {
+          esDocenteAula: typeof _isDocenteAula === 'function' ? _isDocenteAula() : 'n/a',
+          isProf: !!isProf,
+          _permisoAlumnos: String(r?.verAlumnos || r?.restringir || r?.alumnos || u?.rol || '').slice(0,80),
+          aulasList_len: _aulasList.length,
+          tutor_grado: u?.tutor_grado || '',
+          tutor_seccion: u?.tutor_seccion || '',
+          es_tutor: u?.es_tutor || false,
+          cargo: (u?.cargo || '').toString().slice(0,80),
+          rol: u?.rol || '',
+          filtrosUI: { nivel, grado, seccion, modalidad },
+          alumnosBase_0_len: alumnosBase ? alumnosBase.length : -1
+        };
+        console.groupCollapsed('%c[renderAlumnos] Debug Orlando 0', 'color:#ff6b6b;font-weight:bold');
+        console.table ? console.table(kpis) : console.log(kpis);
+        if (_aulasList.length>0) {
+          console.log('  aulasList =', _aulasList.slice(0,10));
+        } else {
+          console.warn('  ⚠️  aulasList VACÍA → fallback 2 legacy activará con tutor_grado/seccion');
+        }
+        console.groupEnd();
+      } catch (_) {}
+    })();
+
+    // =============================================================
+    // FIX ORLANDO (MUY IMPORTANTE V2): Si DOCENTE (por cualquier
+    // condición) y getAlumnosFiltrados() retornó VACÍO o no tiene
+    // aulasList → 2 FALLBACKS EN CADENA:
+    //   FALLBACK B = cargar TODOS alumnos + aplicarFiltroProfesor (si la función existe).
+    //   FALLBACK C (ÚLTIMA RATIO LEGACY): si currentUser tiene
+    //     tutor_grado="1" y tutor_seccion="A" o equivalente, BUSCAR
+    //     alumnos EN MEMORIA por exactamente (grado, seccion)
+    //     CUALQUIER ciclo/turno (por 38 alumnos 1·A·PRE mal catalogados
+    //     como AVANZADO con tutor legacy Orlando).
+    // =============================================================
+    const _tieneTutorLegacy = !!(currentUser && (String(currentUser.tutor_grado||'').trim() && String(currentUser.tutor_seccion||'').trim()));
+    const _esDocenteOProf = !!isProf || (currentUser && (currentUser.rol === 'profesor' || (currentUser.cargo && String(currentUser.cargo).toLowerCase().includes('docente'))));
+
+    if (_esDocenteOProf && (!alumnosBase || alumnosBase.length === 0)) {
+      try {
+        console.warn('[renderAlumnos] fallback B (todos + aplicarFiltroProfesor) → getAlumnosFiltrados retornó 0 para docente o legacy.');
         const todos = await DB.getAlumnos();
-        alumnosBase = (typeof aplicarFiltroProfesor === 'function') ? (aplicarFiltroProfesor(todos || []) || []) : (todos || []);
         if(renderSeq !== _renderAlumnosSeq) return;
+
+        // Fallback B: aplicarFiltroProfesor (reglas laxas)
+        let fbB = (typeof aplicarFiltroProfesor === 'function') ? (aplicarFiltroProfesor(todos || []) || []) : [];
+
+        // Fallback C (ÚLTIMA RATIO): Si sigue vacío y hay tutor legacy, matchear
+        // SOLO grado+seccion exacto, CUALQUIER ciclo/turno (ignora TODO lo demás).
+        let fbC = [];
+        if ((!fbB || fbB.length === 0) && _tieneTutorLegacy) {
+          const tg = String(currentUser.tutor_grado || '').trim();
+          const ts = String(currentUser.tutor_seccion || '').trim().toUpperCase();
+          console.warn(`[renderAlumnos] fallback C (legacy tutor_grado=${tg} tutor_seccion=${ts}) → buscar en ${(todos||[]).length} alumnos SOLO grado+seccion exacto.`);
+          fbC = (todos || []).filter(a => {
+            const g = String(a.grado || '').trim();
+            const s = String(a.seccion || '').trim().toUpperCase();
+            return (g === tg) && (s === ts);
+          });
+          if (fbC.length > 0) {
+            console.info(`[renderAlumnos] fallback C OK → ${fbC.length} alumnos encontrados SOLO por grado+seccion (cualquier ciclo/turno).`);
+            fbB = fbC;
+          }
+        }
+
+        // Si FB se llenó → reemplazar alumnosBase y renderizar
+        if (fbB && fbB.length > 0) alumnosBase = fbB.slice();
       } catch (_eFallback) {
-        console.warn('[renderAlumnos] fallback nivel dios falló:', _eFallback);
+        console.warn('[renderAlumnos] fallback B/C falló:', _eFallback);
       }
     }
     const totalDB = alumnosBase.length;
@@ -9383,32 +9446,34 @@ async function renderAlumnos() {
       // 👉 LIMPIAMOS LOS FILTROS (dejamos solo búsqueda) y RE-RENDERIZAMOS
       // para mostrarle TODOS sus alumnos de inmediato (no espera click).
       // =============================================================
-      if (isProf && totalDB > 0) {
+      if (_esDocenteOProf && totalDB > 0 && alumnos.length === 0) {
         try {
-          // Protección anti-loop infinito: este FIX (limpiar filtros y re-render) solo corre
-          // UNA SOLA VEZ por renderSeq. Si después de limpiar sigue 0 → paramos.
-          const _fixKey = 'fix0_' + (renderSeq || Date.now());
-          if (!window._fix0Run || window._fix0Run !== _fixKey) {
-            window._fix0Run = _fixKey;
-            const nEl = document.getElementById('fa-nivel');
-            const gEl = document.getElementById('fa-grado');
-            const sEl = document.getElementById('fa-seccion');
-            const mEl = document.getElementById('fa-modalidad');
-            // Solo limpiar si había algo que limpiar (no q)
-            const habiaFiltros = (nEl && nEl.value && nEl.value !== 'TODOS') || (gEl && gEl.value && gEl.value !== 'TODOS') || (sEl && sEl.value && sEl.value !== 'TODOS') || (mEl && mEl.value);
-            // Fix Orlando 3: si aulas del profesor NO tienen turno (legacy), limpiar Modalidad
-            // porque usuario la podría haber puesto en Virtual y no coincide (0).
-            const aulasNoTienenTurno = aulasList.length > 0 && aulasList.every(a => !(a && String(a.turno||'').trim()));
-            if (habiaFiltros || aulasNoTienenTurno) {
-              if (nEl && [...(nEl.options||[])].some(o => String(o.value||'') === '')) { try { nEl.value = ''; } catch(_) {} }
-              if (gEl) try { gEl.value = ''; } catch(_) {}
-              if (sEl) try { sEl.value = ''; } catch(_) {}
-              if (mEl) try { mEl.value = ''; } catch(_) {}
-              try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
-              try { toast(`✅ Se encontraron ${totalDB} alumnos para ti - mostrando todos tus asignados`, 'success', 4000); } catch(_) {}
-              setTimeout(() => renderAlumnos(), 50);
-              return;
-            }
+          // Limpiar filtros 0→N para docentes. Cuidado anti-loop infinito: solo UNA vez por renderSeq O si
+          // la configuración de filtros actual es DIFERENTE a la última que limpiamos.
+          const nEl = document.getElementById('fa-nivel');
+          const gEl = document.getElementById('fa-grado');
+          const sEl = document.getElementById('fa-seccion');
+          const mEl = document.getElementById('fa-modalidad');
+          const aulasNoTienenTurno = aulasList.length > 0 && aulasList.every(a => !(a && String(a.turno||'').trim()));
+          const _sigKey = [
+            nEl ? nEl.value : '',
+            gEl ? gEl.value : '',
+            sEl ? sEl.value : '',
+            mEl ? mEl.value : '',
+            aulasNoTienenTurno ? 'NT' : 'T',
+            (window._fixLastKey || '')
+          ].join('|');
+          if ((!window._fix0Run || window._fix0Run !== _sigKey) && _sigKey !== (window._fixLastKey || '')) {
+            window._fix0Run = _sigKey;
+            window._fixLastKey = _sigKey;
+            if (nEl && [...(nEl.options||[])].some(o => String(o.value||'') === '')) { try { nEl.value = ''; } catch(_) {} }
+            if (gEl) try { gEl.value = ''; } catch(_) {}
+            if (sEl) try { sEl.value = ''; } catch(_) {}
+            if (mEl) try { mEl.value = ''; } catch(_) {}
+            try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
+            try { toast(`✅ Se encontraron ${totalDB} alumnos para ti - mostrando todos tus asignados`, 'success', 4000); } catch(_) {}
+            setTimeout(() => renderAlumnos(), 50);
+            return;
           }
         } catch(_) {}
       }
