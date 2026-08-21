@@ -2929,19 +2929,19 @@
         <div class="form-group" style="min-width:120px;">
           <label>Nivel</label>
           <select id="fa-nivel" onchange="onNivelChangeAlumnos()">
-            <option value="" disabled selected>-- Nivel --</option>
+            <option value="" selected>-- Nivel --</option>
           </select>
         </div>
         <div class="form-group" style="min-width:120px;">
           <label>Grado</label>
           <select id="fa-grado" onchange="onGradoChangeAlumnos()" disabled style="opacity:0.45;cursor:not-allowed;">
-            <option value="" disabled selected>-- Grado --</option>
+            <option value="" selected>-- Grado --</option>
           </select>
         </div>
         <div class="form-group" style="min-width:100px;">
           <label>Sección</label>
           <select id="fa-seccion" onchange="onSeccionChangeAlumnos()" disabled style="opacity:0.45;cursor:not-allowed;">
-            <option value="" disabled selected>-- Sección --</option>
+            <option value="" selected>-- Sección --</option>
           </select>
         </div>
         <div class="search-wrap" style="flex:1;min-width:180px;margin:0;">
@@ -5968,25 +5968,27 @@ function _normRol(r) {
   return v;
 }
 function _isDocenteAula() {
-  // Ampliado 2026-08-20: NO solo cargo literal "docente de aula".
-  // Cualquier PROFESOR o PSICOLOGO con restricciones activas (restringir==true
-  // o asignaciones no vacias o tutorAulas cargadas) debe activar autoSelect de tutoria.
-  // Si no es docente de aula pero SÍ es profesor restringido → activar igual para no ver 0 alumnos.
+  // 2026-08-20: Ampliado al MAXIMO (no falla por cargo estandarizado).
+  // REGLA DE ORO: Cualquier PROFESOR o PSICOLOGO con DATOS de aulas (asignaciones o tutor o strings legacy)
+  // => activa auto-selección de su tutoría para no ver 0 alumnos por filtro Avanzado por default DOM.
   const r = _normRol(currentRol);
   const esProf = (r === 'profesor' || r === 'psicologo');
-  const restringido = (
-    (currentPrivilegios && !!currentPrivilegios.restringir) ||
-    (currentPrivilegios && currentPrivilegios.asignaciones && Object.keys(currentPrivilegios.asignaciones).length > 0) ||
+  const tieneDatosAulas = (
+    (currentPrivilegios && (
+      !!currentPrivilegios.restringir ||
+      (currentPrivilegios.asignaciones && Object.keys(currentPrivilegios.asignaciones).length > 0)
+    )) ||
     (currentTutorInfo && (
+      !!currentTutorInfo.es_tutor ||
       (currentTutorInfo.tutorAulas && currentTutorInfo.tutorAulas.length > 0) ||
       (currentTutorInfo.gradosAsignados && currentTutorInfo.gradosAsignados.length > 0) ||
       (String(currentTutorInfo.tutorGrado || '').trim() && String(currentTutorInfo.tutorSeccion || '').trim())
     ))
   );
-  if (esProf && restringido) return true;
-  // Caso legacy: cargo literal
+  if (esProf && tieneDatosAulas) return true;
+  // Caso legacy: cargo textual (aceptamos "docente /ciencias", "Docente / Lengua", "DOCENTE AULA", etc.)
   const c = String(currentCargo || '').trim().toLowerCase();
-  return c.includes('docente de aula') || c.includes('docente aula');
+  return c.includes('docente') || c.includes('tutor de aula') || c.includes('profesor de aula') || c.includes('educador de aula');
 }
 
 // Flag para evitar que onChange sobrescriba la auto-selección de tutoría
@@ -6082,8 +6084,21 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   const g = primeraAula ? String(primeraAula.grado || '').trim() : String(currentTutorInfo?.tutorGrado || '').trim();
   const s = primeraAula ? String(primeraAula.seccion || '').trim().toUpperCase() : String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
   const cicloAuto = primeraAula ? String(primeraAula.ciclo || '').trim() : '';
-  if (haceAutoSelect && (!g || !s)) {
-    if (nEl && nEl.options && nEl.options[0]?.value === '' && nEl.value !== '') {
+  // FIX Orlando: SI el usuario es PROFESOR + (restringir==true o es_tutor o tiene strings legacy de tutoria)
+  // y además tenemos g && s válidos → FORZAMOS haceAutoSelect=true aunque _isDocenteAula() haya
+  // retornado false por cargo mal formateado (ej: "docente /ciencias" no matchea includes antiguos).
+  let _realHaceAutoSelect = !!haceAutoSelect;
+  if (!_realHaceAutoSelect && isProf && (g && s)) {
+    const condicionFuerte = (
+      (currentPrivilegios && !!currentPrivilegios.restringir) ||
+      (currentTutorInfo && !!currentTutorInfo.es_tutor) ||
+      (aulasList.length > 0) ||
+      (currentPrivilegios?.asignaciones && Object.keys(currentPrivilegios.asignaciones).length > 0)
+    );
+    if (condicionFuerte) _realHaceAutoSelect = true;
+  }
+  if (_realHaceAutoSelect && (!g || !s)) {
+    if (nEl && nEl.options && [...(nEl.options || [])].some(o => String(o.value || '') === '') && nEl.value !== '') {
       try { nEl.value = ''; } catch(_) {}
     }
     return;
@@ -6093,13 +6108,13 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
 
   // 1. Poblar y seleccionar nivel (si hace autoSelect) o limpiar a ''
   let nivel = '';
-  if (haceAutoSelect && cicloAuto) {
+  if (_realHaceAutoSelect && cicloAuto) {
     try { nivel = _cfgKeyToNivelCorto(cicloAuto, options.cfg); } catch(_) {}
   }
   if (nEl) {
     let cfg = options.cfg || null;
     try { if(!cfg) cfg = await getConfig(); } catch(e0) {}
-    if (haceAutoSelect) {
+    if (_realHaceAutoSelect) {
       await poblarFiltroNivel(nivelId, null, { cfg, alumnos: options.alumnos });
       if(!nivel) {
         try {
@@ -6126,9 +6141,9 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
       // NO es docente aula → LIMPIAR nivel a '' (SIEMPRE) para que no quede en 1ra option Avanzado
       nivel = '';
     }
-    if (nivel === '' && nEl && nEl.options && nEl.options.length && nEl.options[0]?.value === '') {
+    if (nivel === '' && nEl && nEl.options && [...(nEl.options || [])].some(o => String(o.value || '') === '')) {
       try { nEl.value = ''; } catch(_) {}
-    } else if (haceAutoSelect && nivel) {
+    } else if (_realHaceAutoSelect && nivel) {
       if (![...(nEl.options || [])].some(o => String(o.value || '') === nivel)) await poblarFiltroNivel(nivelId, null, { cfg, alumnos: options.alumnos });
       if([...(nEl.options || [])].some(o => String(o.value || '') === nivel)) nEl.value = nivel;
       nEl.disabled = _lockCampos;
@@ -6136,7 +6151,7 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   }
 
   if (gEl) {
-    if (haceAutoSelect && g && s) {
+    if (_realHaceAutoSelect && g && s) {
       await poblarFiltroGrado(gradoId, nivel, { cfg: options.cfg, alumnos: options.alumnos });
       if (![...(gEl.options || [])].some(o => String(o.value || '') === g)) {
         gEl.innerHTML = `<option value="${g}">${g}</option>`;
@@ -6144,12 +6159,11 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
       gEl.value = g;
       gEl.disabled = _lockCampos;
     } else {
-      // Limpiar a '' para que no quede la 1ra option por default
       try { if (gEl.value) gEl.value = ''; } catch(_) {}
     }
   }
   if (sEl) {
-    if (haceAutoSelect && g && s) {
+    if (_realHaceAutoSelect && g && s) {
       await poblarFiltroSeccion(seccionId, g, { cfg: options.cfg, alumnos: options.alumnos });
       if (![...(sEl.options || [])].some(o => String(o.value || '') === s)) {
         sEl.innerHTML = `<option value="${s}">${s}</option>`;
@@ -6162,15 +6176,31 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   }
 
   setTimeout(() => {
-    if (nEl && (nivel || !haceAutoSelect) && nEl.value && !_lockCampos && !haceAutoSelect) {
-      // Caso NO docente: asegurarse quede '' (no 1ra option Avanzado)
-      try { if (nEl.options && nEl.options[0]?.value === '') nEl.value = ''; } catch(_) {}
+    // PASO FUERTE: sin importar el caso, si el select tiene '' habilitado y esta en otra cosa → ''
+    try {
+      if (nEl && nEl.options && [...nEl.options].some(o => String(o.value || '') === '')) {
+        if (isProf && !_realHaceAutoSelect && nEl.value !== '') {
+          nEl.value = '';
+          try { if (gEl && gEl.value && !_realHaceAutoSelect) gEl.value = ''; } catch(_) {}
+          try { if (sEl && sEl.value && !_realHaceAutoSelect) sEl.value = ''; } catch(_) {}
+        }
+      }
+    } catch(_) {}
+    if (_realHaceAutoSelect) {
+      if (nEl && !nEl.value) nEl.value = nivel;
+      if (gEl && !gEl.value) gEl.value = g;
+      if (sEl && !sEl.value) sEl.value = s;
     }
-    if (haceAutoSelect && nEl && !nEl.value) nEl.value = nivel;
-    if (haceAutoSelect && gEl && !gEl.value) gEl.value = g;
-    if (haceAutoSelect && sEl && !sEl.value) sEl.value = s;
     _tutoriaLocked = false;
-  }, 250);
+  }, 300);
+  setTimeout(() => {
+    // 2do refuerzo (contra re-renders de DOM):
+    try {
+      if (nEl && nEl.options && [...nEl.options].some(o => String(o.value || '') === '')) {
+        if (isProf && !_realHaceAutoSelect && nEl.value !== '') nEl.value = '';
+      }
+    } catch(_) {}
+  }, 800);
 }
 function _rolLabel(r) {
   const v = _normRol(r);
