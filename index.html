@@ -6150,11 +6150,14 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   const _noAutoSeleccionarFiltros = (_tieneMultiplesNiveles || _multiplesGsS);
   let _noAutoSeleccionarFiltrosForzado = false;
   // =============================================================
-  // IMPORTANTE: Mover después de declarar _noAutoSeleccionarFiltros (HOISTING FIX ReferenceError Orlando).
-  // Anteriormente estaba antes (L6109) y rompía todo en CEBA user no-admin.
+  // FIX TOTAL Orlando (peticion user): NUNCA BLOQUEAR LOS FILTROS NIVEL/GRADO/SECCION/MODALIDAD
+  // a docentes (profesor/psicologo). Incluso si tiene 1 sola aula estructurada: auto-seleccionar
+  // la aula (llenar selects) PERO MANTENERLOS EDITABLES. Asi user puede cambiar filtros si
+  // le apatece ver otras aulas o corregir el 0. La unica condicion para bloquear era old legacy;
+  // user reporta: "ni permite seleccionar el nivel esta deshabilitado solo permite seleccionar modalidad".
+  // Por eso desechamos _lockCampos por completo para docentes.
   // =============================================================
-  const _bloquear = haceAutoSelect && !_noLock && !_soloAulasLegacy && !currentPerms?.verTodasAulas && aulasList.length > 0 && aulasList.length === 1 && !_noAutoSeleccionarFiltros;
-  const _lockCampos = !!_bloquear;
+  const _lockCampos = false; // NUNCA BLOQUEAR (siempre editable)
   // FIX Orlando: SI el usuario es PROFESOR + (restringir==true o es_tutor o tiene strings legacy de tutoria)
   // y además tenemos g && s válidos → FORZAMOS haceAutoSelect=true aunque _isDocenteAula() haya
   // retornado false por cargo mal formateado (ej: "docente /ciencias" no matchea includes antiguos).
@@ -9313,8 +9316,26 @@ async function renderAlumnos() {
     empty.style.display = 'none';
 
     // getAlumnosFiltrados: profesores restringidos cargan solo sus aulas (28 lecturas vs 1,300)
-    const alumnosBase = await getAlumnosFiltrados();
+    let alumnosBase = await getAlumnosFiltrados();
     if(renderSeq !== _renderAlumnosSeq) return;
+    // =============================================================
+    // FIX ORLANDO (MUY IMPORTANTE): Si docente PROFESOR y aulasList>0 (tiene aulas
+    // asignadas), pero getAlumnosFiltrados() retorno VACÍO (por bug en scope, ciclo
+    // mal guardado, restricciones, etc.) -> FALLBACK NIVEL DIOS: cargar TODOS los
+    // alumnos del colegio y filtrar en memoria via aplicarFiltroProfesor (que ya tiene
+    // las reglas laxas). Con esto garantizamos que si de verdad tiene aulas, vea alumnos
+    // (totalDB>0 y luego el fix0 autocorrector activa).
+    // =============================================================
+    if (isProf && aulasList.length > 0 && (!alumnosBase || alumnosBase.length === 0)) {
+      try {
+        console.warn('[renderAlumnos] fallback nivel dios: getAlumnosFiltrados retornó 0 para profesor con aulas; cargando todos y filtrando en memoria.');
+        const todos = await DB.getAlumnos();
+        alumnosBase = (typeof aplicarFiltroProfesor === 'function') ? (aplicarFiltroProfesor(todos || []) || []) : (todos || []);
+        if(renderSeq !== _renderAlumnosSeq) return;
+      } catch (_eFallback) {
+        console.warn('[renderAlumnos] fallback nivel dios falló:', _eFallback);
+      }
+    }
     const totalDB = alumnosBase.length;
     const prep = _getPreparedAlumnosView(alumnosBase);
     let alumnos = prep.sorted;
@@ -9375,11 +9396,14 @@ async function renderAlumnos() {
             const mEl = document.getElementById('fa-modalidad');
             // Solo limpiar si había algo que limpiar (no q)
             const habiaFiltros = (nEl && nEl.value && nEl.value !== 'TODOS') || (gEl && gEl.value && gEl.value !== 'TODOS') || (sEl && sEl.value && sEl.value !== 'TODOS') || (mEl && mEl.value);
-            if (habiaFiltros) {
-              try { if (nEl && [...(nEl.options||[])].some(o => String(o.value||'') === '')) nEl.value = ''; } catch(_) {}
-              try { if (gEl) gEl.value = ''; } catch(_) {}
-              try { if (sEl) sEl.value = ''; } catch(_) {}
-              try { if (mEl) mEl.value = ''; } catch(_) {}
+            // Fix Orlando 3: si aulas del profesor NO tienen turno (legacy), limpiar Modalidad
+            // porque usuario la podría haber puesto en Virtual y no coincide (0).
+            const aulasNoTienenTurno = aulasList.length > 0 && aulasList.every(a => !(a && String(a.turno||'').trim()));
+            if (habiaFiltros || aulasNoTienenTurno) {
+              if (nEl && [...(nEl.options||[])].some(o => String(o.value||'') === '')) { try { nEl.value = ''; } catch(_) {} }
+              if (gEl) try { gEl.value = ''; } catch(_) {}
+              if (sEl) try { sEl.value = ''; } catch(_) {}
+              if (mEl) try { mEl.value = ''; } catch(_) {}
               try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
               try { toast(`✅ Se encontraron ${totalDB} alumnos para ti - mostrando todos tus asignados`, 'success', 4000); } catch(_) {}
               setTimeout(() => renderAlumnos(), 50);
