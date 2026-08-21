@@ -195,7 +195,17 @@ function llenarDatos() {
   var esEBR = false;
   try { esEBR = String(window.COLEGIO_MODALIDAD || '').toUpperCase() === 'EBR'; } catch(e){}
   var cicloPart = (alumno.ciclo && !esEBR) ? (String(alumno.ciclo).trim() + ' ') : '';
-  var grado  = cicloPart + (alumno.grado||'') + ' ' + (alumno.seccion||'') + (alumno.turno ? ' - ' + alumno.turno : '');
+  var turnoRaw = String(alumno.turno || '').trim();
+  var turnoLabel = '';
+  if (turnoRaw) {
+    if (esEBR) {
+      turnoLabel = ' - ' + turnoRaw;
+    } else {
+      var turUp = turnoRaw.toUpperCase();
+      if (turUp !== 'PRESENCIAL') turnoLabel = ' - ' + turnoRaw;
+    }
+  }
+  var grado  = cicloPart + (alumno.grado||'') + ' ' + (alumno.seccion||'') + turnoLabel;
   // Iniciales: primer nombre + primer apellido
   var partsN = (alumno.nombres||'').trim().split(' ');
   var partsA = (alumno.apellidos||'').trim().split(' ');
@@ -1011,7 +1021,13 @@ function renderCarnet() {
     var esEBR2 = false;
     try { esEBR2 = String(window.COLEGIO_MODALIDAD || '').toUpperCase() === 'EBR'; } catch(e){}
     var cicloPart2 = (alumno.ciclo && !esEBR2) ? (String(alumno.ciclo).trim() + ' ') : '';
-    document.getElementById('carnet-grado').textContent = cicloPart2 + alumno.grado+' '+alumno.seccion+' - '+alumno.turno;
+    var turno2 = String(alumno.turno || '').trim();
+    var sufTurno2 = '';
+    if (turno2) {
+      if (esEBR2) sufTurno2 = ' - ' + turno2;
+      else if (turno2.toUpperCase() !== 'PRESENCIAL') sufTurno2 = ' - ' + turno2;
+    }
+    document.getElementById('carnet-grado').textContent = cicloPart2 + alumno.grado+' '+alumno.seccion + sufTurno2;
   }
   document.getElementById('carnet-dni').textContent    = 'DNI: '+alumno.id;
   document.getElementById('carnet-year').textContent   = new Date().getFullYear();

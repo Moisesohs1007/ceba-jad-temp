@@ -794,6 +794,11 @@ function chatApoAlumnoLabel(conv) {
   var s = conv.seccion || a.seccion || '';
   if (g) partsAula.push(g);
   if (s) partsAula.push(s);
+  var tur = String(conv.turno || a.turno || '').trim();
+  if (tur) {
+    if (esEBR) partsAula.push('· ' + tur);
+    else if (tur.toUpperCase() !== 'PRESENCIAL') partsAula.push('· ' + tur);
+  }
   return [a.nombres, a.apellidos].filter(Boolean).join(' ') + (partsAula.length ? ' · '+partsAula.join(' ') : '');
 }
 
