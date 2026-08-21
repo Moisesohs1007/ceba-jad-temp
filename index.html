@@ -5534,12 +5534,38 @@ function _nivelesPorModalidad(m) {
 }
 
 // ============================================================
-// Helpers MODALIDADES CEBA: SOLO 2 MODALIDADES (no PRESENCIAL/SEMI/VIRTUAL)
-//   Modalidad 1: INICIAL / INTERMEDIO (contiene ciclos INICIAL + INTERMEDIO)
-//   Modalidad 2: AVANZADO (contiene ciclo AVANZADO)
+// Helpers MODALIDADES CEBA: 2 NIVELES PARA CONFIG/HORARIOS/GRADOS
+//   Nivel 1: INICIAL / INTERMEDIO (contiene ciclos INICIAL + INTERMEDIO)
+//   Nivel 2: AVANZADO (contiene ciclo AVANZADO)
 // ============================================================
 const _MODALIDADES_CEBA = ['INICIAL/INTERMEDIO', 'AVANZADO'];
 const _MODALIDAD_CEBA_LABEL = { 'INICIAL/INTERMEDIO': 'Inicial / Intermedio', 'AVANZADO': 'Avanzado' };
+
+// ============================================================
+// MODALIDAD DE ATENCIÓN (campo `turno` en alumnos CEBA).
+// IMPORTANTE: Nivel INICIAL/INTERMEDIO → SÓLO se permite PRESENCIAL.
+// Nivel AVANZADO → Todas las opciones.
+// ESTAS NO se usan para horarios/grados (los 2 NIVELES _MODALIDADES_CEBA lo hacen).
+// ============================================================
+const _MODALIDADES_ATENCION = ['PRESENCIAL', 'SEMIPRESENCIAL', 'VIRTUAL'];
+const _MODALIDAD_ATENCION_LABEL = { 'PRESENCIAL': 'Presencial', 'SEMIPRESENCIAL': 'Semipresencial', 'VIRTUAL': 'Virtual' };
+function _normModAtencion(val) {
+  const s = String(val || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+  if (!s) return '';
+  if (s.includes('PRESEN') || s === 'P' || s === 'PRE') return 'PRESENCIAL';
+  if (s.includes('SEMI') || s === 'S' || s.includes('MIXTO') || s.includes('HIBRIDO') || s.includes('HÍBRIDO')) return 'SEMIPRESENCIAL';
+  if (s.includes('VIRT') || s === 'V' || s.includes('REMOTO') || s.includes('ONLINE')) return 'VIRTUAL';
+  // Legacy: si llegara INICIAL/INTERMEDIO desde la reestructura, forzar PRESENCIAL
+  if (s.includes('INICIAL') || s.includes('INTERMEDIO')) return 'PRESENCIAL';
+  return String(val || '').trim().toUpperCase();
+}
+// Dado un CICLO pedagógico CEBA, devuelve la lista de modalidades de atención permitidas
+function _modalidadesAtencionPermitidasParaCiclo(ciclo) {
+  const c = _canonCicloJS(String(ciclo || ''));
+  if (c === 'INICIAL' || c === 'INTERMEDIO') return ['PRESENCIAL'];
+  if (c === 'AVANZADO') return _MODALIDADES_ATENCION.slice();
+  return _MODALIDADES_ATENCION.slice();
+}
 
 function _normModalidadCEBA(val) {
   const s = String(val || '').trim().toUpperCase().replace(/\s+/g, '');
@@ -8112,12 +8138,16 @@ async function confirmRegister(tipo) {
 // ============================================================
 let editingId = null;
 
-// Sync: si el usuario selecciona Nivel (turno), pre-cargar ciclo equivalente
+// Sync: si el usuario selecciona Nivel (turno), pre-cargar ciclo equivalente (EBR)
 function _syncFCicloDesdeTurno() {
   try {
     const tEl = document.getElementById('f-turno');
     const cEl = document.getElementById('f-ciclo');
     if(!tEl || !cEl) return;
+    // Para CEBA: turno = modalidad atención (Presencial/Semi/Virtual), NO infiere ciclo. Salir.
+    let modalidad = '';
+    try { if(typeof getConfig === 'function') { const c = {}; modalidad = _cfgModalidadConInferencia(c, (typeof window !== 'undefined' ? (window.alumnosCache || []) : [])); } } catch(_) { modalidad = ''; }
+    if (modalidad === 'CEBA' || modalidad === 'EBA') return;
     if (cEl.value) return; // no sobrescribir si ya eligió
     const raw = String(tEl.value || '').trim();
     if(!raw) return;
@@ -8125,9 +8155,62 @@ function _syncFCicloDesdeTurno() {
     if(['INICIAL','INTERMEDIO','AVANZADO','PRIMARIA','SECUNDARIA'].includes(cand)) cEl.value = cand;
   } catch(_) {}
 }
+// Sync: si el usuario cambia el CICLO (CEBA), restringir MODALIDAD ATENCIÓN (f-turno):
+//   INICIAL / INTERMEDIO → SÓLO PRESENCIAL (bloqueado)
+//   AVANZADO → Todas las opciones (PRESENCIAL / SEMIPRESENCIAL / VIRTUAL)
+function _syncFModalidadDesdeCiclo() {
+  try {
+    let modalidad = '';
+    try { if(typeof getConfig === 'function') { const c = {}; modalidad = _cfgModalidadConInferencia(c, (typeof window !== 'undefined' ? (window.alumnosCache || []) : [])); } } catch(_) { modalidad = ''; }
+    // Solo aplica para CEBA/EBA
+    if (modalidad !== 'CEBA' && modalidad !== 'EBA') return;
+    const tEl = document.getElementById('f-turno');
+    const cEl = document.getElementById('f-ciclo');
+    if(!tEl || !cEl) return;
+    const ciclo = _canonCicloJS(String(cEl.value || ''));
+    const permitidas = _modalidadesAtencionPermitidasParaCiclo(ciclo);
+    // Re-poblar f-turno SOLO con las permitidas
+    const cur = _normModAtencion(tEl.value) || tEl.value;
+    tEl.innerHTML = '';
+    if (!permitidas.length) {
+      tEl.innerHTML = '<option value="">Seleccionar</option>';
+    } else if (permitidas.length === 1) {
+      // SOLO una opción → mostrarla y deshabilitar el select
+      const unica = permitidas[0];
+      tEl.innerHTML = `<option value="${unica}">${_MODALIDAD_ATENCION_LABEL[unica] || unica}</option>`;
+      tEl.value = unica;
+      tEl.disabled = true;
+      tEl.style.opacity = '0.75';
+      tEl.style.cursor = 'not-allowed';
+      // Añadir hint visual
+      let hint = document.getElementById('f-turno-hint');
+      if (!hint) {
+        hint = document.createElement('div');
+        hint.id = 'f-turno-hint';
+        hint.style.cssText = 'font-size:0.72rem;color:#f59e0b;font-weight:600;margin-top:3px;';
+        tEl.parentNode.appendChild(hint);
+      }
+      hint.textContent = '⚠ El nivel Inicial / Intermedio sólo admite modalidad Presencial';
+      return;
+    } else {
+      // Varias opciones → habilitar
+      tEl.disabled = false;
+      tEl.style.opacity = '';
+      tEl.style.cursor = '';
+      const hint = document.getElementById('f-turno-hint');
+      if (hint) hint.remove();
+      tEl.innerHTML = '<option value="">Seleccionar</option>';
+      permitidas.forEach(m => { tEl.innerHTML += `<option value="${m}">${_MODALIDAD_ATENCION_LABEL[m] || m}</option>`; });
+      if (cur && permitidas.includes(cur)) tEl.value = cur;
+      else if (permitidas.includes('PRESENCIAL')) tEl.value = 'PRESENCIAL';
+    }
+  } catch(_) {}
+}
 function _syncFGradosPorCiclo() {
-  // Placeholder: por ahora no bloquea grados (el colegio configura según necesidad)
-  try {} catch(_) {}
+  try {
+    // Tras cambiar ciclo, restringir modalidad atención (CEBA)
+    if (typeof _syncFModalidadDesdeCiclo === 'function') _syncFModalidadDesdeCiclo();
+  } catch(_) {}
 }
 
 async function openModalAlumno(id) {
@@ -8153,21 +8236,29 @@ async function openModalAlumno(id) {
     const esEBRTemp = modalidadTemp === 'EBR';
     const fTurno = document.getElementById('f-turno');
     const fCiclo = document.getElementById('f-ciclo');
-    // f-turno: EBR = Niveles (Inicial/Primaria/Secundaria) ; CEBA = 2 Modalidades CEBA
-    const optsFTurno = esEBRTemp
-      ? ((cfgTemp.niveles && cfgTemp.niveles.length ? _nivelesPorModalidad(cfgTemp) : ['Inicial','Primaria','Secundaria']))
-      : _MODALIDADES_CEBA.slice();
-    fTurno.innerHTML = '<option value="">Seleccionar</option>';
-    optsFTurno.forEach(n => { fTurno.innerHTML += `<option value="${n}">${_MODALIDAD_CEBA_LABEL[n] || n}</option>`; });
+    // f-turno:
+    //   EBR  → Niveles (Inicial / Primaria / Secundaria)
+    //   CEBA → MODALIDAD DE ATENCIÓN (Presencial / Semipresencial / Virtual) — NO los 2 niveles CEBA
+    if (esEBRTemp) {
+      const optsFTurno = (cfgTemp.niveles && cfgTemp.niveles.length ? _nivelesPorModalidad(cfgTemp) : ['Inicial','Primaria','Secundaria']);
+      fTurno.innerHTML = '<option value="">Seleccionar</option>';
+      optsFTurno.forEach(n => { fTurno.innerHTML += `<option value="${n}">${n}</option>`; });
+    } else {
+      // CEBA: f-turno = modalidades de atención (NO niveles); luego restringe según ciclo al final
+      fTurno.innerHTML = '<option value="">Seleccionar</option>';
+      _MODALIDADES_ATENCION.forEach(m => { fTurno.innerHTML += `<option value="${m}">${_MODALIDAD_ATENCION_LABEL[m] || m}</option>`; });
+    }
     // Setear valor turno desde el alumno, normalizando CEBA
     const turnoRaw = String(a.turno || '').trim();
-    fTurno.value = (esEBRTemp ? turnoRaw : _normModAtencion(turnoRaw) || turnoRaw) || '';
+    fTurno.value = (esEBRTemp ? turnoRaw : (_normModAtencion(turnoRaw) || turnoRaw || 'PRESENCIAL')) || '';
     if (fCiclo) {
-      // Cargar ciclo desde el alumno (CEBA), si no existe inferir desde turno
+      // Cargar ciclo desde el alumno (CEBA)
       const cicloGuardado = String(a.ciclo || '').trim().toUpperCase();
       if (cicloGuardado) fCiclo.value = cicloGuardado;
-      else _syncFCicloDesdeTurno();
+      else if (esEBRTemp) _syncFCicloDesdeTurno();
     }
+    // IMPORTANTE CEBA: tras setear f-turno y f-ciclo, aplicar la restricción según ciclo
+    if (!esEBRTemp && typeof _syncFModalidadDesdeCiclo === 'function') _syncFModalidadDesdeCiclo();
     // Luego cargar grados y secciones — key depende de modalidad
     const keyGrados = esEBRTemp
       ? (fTurno.value || turnoRaw)
@@ -8230,12 +8321,35 @@ async function openModalAlumno(id) {
     _disableSelect('f-seccion');
     
     const cfgTemp = await getConfig();
+    let alumnosRefTemp = [];
+    try { alumnosRefTemp = (typeof window !== 'undefined') ? (window.alumnosCache || []) : []; } catch(_) {}
+    const modalidadTemp = _cfgModalidadConInferencia(cfgTemp, alumnosRefTemp);
+    const esEBRTemp = modalidadTemp === 'EBR';
     const fTurno = document.getElementById('f-turno');
-    fTurno.innerHTML = '<option value="">Seleccionar</option>';
-    (cfgTemp.niveles||[]).forEach(n => {
-      fTurno.innerHTML += `<option value="${n.nombre}">${n.nombre}</option>`;
-    });
-    fTurno.value = '';
+    const fCiclo = document.getElementById('f-ciclo');
+    // Hint cleanup si existiera
+    const hint = document.getElementById('f-turno-hint');
+    if (hint) hint.remove();
+    fTurno.disabled = false;
+    fTurno.style.opacity = '';
+    fTurno.style.cursor = '';
+    if (esEBRTemp) {
+      fTurno.innerHTML = '<option value="">Seleccionar</option>';
+      (cfgTemp.niveles||[]).forEach(n => {
+        fTurno.innerHTML += `<option value="${n.nombre}">${n.nombre}</option>`;
+      });
+    } else {
+      // CEBA: Nuevo Alumno → modalidades de atención (NO niveles). Al seleccionar f-ciclo se restringe.
+      fTurno.innerHTML = '<option value="">Seleccionar</option>';
+      _MODALIDADES_ATENCION.forEach(m => { fTurno.innerHTML += `<option value="${m}">${_MODALIDAD_ATENCION_LABEL[m] || m}</option>`; });
+      fTurno.value = 'PRESENCIAL';
+      // Reseteamos f-ciclo y llamamos a restricción para aplicar
+      if (fCiclo) {
+        fCiclo.value = '';
+        if (typeof _syncFModalidadDesdeCiclo === 'function') _syncFModalidadDesdeCiclo();
+      }
+    }
+    fTurno.value = fTurno.value || '';
   }
   const mAlumno = document.getElementById('modal-alumno');
   mAlumno.style.display = ''; // reset por si closeModal dejó display:none
@@ -8258,15 +8372,37 @@ async function saveAlumno() {
     // Ciclo helper
     const cicloEl = document.getElementById('f-ciclo');
     const cicloRaw  = cicloEl ? String(cicloEl.value || '').trim() : '';
-    const turnoVal = document.getElementById('f-turno').value || '';
-    const cicloFinal = cicloRaw || _canonCicloJS(turnoVal || '');
+    const turnoValRaw = document.getElementById('f-turno').value || '';
+    const cicloFinal = cicloRaw || _canonCicloJS(turnoValRaw || '');
+
+    // Determinar si es CEBA/EBA para aplicar reglas
+    let modalidadSistema = '';
+    try { const c = {}; modalidadSistema = _cfgModalidadConInferencia(c, (typeof window !== 'undefined' ? (window.alumnosCache || []) : [])); } catch(_) { modalidadSistema = ''; }
+    const esCEBA = modalidadSistema === 'CEBA' || modalidadSistema === 'EBA';
+
+    // Normalizar turno CEBA
+    let turnoFinal = turnoValRaw;
+    if (esCEBA) {
+      turnoFinal = _normModAtencion(turnoValRaw) || turnoValRaw;
+      // RESTICCIÓN CLAVE: Nivel INICIAL / INTERMEDIO → SÓLO admite PRESENCIAL
+      const c = _canonCicloJS(cicloFinal);
+      if (c === 'INICIAL' || c === 'INTERMEDIO') {
+        turnoFinal = 'PRESENCIAL';
+      }
+      // AVANZADO: validar que esté en las permitidas (fallback PRESENCIAL)
+      if (c === 'AVANZADO' && turnoFinal && !_MODALIDADES_ATENCION.includes(turnoFinal)) {
+        turnoFinal = 'PRESENCIAL';
+      }
+      // Si no hay turno → default PRESENCIAL
+      if (!turnoFinal) turnoFinal = 'PRESENCIAL';
+    }
 
     const alumno = {
       id, nombres, apellidos, grado,
       ciclo: cicloFinal,
       seccion: document.getElementById('f-seccion').value,
-      turno: turnoVal,
-      limite: await getLimiteByNivel({ ciclo: cicloFinal, turno: turnoVal }),
+      turno: turnoFinal,
+      limite: await getLimiteByNivel({ ciclo: cicloFinal, turno: turnoFinal }),
       telefono: document.getElementById('f-telefono').value.trim(),
       apoderadoNombres: document.getElementById('f-apoderado-nombres').value.trim(),
       apoderadoApellidos: document.getElementById('f-apoderado-apellidos').value.trim(),
@@ -8800,15 +8936,21 @@ function _labelNivelLargoAlumno(a, cfg) {
   const esEBR = (m || '').toUpperCase() === 'EBR';
   const nivel = _alumnoNivelText(a, _cfg);
   if (esEBR) return nivel || String((a||{}).turno || '');
-  const mod = _normModAtencion((a||{}).turno || '');
-  const modLabel = mod ? (_MODALIDAD_CEBA_LABEL[mod] || mod) : '';
-  if (!nivel) return modLabel || String((a||{}).turno || '');
-  if (!modLabel) return nivel;
-  // CEBA 2 modalidades: evitar redundancia si ya se infiere desde el ciclo (ej: "INICIAL · Inicial / Intermedio")
-  const cicloNom = String(_alumnoNivelText(a, _cfg) || '').trim().toUpperCase();
-  const modRedundante = (cicloNom === 'INICIAL' || cicloNom === 'INTERMEDIO' || cicloNom === 'AVANZADO');
-  if (!esEBR && modRedundante) return nivel;
-  return `${nivel} · ${modLabel}`;
+  // CEBA: turno = Modalidad Atención (Presencial/Semipresencial/Virtual) — NO niveles CEBA
+  const modAt = _normModAtencion((a||{}).turno || '');
+  const modAtLabel = modAt ? (_MODALIDAD_ATENCION_LABEL[modAt] || modAt) : '';
+  // Nivel CEBA para mostrar (2 opciones, label amigable)
+  const cicloTxt = String((a||{}).ciclo || '').trim().toUpperCase();
+  const modCEBA = _modalidadDesdeCiclo(cicloTxt);
+  const modCEBALabel = modCEBA ? (_MODALIDAD_CEBA_LABEL[modCEBA] || modCEBA) : '';
+  // Preferimos NIVEL CEBA amigable (Inicial / Intermedio) sobre ciclo individual
+  const nivelLabel = modCEBALabel || nivel || cicloTxt;
+  if (!modAtLabel) return nivelLabel;
+  if (!nivelLabel) return modAtLabel;
+  // Redundancia: si el usuario es INICIAL O INTERMEDIO y modalidad PRESENCIAL (que es siempre),
+  // evitar mostrar "Inicial / Intermedio · Presencial" → solo "Inicial / Intermedio"
+  if (modAt === 'PRESENCIAL') return nivelLabel;
+  return `${nivelLabel} · ${modAtLabel}`;
 }
 
 function _filaAlumno(a) {
@@ -20558,8 +20700,8 @@ async function downloadAlumnosTemplate() {
     consangVals.forEach((v, i) => { wsl.getCell(2 + i, 4).value = v; });
     wsl.getCell('E1').value = 'Ciclos (CEBA/EBR)';
     ['','INICIAL','INTERMEDIO','AVANZADO','PRIMARIA','SECUNDARIA'].forEach((v, i) => { wsl.getCell(2 + i, 5).value = v; });
-    wsl.getCell('F1').value = 'ModalidadCEBA';
-    _MODALIDADES_CEBA.forEach((v, i) => { wsl.getCell(2 + i, 6).value = v; });
+    wsl.getCell('F1').value = 'ModalidadAtencion';
+    _MODALIDADES_ATENCION.forEach((v, i) => { wsl.getCell(2 + i, 6).value = v; });
 
     // EBR: columna ciclo oculta / vacía, sin dropdown ni campo en header ejemplo
     const headers = esEBR
@@ -20640,7 +20782,7 @@ async function downloadAlumnosTemplate() {
         ]
       : [
           '33348249','Moises','Perez',
-          'INICIAL/INTERMEDIO',
+          'PRESENCIAL',
           'INICIAL',
           (gradosAll[0] || '5'),
           (secciones[0] || 'B'),
@@ -20658,7 +20800,7 @@ async function downloadAlumnosTemplate() {
     const seccEnd = Math.max(2, 1 + (secciones.length || 1));
     const consangEnd = Math.max(2, 1 + (consangVals.length || 1));
     const cicloEnd = 7; // INICIAL..SECUNDARIA
-    const modAtEnd = Math.max(2, 1 + (_MODALIDADES_CEBA.length || 1));
+    const modAtEnd = Math.max(2, 1 + (_MODALIDADES_ATENCION.length || 1));
 
     if (esEBR) {
       for(let r = 2; r <= maxRows; r++) {
@@ -22254,14 +22396,25 @@ async function inicializarFiltros(options = {}) {
 
   const modalidad = _cfgModalidadConInferencia(cfg, alumnos);
   const esEBR = modalidad === 'EBR';
-  const nivelesSelectFturno = esEBR
-    ? (cfg.niveles||[]).map(n => (typeof n === 'string' ? n : (n && n.nombre ? n.nombre : ''))).filter(Boolean)
-    : _MODALIDADES_CEBA.slice();
+  // f-turno:
+  //   EBR  → Niveles (cfg.niveles list)
+  //   CEBA → Modalidades Atención (Presencial/Semi/Virtual). NO los 2 Niveles CEBA.
+  //   (Cuando se abra openModalAlumno, se sobrescribe con restricción por ciclo).
   const secciones = cfg.secciones || ['A','B','C','D'];
   const fTurno = document.getElementById('f-turno');
   if(fTurno) {
     fTurno.innerHTML = '<option value="">Seleccionar</option>';
-    nivelesSelectFturno.forEach(n => { fTurno.innerHTML += `<option value="${n}">${_MODALIDAD_CEBA_LABEL[n] || n}</option>`; });
+    if (esEBR) {
+      const niveles = (cfg.niveles||[]).map(n => (typeof n === 'string' ? n : (n && n.nombre ? n.nombre : ''))).filter(Boolean);
+      niveles.forEach(n => { fTurno.innerHTML += `<option value="${n}">${n}</option>`; });
+    } else {
+      _MODALIDADES_ATENCION.forEach(m => { fTurno.innerHTML += `<option value="${m}">${_MODALIDAD_ATENCION_LABEL[m] || m}</option>`; });
+      // Restringir según f-ciclo si ya estaba seteado
+      try {
+        const fCiclo = document.getElementById('f-ciclo');
+        if (typeof _syncFModalidadDesdeCiclo === 'function' && fCiclo && fCiclo.value) _syncFModalidadDesdeCiclo();
+      } catch(_) {}
+    }
   }
   // Actualizar labels de formulario registro según modalidad
   try {
