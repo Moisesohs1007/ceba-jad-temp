@@ -6193,7 +6193,15 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
           nivel = keyLarga ? _cfgKeyToNivelCorto(keyLarga, cfg) : '';
         } catch(_) {}
       }
-      if(!nivel) {
+      // IMPORTANTE (FIX): Si aún no tenemos nivel claro (aula legacy sin ciclo,
+      // cfg no pudo inferir por grado), NO forzamos nivel mediante los siguientes
+      // fallbacks (nivelesScope / unicas) ya que podríamos seleccionar "AVANZADO"
+      // cuando el docente espera INICIAL/INTERMEDIO y los alumnos están mal catalogados.
+      // Mejor: dejamos nivel='' → no filtra por nivel y mostrará todos los alumnos de
+      // grado+sección correspondientes (garantizado por getAlumnosFiltrados scope ampliado
+      // y aplicarFiltroProfesor laxado).
+      const _sinCicloClaro = !cicloAuto && (primeraAula && !String(primeraAula.ciclo||'').trim()) && !nivel;
+      if(!nivel && !_sinCicloClaro) {
         try {
           const nivelesScope = _nivelesCortosScopeDocente();
           const opts = [...(nEl.options || [])].map(o => String(o.value || ''));
@@ -6202,7 +6210,7 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
           }
         } catch(_) {}
       }
-      if(!nivel) {
+      if(!nivel && !_sinCicloClaro) {
         try {
           const unicas = [...(nEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
           if (unicas.length === 1) nivel = unicas[0];
@@ -22612,6 +22620,15 @@ function _profesorAsignacionesAulasList() {
       if (g && s) {
         let c = '';
         try { c = _canonCicloJS(_agendaInferNivelByGrado(g, null) || ''); } catch(_) {}
+        // Deducción segura CEBA por grado si cfg no pudo inferir:
+        // Grados 1,2,3 = INICIAL | Grados 4,5,6 = INTERMEDIO
+        if (!c) {
+          try {
+            const gNum = parseInt((String(g).match(/\d+/)||[])[0]||'0', 10);
+            if (gNum >= 1 && gNum <= 3) c = 'INICIAL';
+            else if (gNum >= 4 && gNum <= 6) c = 'INTERMEDIO';
+          } catch(_) {}
+        }
         list.push({ ciclo: c, grado: g, seccion: s });
       }
     } catch(_) {}
@@ -22740,7 +22757,13 @@ async function getAlumnosFiltrados() {
       const ampliadas = [];
       aulasConCiclo.forEach(aula => {
         const aCiclo = String(aula.ciclo || '').trim().toUpperCase();
-        const esCEBA = ciclosCEBATodos.some(c => aCiclo.includes(c) || (c.includes(aCiclo) && aCiclo));
+        const gRaw = String(aula.grado||'').trim();
+        const gNum = parseInt((gRaw.match(/\d+/)||[])[0]||'0', 10);
+        // Es CEBA si: ciclo es valor CEBA, O (ciclo vacío y grado numérico 1..6 CEBA típico).
+        // Así las aulas legacy (solo tutor_grado/tutor_seccion SIN ciclo) también amplían scope
+        // para getAlumnosScoped (no devuelva [] vacío solo por ciclo='').
+        const esCEBA = ciclosCEBATodos.some(c => aCiclo.includes(c) || (c.includes(aCiclo) && aCiclo))
+                       || ((!aCiclo) && gNum >= 1 && gNum <= 6);
         if (esCEBA) {
           // Para cada aula CEBA, mandar con CICLO VACÍO + con los 3 ciclos individuales
           // Así getAlumnosScoped (consulta DB con OR) matchea sin importar el ciclo guardado
@@ -23327,7 +23350,27 @@ function _nivelFieldName(cfg, alumnosArr) {
 function _matchNivel(obj, nivelSel, cfg, alumnosArr) {
   if (!nivelSel || nivelSel === 'TODOS') return true;
   const f = _nivelFieldName(cfg, alumnosArr);
-  return String(obj && obj[f] || '').trim() === String(nivelSel).trim();
+  const valObj = String(obj && obj[f] || '').trim();
+  const nivel = String(nivelSel).trim();
+  // CEBA: INICIAL/INTERMEDIO agrupado incluye alumnos con ciclo INICIAL o INTERMEDIO
+  // TAMBIÉN alumnos mal catalogados AVANZADO · Presencial · grado 1..6 (antes de ejecutar Reparar Rápido).
+  // Así Orlando / Moises verán alumnos aunque los datos sigan en AVANZADO sin reparar.
+  if (nivel === 'INICIAL/INTERMEDIO' || nivel === 'INICIAL / INTERMEDIO') {
+    const c = String((obj||{}).ciclo || '').trim().toUpperCase();
+    if (c === 'INICIAL' || c === 'INTERMEDIO') return true;
+    if (c === 'AVANZADO') {
+      const t = (typeof _normModAtencion === 'function') ? _normModAtencion((obj||{}).turno || '') : String((obj||{}).turno || '').toUpperCase();
+      if (t === 'PRESENCIAL') {
+        const gRaw = String((obj||{}).grado || '').trim();
+        const gNum = parseInt((gRaw.match(/\d+/)||[])[0]||'0', 10);
+        if (gNum >= 1 && gNum <= 6) return true;
+      }
+    }
+    return false;
+  }
+  if (valObj === nivel) return true;
+  if (nivel.startsWith('EBR ') && (valObj.replace('EBR ','').trim() === nivel.replace('EBR ','').trim())) return true;
+  return false;
 }
 function _nivelesDesdeAlumnos(alumnosArr, cfg) {
   const alumnos = Array.isArray(alumnosArr) ? alumnosArr : [];
