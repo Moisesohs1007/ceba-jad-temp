@@ -9445,33 +9445,136 @@ async function renderAlumnos() {
 
     const totalDB = alumnosBase.length;
     const prep = _getPreparedAlumnosView(alumnosBase);
-    let alumnos = prep.sorted;
-    if(grado   && grado   !== 'TODOS') alumnos = alumnos.filter(a => a.grado === grado);
-    if(seccion && seccion !== 'TODOS') alumnos = alumnos.filter(a => a.seccion === seccion);
-    if(nivel   && nivel   !== 'TODOS') { const _cfg = typeof configCache !== 'undefined' ? configCache : {}; alumnos = alumnos.filter(a => _matchNivel(a, nivel, _cfg)); }
-    if(modalidad) {
-      const modNorm = _normModAtencion(modalidad) || modalidad;
-      alumnos = alumnos.filter(a => (_normModAtencion(a.turno || '') || (a.turno || '')) === modNorm);
-    }
 
     // =============================================================
-    // SOBREESCRITURA DIRECTA (NUNCA 0 si hay datos para el docente):
-    // Si _esDocenteOProf + totalDB>0 y filtros UI dejaron la lista VACÍA
-    // (por bugs de fix0 limpiador, anti-loop o cualquier otra cosa)
-    // 👉 IGNORAR FILTROS UI y MOSTRAR DIRECTAMENTE TODO prep.sorted
-    // + toast explicativo. NO NECESITA QUE SE ACTIVE NINGÚN OTRO FIX.
+    // POBLAR OPTIONS DE FILTROS UI CON VALORES REALES DEL DOCENTE:
+    // Después de determinar alumnosBase (lo que el profesor sí tiene),
+    // llenamos fa-grado y fa-seccion con las opciones que SÍ tienen datos.
+    // Así Grado y Seccion NUNCA se quedan en "--" sin opciones válidas.
     // =============================================================
-    if (_esDocenteOProf && totalDB > 0 && (!alumnos || alumnos.length === 0)) {
-      console.warn(`[renderAlumnos] 🔴 SOBREESCRITURA DIRECTA: filtros UI (nivel=${nivel||''}, grado=${grado||''}, seccion=${seccion||''}, modalidad=${modalidad||''}) devolvieron 0 pero totalDB=${totalDB} → forzando listado completo (${prep.sorted.length} alumnos).`);
-      alumnos = prep.sorted.slice();
+    (function poblarFiltrosDesdeAlumnosBase() {
       try {
-        toast(`⚙️ Filtros no encontraron alumnos (${nivel||''}${grado?'·G'+grado:''}${seccion?'·S'+seccion:''}${modalidad?'·M'+modalidad:''}) → mostrando tus ${totalDB} alumnos asignados`, 'info', 6000);
-      } catch(_) {}
+        if (!_esDocenteOProf || totalDB === 0) return;
+        const gSel = document.getElementById('fa-grado');
+        const sSel = document.getElementById('fa-seccion');
+        const nSel = document.getElementById('fa-nivel');
+        const mSel = document.getElementById('fa-modalidad');
+        if (!gSel || !sSel) return;
+        const _cfgF = typeof configCache !== 'undefined' ? configCache : {};
+
+        // Valores únicos que sí existen en el scope del profesor
+        const setGs = new Set();
+        const setSs = new Set();
+        const setNs = new Set();
+        const setMs = new Set();
+        (prep.sorted || []).forEach(a => {
+          const g = String(a.grado || '').trim();
+          const s = String(a.seccion || '').trim();
+          const niv = _alumnoNivelText(a, _cfgF) || '';
+          const mod = _normModAtencion(a.turno || '') || String(a.turno || '').trim();
+          if (g) setGs.add(g);
+          if (s) setSs.add(s);
+          if (niv) setNs.add(niv);
+          if (mod) setMs.add(mod);
+        });
+
+        // --- GRADO ---
+        const curG = String(gSel.value || '').trim();
+        const arrGs = [...setGs].sort();
+        const _tienePlaceholderG = [...(gSel.options||[])].some(o => String(o.value||'') === '');
+        if (arrGs.length > 0) {
+          // Reconstruir options (placeholder + values reales)
+          let htmlG = '';
+          if (_tienePlaceholderG) htmlG += '<option value="">-- Grado --</option>';
+          arrGs.forEach(g => { htmlG += `<option value="${g}">${g}</option>`; });
+          gSel.innerHTML = htmlG;
+          // Seleccionar: si había un valor actual válido, mantener; si no, si hay 1 solo → auto-seleccionarlo
+          if (arrGs.includes(curG)) gSel.value = curG;
+          else if (arrGs.length === 1) gSel.value = arrGs[0];
+        }
+
+        // --- SECCION ---
+        const curS = String(sSel.value || '').trim();
+        const arrSs = [...setSs].sort();
+        const _tienePlaceholderS = [...(sSel.options||[])].some(o => String(o.value||'') === '');
+        if (arrSs.length > 0) {
+          let htmlS = '';
+          if (_tienePlaceholderS) htmlS += '<option value="">-- Sección --</option>';
+          arrSs.forEach(s => { htmlS += `<option value="${s}">${s}</option>`; });
+          sSel.innerHTML = htmlS;
+          if (arrSs.includes(curS)) sSel.value = curS;
+          else if (arrSs.length === 1) sSel.value = arrSs[0];
+        }
+
+        // Si Grado o Seccion se quedaron en '--' y hay options, seleccionar el primero no vacío para no filtrar a 0.
+        if (!String(gSel.value||'').trim() && gSel.options && gSel.options.length > 0) {
+          const first = [...gSel.options].find(o => String(o.value||'').trim() !== '');
+          if (first) gSel.value = first.value;
+        }
+        if (!String(sSel.value||'').trim() && sSel.options && sSel.options.length > 0) {
+          const first = [...sSel.options].find(o => String(o.value||'').trim() !== '');
+          if (first) sSel.value = first.value;
+        }
+      } catch (_) {
+        console.warn('[renderAlumnos] poblarFiltrosDesdeAlumnosBase falló:', _);
+      }
+    })();
+
+    // Actualizar variables locales (después poblamiento options recién hecho)
+    const nSel2 = document.getElementById('fa-nivel');
+    const gSel2 = document.getElementById('fa-grado');
+    const sSel2 = document.getElementById('fa-seccion');
+    const mSel2 = document.getElementById('fa-modalidad');
+    const qInp = document.getElementById('fa-q');
+    let nivelAct = nSel2 ? String(nSel2.value||'').trim() : (nivel || '');
+    let gradoAct = gSel2 ? String(gSel2.value||'').trim() : (grado || '');
+    let seccAct  = sSel2 ? String(sSel2.value||'').trim() : (seccion || '');
+    let modAct   = mSel2 ? String(mSel2.value||'').trim() : (modalidad || '');
+    let qAct     = qInp  ? String(qInp.value||'').trim()  : (q || '');
+
+    // Helper para considerar filtro "activo" solo si tiene valor real (no placeholder '--', vacío, 'TODOS')
+    const _filtroValido = (v, extraNo) => {
+      v = String(v||'').trim();
+      if (!v) return false;
+      if (v === 'TODOS') return false;
+      if (v === '--') return false;
+      if (v.startsWith('-- ') || v.endsWith(' --')) return false;
+      if (/Seleccionar/i.test(v)) return false;
+      if (Array.isArray(extraNo) && extraNo.some(x => String(x||'').trim() === v)) return false;
+      return true;
+    };
+
+    let alumnos = prep.sorted.slice();
+    if (_filtroValido(gradoAct)) alumnos = alumnos.filter(a => String(a.grado||'').trim() === gradoAct);
+    if (_filtroValido(seccAct))  alumnos = alumnos.filter(a => String(a.seccion||'').trim() === seccAct);
+    if (_filtroValido(nivelAct)) {
+      const _cfg = typeof configCache !== 'undefined' ? configCache : {};
+      alumnos = alumnos.filter(a => _matchNivel(a, nivelAct, _cfg));
+    }
+    if (_filtroValido(modAct)) {
+      const modNorm = _normModAtencion(modAct) || modAct;
+      alumnos = alumnos.filter(a => (_normModAtencion(a.turno || '') || String(a.turno || '').trim()) === modNorm);
     }
 
-    if(q) {
+    // =============================================================
+    // SOBREESCRITURA DIRECTA (SOLO CUANDO NO HAY FILTROS INTENCIONALES):
+    // Si el docente tiene datos (totalDB>0) pero la UI muestra 0,
+    // PERO los 4 filtros están en '--' / vacíos / 'TODOS' (es decir,
+    // el usuario NO seleccionó nada para filtrar - bug de placeholders
+    // o de poblamiento options) → forzamos listado completo.
+    // ✅ SI EL USUARIO SÍ CAMBIÓ algun filtro (Virtual / Avanzado / etc.)
+    //    → RESPETAMOS su elección (aunque de 0).
+    // =============================================================
+    const _hayFiltroIntencional = _filtroValido(gradoAct) || _filtroValido(seccAct) || _filtroValido(nivelAct) || _filtroValido(modAct);
+    if (_esDocenteOProf && totalDB > 0 && (!alumnos || alumnos.length === 0) && !_hayFiltroIntencional && !qAct) {
+      console.warn(`[renderAlumnos] 🔴 SOBREESCRITURA (sin filtros intencionales): mostrando ${prep.sorted.length} alumnos completos (placeholders bug).`);
+      alumnos = prep.sorted.slice();
+      try { toast(`⚙️ Mostrando todos tus ${totalDB} alumnos asignados`, 'info', 4000); } catch(_) {}
+    }
+
+    if(qAct) {
       // Fix búsqueda DNI: normalizar (solo dígitos, padding, trim + lowercase nombres)
-      const qRaw = String(q || '').trim();
+      const qRaw = String(qAct || '').trim();
       const qDigits = qRaw.replace(/\D/g, '');
       const qDigitsPad = qDigits.padStart(8, '0');
       const qNom = qRaw.toLowerCase();
@@ -9485,7 +9588,7 @@ async function renderAlumnos() {
     }
 
     count.textContent = 'Mostrando ' + alumnos.length + ' de ' + totalDB + ' alumno' + (totalDB!==1?'s':'');
-    console.debug('[renderAlumnos] totalDB=', totalDB, 'filtrados=', alumnos.length, 'filtros:', {grado, seccion, nivel, modalidad, q: q||''});
+    console.debug('[renderAlumnos] totalDB=', totalDB, 'filtrados=', alumnos.length, 'filtrosReales:', {grado:gradoAct, seccion:seccAct, nivel:nivelAct, modalidad:modAct, hayFiltroIntencional:_hayFiltroIntencional, q: qAct||''});
     // Ayuda Moises: si busca DNI especifico (solo digitos >=7) y no sale, loguear en consola los DNIs que empiecen por ese prefijo.
     try {
       if (q && /^\d{4,}$/.test(String(q).replace(/\D/g,''))) {
