@@ -10896,6 +10896,19 @@ async function handleExcel(e) {
   if(!file) return;
   e.target.value = '';
 
+  // Helper: inferir Modalidad Atención (turno) desde el NOMBRE DE LA HOJA del Excel
+  function _inferTurnoDesdeSheetName(nombre) {
+    const s = String(nombre || '').trim().toUpperCase();
+    if (!s) return '';
+    // PRE / PRESENCIAL
+    if (/^PRE($|ESENCIAL|SENCIA|_|-|\s)/i.test(s) || s.includes('PRESEN') || s === 'PRE' || s.startsWith('PRE ')) return 'PRESENCIAL';
+    // SEMI / SEMIPRESENCIAL
+    if (/^SEMI($|PRESENCIAL|_|-|\s)/i.test(s) || s.includes('SEMIPRESEN') || s === 'SEMI' || s.startsWith('SEMI ')) return 'SEMIPRESENCIAL';
+    // VIRT / VIRTUAL / REMOTO
+    if (/^VIRT($|UAL|_|-|\s)/i.test(s) || s.includes('VIRTU') || s.includes('REMOTO') || s === 'VIRT' || s.startsWith('VIRT ')) return 'VIRTUAL';
+    return '';
+  }
+
   // Cargar SheetJS dinámicamente
   if(!window.XLSX) {
     toast('Cargando librería Excel...', 'info');
@@ -10913,32 +10926,75 @@ async function handleExcel(e) {
     try {
       const data = new Uint8Array(ev.target.result);
       const wb   = XLSX.read(data, { type: 'array' });
-      const ws   = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      // ===== NUEVO: Leer TODAS las hojas (no solo la primera) y fusionar por DNI.
+      // Si la hoja se llama PRE/SEMI/VIRT/PRESENCIAL/SEMIPRESENCIAL/VIRTUAL → usar su nombre para setear turno default.
+      const filasPorDni = new Map(); // dni → {cols, sheetTurno, sheetNamePriority}
+      let skippedGlobal = 0;
+      const nombresHojas = wb.SheetNames || [];
+      nombresHojas.forEach((sheetName, sheetIdx) => {
+        const ws = wb.Sheets[sheetName];
+        if (!ws) return;
+        let rows;
+        try { rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }); } catch(_e) { return; }
+        if (!rows || !Array.isArray(rows) || !rows.length) return;
+
+        // Detectar fila de encabezado POR HOJA
+        let startRow = 0;
+        for(let i = 0; i < Math.min(5, rows.length); i++) {
+          const row = (rows[i] || []).map(c => String(c).toLowerCase());
+          if(row.some(c => c.includes('dni') || c.includes('nombres'))) {
+            startRow = i + 1;
+            break;
+          }
+        }
+        const sheetTurno = _inferTurnoDesdeSheetName(sheetName);
+
+        // Prioridad por hoja: si un DNI está en varias hojas, gana la hoja cuyo nombre
+        // coincide con modalidad atención (solo 0/1 si es hoja PRE/SEMI/VIRT real)
+        const priority = sheetTurno ? 2 : 1;
+
+        for(let i = startRow; i < rows.length; i++) {
+          const rawCols = rows[i] || [];
+          const cols = rawCols.map(c => String(c).trim());
+          const [id, nombres, apellidos, turno, grado, seccion, foto,
+            apoderadoNombres, apoderadoApellidos, telefono, correoApoderado,
+            consanguinidad, consanguinidadDetalle,
+            apoderado2Nombres, apoderado2Apellidos, telefono2, correoApoderado2,
+            consanguinidad2, consanguinidadDetalle2] = cols;
+          if(!id || !/^\d{8}$/.test(id)) { skippedGlobal++; continue; }
+          if(!nombres && !apellidos) { skippedGlobal++; continue; }
+          const dni = String(id).trim();
+          const prev = filasPorDni.get(dni);
+          if (prev) {
+            // Si ya existe → merge (prioridad >, o datos más completos)
+            if (priority > prev.priority || (priority === prev.priority &&
+              ((String(nombres||apellidos||'').length > String(prev.cols[1]||prev.cols[2]||'').length) ||
+               (String(apoderadoNombres||apoderadoApellidos||'').length > String(prev.cols[7]||prev.cols[8]||'').length)))) {
+              filasPorDni.set(dni, { cols, sheetTurno, priority, sheetIdx });
+            } else {
+              // Si existente no tiene turno de sheet Y nueva sí → heredar sheetTurno
+              if (!prev.sheetTurno && sheetTurno) prev.sheetTurno = sheetTurno;
+              // Completar datos faltantes:
+              const pc = prev.cols;
+              for (let j = 1; j < 20; j++) {
+                if ((!pc[j] || String(pc[j]||'').trim() === '') && cols[j]) pc[j] = cols[j];
+              }
+            }
+          } else {
+            filasPorDni.set(dni, { cols: cols.slice(), sheetTurno, priority, sheetIdx });
+          }
+        }
+      });
+      // Fin lectura multiple hojas
 
       const alumnosExistentes = await DB.getAlumnos();
       const existingIds = new Set(alumnosExistentes.map(a => a.id));
-      let added = 0, updated = 0, skipped = 0;
+      let added = 0, updated = 0, skipped = skippedGlobal;
 
-      // Detectar fila de encabezado
-      let startRow = 0;
-      for(let i = 0; i < Math.min(5, rows.length); i++) {
-        const row = rows[i].map(c => String(c).toLowerCase());
-        if(row.some(c => c.includes('dni') || c.includes('nombres'))) {
-          startRow = i + 1;
-          break;
-        }
-      }
-
-      // Filtrar filas válidas primero
+      // Armamos array final de filas (sin duplicados, mejor turno por sheet)
       const filasValidas = [];
-      for(let i = startRow; i < rows.length; i++) {
-        const cols = rows[i].map(c => String(c).trim());
-        const [id] = cols;
-        if(!id || !/^\d{8}$/.test(id)) { skipped++; continue; }
-        if(!cols[1] && !cols[2]) { skipped++; continue; }
-        filasValidas.push(cols);
-      }
+      filasPorDni.forEach(entry => filasValidas.push(entry));
       const total = filasValidas.length;
 
       // Mostrar barra de progreso
@@ -10953,7 +11009,8 @@ async function handleExcel(e) {
       }
 
       for(let i = 0; i < filasValidas.length; i++) {
-        const cols = filasValidas[i];
+        const entry = filasValidas[i];
+        const cols = entry.cols;
         const [
           id, nombres, apellidos, turno, grado, seccion, foto,
           apoderadoNombres, apoderadoApellidos, telefono, correoApoderado,
@@ -10961,8 +11018,26 @@ async function handleExcel(e) {
           apoderado2Nombres, apoderado2Apellidos, telefono2, correoApoderado2,
           consanguinidad2, consanguinidadDetalle2
         ] = cols;
-        const csvCiclo2 = (typeof _canonCicloJS === 'function') ? _canonCicloJS(turno || '') : '';
-        const objTmpNiv2 = { turno: turno||'Primaria', ciclo: csvCiclo2 };
+
+        // ===== IMPORTANTE: Turno final = sheetTurno (nombre hoja PRE/SEMI/VIRT) si existe,
+        // sino el valor de la columna D (turno), sino default PRESENCIAL.
+        const turnoRaw = String(turno || '').trim();
+        const turnoHoja = String(entry.sheetTurno || '').trim();
+        let turnoFinal = turnoHoja || turnoRaw || 'PRESENCIAL';
+        turnoFinal = (typeof _normModAtencion === 'function') ? (_normModAtencion(turnoFinal) || turnoFinal) : turnoFinal;
+        if (!turnoFinal) turnoFinal = 'PRESENCIAL';
+
+        // Determinar CICLO para el alumno CEBA: usar columna D (ciclo pedagógico INICIAL/INTERMEDIO/AVANZADO)
+        // Si la columna D trae PRESENCIAL (nombre modalidad atención por error en Excel legacy),
+        // entonces inferimos ciclo por otra vía (más adelante desde grado o default).
+        let cicloParaLimite;
+        if (['INICIAL','INTERMEDIO','AVANZADO'].includes(String(turnoRaw).trim().toUpperCase())) {
+          cicloParaLimite = String(turnoRaw).trim().toUpperCase();
+        } else {
+          cicloParaLimite = (typeof _canonCicloJS === 'function') ? _canonCicloJS(turnoRaw || '') : '';
+        }
+        // Si no lo sacamos, intentar grado (1-4 Ini, 5-6 Int, 1-6 avanzado - lo decide getLimiteByNivel via key compuesta)
+        const objTmpNiv2 = { turno: turnoFinal, ciclo: cicloParaLimite, grado: String(grado || '').trim(), seccion: String(seccion || '').trim() };
         const limite = await getLimiteByNivel(objTmpNiv2);
         const alumno = {
           id,
@@ -10970,8 +11045,8 @@ async function handleExcel(e) {
           apellidos:          apellidos || '',
           grado:              grado || '',
           seccion:            seccion || 'A',
-          turno:              turno || 'Primaria',
-          ciclo:              csvCiclo2,
+          turno:              turnoFinal,
+          ciclo:              cicloParaLimite,
           limite,
           foto:               foto || '',
           apoderadoNombres:   apoderadoNombres || '',
@@ -11040,7 +11115,7 @@ async function handleExcel(e) {
       const toastEl = document.createElement('div');
       toastEl.className = 'toast success';
       toastEl.style.cssText = 'max-width:380px;padding:14px 18px;font-size:0.88rem;';
-      toastEl.innerHTML = `<span style="font-size:1rem;">✓</span><span class="toast-msg">✅ Importación completa<br><strong>${added} nuevos</strong>${updated ? ', '+updated+' actualizados' : ''}${skipped ? ', '+skipped+' omitidos' : ''}<br><span style="font-size:0.78rem;opacity:0.8;">Este mensaje desaparece en 8 segundos</span></span>`;
+      toastEl.innerHTML = `<span style="font-size:1rem;">✓</span><span class="toast-msg">✅ Importación completa (${nombresHojas.length} hojas)<br><strong>${added} nuevos</strong>${updated ? ', '+updated+' actualizados' : ''}${skipped ? ', '+skipped+' omitidos' : ''}<br><span style="font-size:0.78rem;opacity:0.8;">Este mensaje desaparece en 8 segundos</span></span>`;
       document.getElementById('toast-container').appendChild(toastEl);
       setTimeout(() => toastEl.remove(), 8000);
     } catch(err) {
@@ -20918,6 +20993,46 @@ async function downloadAlumnosTemplate() {
         ws.getCell(`M${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
         ws.getCell(`S${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
       }
+    }
+
+    if (!esEBR) {
+      const hojasModalidad = [
+        { nombre: 'PRE',  turno: 'PRESENCIAL',    ciclo: 'INTERMEDIO', tabColor: 'FF7CB342' },
+        { nombre: 'SEMI', turno: 'SEMIPRESENCIAL', ciclo: 'AVANZADO',   tabColor: 'FFFF9800' },
+        { nombre: 'VIRT', turno: 'VIRTUAL',        ciclo: 'AVANZADO',   tabColor: 'FF03A9F4' }
+      ];
+      hojasModalidad.forEach(info => {
+        const wse = wb.addWorksheet(info.nombre);
+        try { if (info.tabColor && wse.tab && wse.tab.color) { wse.tab.color.argb = info.tabColor; wse.tab.theme = null; } } catch(_) {}
+        wse.addRow(headers);
+        wse.getRow(1).font = { bold: true };
+        wse.views = [{ state: 'frozen', ySplit: 1 }];
+        wse.columns = ws.columns.map(c => {
+          const nc = { key: c.key, width: c.width };
+          if (c.style) nc.style = Object.assign({}, c.style);
+          return nc;
+        });
+        const gradosDisp = gradosAll.length ? gradosAll : ['1'];
+        const seccDisp = secciones.length ? secciones : ['A'];
+        const gx = String(gradosDisp[0] || '1').trim();
+        const sx = String(seccDisp[0] || 'A').trim();
+        wse.addRow([
+          '', '', '',
+          info.turno, info.ciclo,
+          gx, sx,
+          '', 'Rosa','Perez','999888777','',
+          'madre','',
+          '','','','','',''
+        ]);
+        for(let r = 2; r <= maxRows; r++) {
+          wse.getCell(`D${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$F$2:$F$${modAtEnd}`] };
+          wse.getCell(`E${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$E$2:$E$${cicloEnd}`] };
+          wse.getCell(`F${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$B$2:$B$${gradoEnd}`] };
+          wse.getCell(`G${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$C$2:$C$${seccEnd}`] };
+          wse.getCell(`M${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
+          wse.getCell(`S${r}`).dataValidation = { type: 'list', allowBlank: true, formulae: [`listas!$D$2:$D$${consangEnd}`] };
+        }
+      });
     }
 
     wsl.state = 'veryHidden';
