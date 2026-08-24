@@ -5631,14 +5631,18 @@ function _ciclosDesdeModalidad(modalidad) {
 // Normaliza Modalidad ATENCIÓN (Presencial/Semipresencial/Virtual).
 // IMPORTANTE: NO confundir con _normModalidadCEBA (que normaliza 2 niveles INICIAL/INTERMEDIO y AVANZADO)
 function _normModAtencion(val) {
-  const s = String(val || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+  // Paso 1: Quitar acentos/diacríticos (NFD) + uppercase + quitar espacios/guiones/bajos/puntos
+  let s = String(val || '').trim();
+  try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch(_) {}
+  s = s.toUpperCase().replace(/[\s\-_\.·,;]/g, '');
   if (!s) return '';
-  if (s.includes('PRESEN') || s === 'P' || s === 'PRE') return 'PRESENCIAL';
-  if (s.includes('SEMI') || s === 'S' || s.includes('MIXTO') || s.includes('HIBRIDO') || s.includes('HÍBRIDO')) return 'SEMIPRESENCIAL';
-  if (s.includes('VIRT') || s === 'V' || s.includes('REMOTO') || s.includes('ONLINE')) return 'VIRTUAL';
+  if (s.includes('PRESEN') || s === 'P' || s === 'PRE' || s.startsWith('PRES')) return 'PRESENCIAL';
+  if (s.includes('SEMI') || s === 'S' || s === 'SEM' || s.includes('MIXTO') || s.includes('HIBRIDO') || s.includes('HÍBRIDO') || s.startsWith('SEM')) return 'SEMIPRESENCIAL';
+  if (s.includes('VIRT') || s === 'V' || s.includes('REMOTO') || s.includes('ONLINE') || s.startsWith('VIR')) return 'VIRTUAL';
   // Legacy INICIAL/INTERMEDIO desde modalidadCEBA → forzar PRESENCIAL (casos borde)
   if (s.includes('INICIAL') || s.includes('INTERMEDIO')) return 'PRESENCIAL';
-  return String(val || '').trim().toUpperCase();
+  // Fallback final: aplicar la misma normalización sin acentos al return para que compare bien
+  return String(val || '').trim().toUpperCase().normalize ? (String(val||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')).replace(/[\s\-_]/g, '') : String(val || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
 }
 
 function _cfgHorarioKey(alumno, cfg, alumnosArr) {
