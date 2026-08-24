@@ -5632,8 +5632,6 @@ function _normModAtencion(val) {
   if (s.includes('SEMI') || s === 'S' || s === 'SEM' || s.includes('MIXTO') || s.includes('HIBRIDO') || s.startsWith('SEM')) return 'SEMIPRESENCIAL';
   if (s.includes('VIRT') || s === 'V' || s.includes('REMOTO') || s.includes('ONLINE') || s.startsWith('VIR')) return 'VIRTUAL';
   if (s.includes('PRESEN') || s === 'P' || s === 'PRE' || s.startsWith('PRES')) return 'PRESENCIAL';
-  // Legacy INICIAL/INTERMEDIO desde modalidadCEBA → forzar PRESENCIAL (casos borde)
-  if (s.includes('INICIAL') || s.includes('INTERMEDIO')) return 'PRESENCIAL';
   // Fallback final: aplicar la misma normalización sin acentos al return para que compare bien
   return String(val || '').trim().toUpperCase().normalize ? (String(val||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')).replace(/[\s\-_]/g, '') : String(val || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
 }
@@ -7429,6 +7427,38 @@ function iniciarSplash() {
 
 // Iniciar splash solo una vez por sesión — no en cada recarga
 document.addEventListener('DOMContentLoaded', function() {
+  // ============================================================
+  // PURGA TOTAL DE CACHÉS (DEPLOY f6efa49 → CANON EXCEL)
+  // PETICIÓN USUARIO 2026-08-24: ciclo NO se normaliza. Respetar Excel 100%.
+  // Esto borra todo caché anterior (LSC v2 / window.alumnosCache) para que
+  // se recarguen datos desde Supabase CON LOS VALORES REALES DEL EXCEL.
+  // ============================================================
+  try {
+    if (typeof DB !== 'undefined' && DB && typeof DB.invalidarAlumnos === 'function') {
+      DB.invalidarAlumnos();
+    }
+    // Purgar manualmente cualquier key LSC de alumnos/config anterior
+    const prefijosABorrar = ['asmqr_alumnos', 'asmqr_scoped', 'asmqr_aulas', 'asmqr_config'];
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (prefijosABorrar.some(p => String(k || '').startsWith(p))) {
+          try { localStorage.removeItem(k); } catch(_) {}
+        }
+      });
+    } catch(_) {}
+    // Limpiar caches en memoria (index.html)
+    try { if (typeof window !== 'undefined') window.alumnosCache = null; } catch(_) {}
+    try { if (typeof _alumnosCacheFull !== 'undefined') _alumnosCacheFull = null; } catch(_) {}
+    try { if (typeof configCache !== 'undefined') configCache = null; } catch(_) {}
+    try {
+      if (typeof DB !== 'undefined' && DB) {
+        DB._alumnosCache = null;
+        DB._alumnosCacheKey = '';
+        DB._alumnosScopedCache = {};
+      }
+    } catch(_) {}
+  } catch(_purgeErr) { console.warn('[purge cache deploy]', _purgeErr); }
+
   // Ocultar app hasta que Firebase resuelva
   var header = document.getElementById('app-header');
   var main   = document.getElementById('app-main');
@@ -23087,20 +23117,15 @@ function _profesorAsignacionesAulasList() {
       const g = String(currentTutorInfo?.tutorGrado || '').trim();
       const s = String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
       if (g && s) {
-        let c = '';
-        try { c = _canonCicloJS(_agendaInferNivelByGrado(g, null) || ''); } catch(_) {}
-        // Deducción segura CEBA por grado si cfg no pudo inferir:
-        // TODO Presencial 1-6 = INICIAL/INTERMEDIO (1 solo valor no 2 separados).
-        // CEBA NO separa Inicial de Intermedio. Son 2 niveles totales (Inicial/Intermedio + Avanzado).
-        if (!c) {
-          try {
-            const gNum = parseInt((String(g).match(/\d+/)||[])[0]||'0', 10);
-            if (gNum >= 1 && gNum <= 6) c = 'INICIAL/INTERMEDIO';
-          } catch(_) {}
-        }
-        // Normalizar cualquier INICIAL / INTERMEDIO solo → a INICIAL/INTERMEDIO canon
-        if (c === 'INICIAL' || c === 'INTERMEDIO') c = 'INICIAL/INTERMEDIO';
-        list.push({ ciclo: c, grado: g, seccion: s });
+        // CANON EXCEL 2026-08-24: NUNCA inferir ciclo por grado/turno.
+        //   Si el Excel dice AVANZADO → es AVANZADO.
+        //   Dejamos ciclo VACÍO para que:
+        //     (a) aplicarFiltroProfesor matchee por G+S+T (flexible, sin ciclo),
+        //         así el docente NUNCA pierde a sus alumnos (aunque ciclo en
+        //         aula y alumnos no coincidan).
+        //     (b) poblarFiltroNivel NO muestre INICIAL/INTERMEDIO si no hay
+        //         alumnos REALES con ese valor (respetar 100% lo del Excel).
+        list.push({ ciclo: '', grado: g, seccion: s });
       }
     } catch(_) {}
   }

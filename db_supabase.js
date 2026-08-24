@@ -9,7 +9,7 @@
 // ============================================================
 // eslint-disable-next-line no-var
 var supabase = window._sb; // sobreescribir referencia de librería con el cliente activo
-const _CACHE_VER = 'v2';
+const _CACHE_VER = 'v3';
 
 const DB = {
 
@@ -326,7 +326,14 @@ const DB = {
     LSC.del('alumnos');
     try {
       Object.keys(localStorage)
-        .filter(k => k.startsWith('scoped:') || k.startsWith('asmqr_scoped:') || k.startsWith('alumnos:') || k.startsWith('aulas:'))
+        .filter(k => {
+          const ks = String(k || '');
+          return (
+            ks.startsWith('scoped:') || ks.startsWith('asmqr_scoped:') ||
+            ks.startsWith('alumnos:') || ks.startsWith('asmqr_alumnos:') ||
+            ks.startsWith('aulas:') || ks.startsWith('asmqr_aulas:')
+          );
+        })
         .forEach(k => localStorage.removeItem(k));
     } catch (e) {}
   },
