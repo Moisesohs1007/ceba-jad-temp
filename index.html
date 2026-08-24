@@ -7420,6 +7420,15 @@ function showSectionDirect(id) {
     }
     const btnFotos = document.getElementById('btn-fotos-masivo');
     if(btnFotos) btnFotos.style.display = (_isAdminDirectorOrCoord() || !!currentPerms?.alumnosFotosMasivo) ? '' : 'none';
+    // Panel Debug Orlando — SOLO para Orlando (uid/email match).
+    // Cada vez que cambie a sección #alumnos volver a renderizar (por si al init el uid no estaba listo).
+    try {
+      if (typeof renderDebugOrlando === 'function') {
+        try { window.__alumnosScopedCached = null; } catch(_) {}
+        setTimeout(() => { try { renderDebugOrlando(true); } catch(_) {} }, 150);
+        setTimeout(() => { try { renderDebugOrlando(true); } catch(_) {} }, 900);
+      }
+    } catch(_) {}
   }
   if(id==='registro') {
     poblarSelectorMes('reg-mes-select');
@@ -23789,6 +23798,89 @@ async function renderDebugOrlando(force = false) {
     lines.push('      Configuraciones → Usuarios → Orlando → Asignar Grado 1, Sección A).');
     lines.push('  • Si scope > 0 pero en la UI te sale 0 → haz click en Nivel = "Todos".');
     body.textContent = lines.join('\n');
+
+    // ================================================================
+    // BOTONES DE ACCIÓN RÁPIDA (debajo del panel, solo Orlando)
+    // - Botón ROJO grande: si no ha seleccionado Nivel aún, o scope>0 y tabla 0,
+    //   clickea Nivel=TODOS y ejecuta onNivelChangeAlumnos para mostrar lista.
+    // ================================================================
+    try {
+      const oldBtns = document.getElementById('debug-orlando-btns');
+      if (oldBtns) oldBtns.remove();
+      const btnsWrap = document.createElement('div');
+      btnsWrap.id = 'debug-orlando-btns';
+      btnsWrap.style.marginTop = '10px';
+      btnsWrap.style.display = 'flex';
+      btnsWrap.style.gap = '10px';
+      btnsWrap.style.flexWrap = 'wrap';
+      btnsWrap.style.alignItems = 'center';
+
+      const nEl = document.getElementById('fa-nivel');
+      const valSel = String(nEl && nEl.value ? nEl.value : '').trim().toUpperCase();
+      const noSelecciono = !valSel || valSel.startsWith('--');
+      const debeMostrar = (noSelecciono) || (totalAlumnosScope > 0 && typeof document.getElementById('alumnos-count') !== 'undefined' && /Mostrando 0 de|Mostrando 0 alumnos/.test(document.getElementById('alumnos-count')?.textContent || ''));
+      if (debeMostrar) {
+        const btn = document.createElement('button');
+        btn.className = 'btn';
+        btn.type = 'button';
+        btn.textContent = '🔎 MOSTRAR MIS ALUMNOS (TODOS)';
+        btn.style.background = '#dc2626';
+        btn.style.color = '#fff';
+        btn.style.borderColor = '#dc2626';
+        btn.style.fontWeight = '700';
+        btn.style.fontSize = '0.95rem';
+        btn.style.padding = '10px 16px';
+        btn.style.borderRadius = '10px';
+        btn.style.cursor = 'pointer';
+        btn.onclick = () => {
+          try {
+            window._tutoriaInteraccionManual = true;
+            const el = document.getElementById('fa-nivel');
+            if (!el) return;
+            // Si hay opción "TODOS" seleccionarla; si no, elegir la 2da opción después de placeholder
+            const opts = Array.from(el.options || []);
+            let target = 'TODOS';
+            const hayTodos = opts.some(o => String(o.value || '').toUpperCase() === 'TODOS');
+            if (!hayTodos && opts.length > 1) target = String(opts[1].value || '');
+            if (hayTodos || opts.length > 1) {
+              el.value = target;
+            }
+            if (typeof onNivelChangeAlumnos === 'function') {
+              try { onNivelChangeAlumnos(); } catch(_) {}
+            }
+            setTimeout(() => { try { renderDebugOrlando(false); } catch(_) {} }, 200);
+          } catch(eClickBtn) { console.warn('[debug-orlando btn mostrar todos]', eClickBtn); }
+        };
+        btnsWrap.appendChild(btn);
+
+        const hint = document.createElement('span');
+        hint.style.color = '#7f1d1d';
+        hint.style.fontWeight = '600';
+        hint.style.fontSize = '0.85rem';
+        hint.textContent = totalAlumnosScope > 0
+          ? `→ Tienes ${totalAlumnosScope} alumnos. Presiona el botón rojo para verlos TODOS ahora (sin necesidad de ir filtro por filtro).`
+          : `→ Actualmente NO TE CORRESPONDE VER NINGÚN ALUMNO según tus aulas asignadas (lee arriba).`;
+        btnsWrap.appendChild(hint);
+      }
+      panel.appendChild(btnsWrap);
+    } catch(_btnsErr) {
+      console.warn('[debug-orlando btns]', _btnsErr?.message || _btnsErr);
+    }
+
+    // ================================================================
+    // POLLING SUAVE: si UID de sesión aún no está listo, volver a
+    // ejecutar renderDebugOrlando hasta 6 veces × 5s (30s total).
+    // Esto evita que al primer render Firebase auth no haya entregado
+    // currentUser y el panel se quede oculto para siempre.
+    // ================================================================
+    try {
+      if (!uidVal && !emailVal && (window.__debugOrlandoPollCount || 0) < 6) {
+        window.__debugOrlandoPollCount = ((window.__debugOrlandoPollCount || 0) + 1);
+        setTimeout(() => { try { renderDebugOrlando(force); } catch(_) {} }, 5000);
+      } else {
+        try { window.__debugOrlandoPollCount = 0; } catch(_) {}
+      }
+    } catch(_pollErr) {}
   } catch(eDebugOrl) {
     try {
       const body = document.getElementById('debug-orlando-body');
