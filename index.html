@@ -6203,19 +6203,65 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   })();
   if (_esDocenteLegacyCEBANoAuto) _noAutoSeleccionarFiltrosForzado = true;
   if (_realHaceAutoSelect && ((_noAutoSeleccionarFiltros || _noAutoSeleccionarFiltrosForzado) || (!g || !s))) {
-    // Limpiar TODOS los filtros a '' (ninguna selección), para que el profesor vea TODAS sus aulas
-    // y no solo la 1ra, ni sufra por datos mal catalogados.
-    if (nEl && nEl.options && [...(nEl.options || [])].some(o => String(o.value || '') === '')) {
-      try { nEl.value = ''; } catch(_) {}
-    }
-    if (gEl) try { gEl.value = ''; } catch(_) {}
-    if (sEl) try { sEl.value = ''; } catch(_) {}
-    if (nEl) nEl.disabled = false;
-    if (gEl) { _disableSelect(gEl.id || ''); gEl.disabled = false; }
-    if (sEl) { _disableSelect(sEl.id || ''); sEl.disabled = false; }
-    try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
+    // ==========================================================
+    // FIX NUEVO Orlando + todos los profesores MÚLTIPLES AULAS:
+    // Ya no limpiamos los selects a '' ni llamamos a mostrarEstadoInicial.
+    // En cambio:
+    //  - 1 valor único real en el select → auto-seleccionar ese valor
+    //  - ≥2 valores reales → auto-seleccionar "TODOS" (ahora los profesores
+    //    TAMBIÉN tienen opción Todos en todos los selects, lo hemos añadido
+    //    en poblarFiltroNivel/Grado/Seccion, ya no hay exclusión isProf).
+    // Resultado: PROFESOR ABRE GESTIÓN ALUMNOS → VE TODOS SUS ALUMNOS
+    //            INMEDIATAMENTE sin tener que seleccionar nada manual.
+    // ==========================================================
+    try {
+      // 1. NIVEL: calcular valor auto
+      let cfg = options.cfg || null;
+      try { if(!cfg) cfg = await getConfig(); } catch(e0) {}
+      let nivelSel = '';
+      if (nEl) {
+        const realOpts = [...(nEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
+        if (realOpts.length === 1) nivelSel = realOpts[0];
+        else if (realOpts.length >= 2) nivelSel = 'TODOS';
+        if (nivelSel) nEl.value = nivelSel;
+        nEl.disabled = false;
+      }
+      // 2. Poblar GRADO (con el nivel seleccionado) y auto-seleccionar
+      let gradoSel = '';
+      if (gEl) {
+        await poblarFiltroGrado(gradoId, nivelSel || null, { cfg, alumnos: options.alumnos });
+        const realG = [...(gEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
+        if (realG.length === 1) gradoSel = realG[0];
+        else if (realG.length >= 2) gradoSel = 'TODOS';
+        if (gradoSel) gEl.value = gradoSel;
+        gEl.disabled = false;
+        // Habilitar cascada (nivel ya tiene valor)
+        try { _enableSelect(gEl.id || ''); } catch(_){}
+      }
+      // 3. Poblar SECCIÓN (con el grado seleccionado) y auto-seleccionar
+      let seccSel = '';
+      if (sEl) {
+        await poblarFiltroSeccion(seccionId, gradoSel || null, { cfg, alumnos: options.alumnos });
+        const realS = [...(sEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
+        if (realS.length === 1) seccSel = realS[0];
+        else if (realS.length >= 2) seccSel = 'TODOS';
+        if (seccSel) sEl.value = seccSel;
+        sEl.disabled = false;
+        // Habilitar cascada (grado ya tiene valor → habilitar sección; sección → modalidad)
+        if (gradoSel) try { _enableSelect(sEl.id || ''); } catch(_){}
+      }
+      // 4. Habilitar MODALIDAD si Sección tiene valor seleccionado (cascada)
+      try {
+        const modEl = document.getElementById('fa-modalidad');
+        if (modEl && seccSel) { _enableSelect('fa-modalidad'); }
+        else if (modEl && !seccSel) { modEl.value = ''; _disableSelect('fa-modalidad'); }
+      } catch(_){}
+    } catch(_errTut) { console.warn('[autoSelectTutoria multiAula] error:', _errTut); }
+    _tutoriaLocked = false;
+    // NUNCA llamar a mostrarEstadoInicial aquí → el profesor TIENE aulas asignadas
+    // y renderAlumnos() mostrará la lista con profTieneFiltroReal=true al
+    // tener seleccionado Nivel/Grado/Seccion (incluso TODOS).
     try { if (typeof renderAlumnos === 'function') renderAlumnos(); } catch(_) {}
-    try { if (typeof mostrarEstadoInicial === 'function' && !document.getElementById('search-alumnos')?.value) mostrarEstadoInicial(); } catch(_) {}
     return;
   }
 
@@ -6237,13 +6283,9 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
           nivel = keyLarga ? _cfgKeyToNivelCorto(keyLarga, cfg) : '';
         } catch(_) {}
       }
-      // IMPORTANTE (FIX): Si aún no tenemos nivel claro (aula legacy sin ciclo,
-      // cfg no pudo inferir por grado), NO forzamos nivel mediante los siguientes
-      // fallbacks (nivelesScope / unicas) ya que podríamos seleccionar "AVANZADO"
-      // cuando el docente espera INICIAL/INTERMEDIO y los alumnos están mal catalogados.
-      // Mejor: dejamos nivel='' → no filtra por nivel y mostrará todos los alumnos de
-      // grado+sección correspondientes (garantizado por getAlumnosFiltrados scope ampliado
-      // y aplicarFiltroProfesor laxado).
+      // FIX Orlando: si aún no tenemos nivel claro pero hay varias opciones
+      // de nivel en su scope → NO dejar en '' (luego renderAlumnos lo necesita
+      // para profTieneFiltroReal → usa "TODOS" si hay 2+ niveles).
       const _sinCicloClaro = !cicloAuto && (primeraAula && !String(primeraAula.ciclo||'').trim()) && !nivel;
       if(!nivel && !_sinCicloClaro) {
         try {
@@ -6254,10 +6296,13 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
           }
         } catch(_) {}
       }
-      if(!nivel && !_sinCicloClaro) {
+      if(!nivel) {
+        // FIX FINAL Orlando: si nivel sigue '' después de todos los fallbacks
+        // → usar la cantidad de opciones reales: 1 valor = escogerlo; ≥2 = TODOS
         try {
           const unicas = [...(nEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
           if (unicas.length === 1) nivel = unicas[0];
+          else if (unicas.length >= 2) nivel = 'TODOS';
         } catch(_) {}
       }
     } else {
@@ -6274,56 +6319,68 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   }
 
   if (gEl) {
-    if (_realHaceAutoSelect && g && s) {
+    if (_realHaceAutoSelect) {
       await poblarFiltroGrado(gradoId, nivel, { cfg: options.cfg, alumnos: options.alumnos });
-      if (![...(gEl.options || [])].some(o => String(o.value || '') === g)) {
-        gEl.innerHTML = `<option value="${g}">${g}</option>`;
+      // FIX Orlando: si no hay g/s (aulas sin datos completos) pero hay opciones en el
+      // select de grado → auto-seleccionar: 1 valor = único; ≥2 = TODOS (no dejar '')
+      if (!g) {
+        try {
+          const realG = [...(gEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
+          if (realG.length === 1) g = realG[0];
+          else if (realG.length >= 2) g = 'TODOS';
+        } catch(_) {}
       }
-      gEl.value = g;
+      if (g) {
+        if (![...(gEl.options || [])].some(o => String(o.value || '') === g)) {
+          gEl.innerHTML = `<option value="${g}">${g}</option>`;
+        }
+        gEl.value = g;
+        try { _enableSelect(gEl.id || ''); } catch(_){}
+      }
       gEl.disabled = _lockCampos;
     } else {
       try { if (gEl.value) gEl.value = ''; } catch(_) {}
     }
   }
   if (sEl) {
-    if (_realHaceAutoSelect && g && s) {
+    if (_realHaceAutoSelect) {
       await poblarFiltroSeccion(seccionId, g, { cfg: options.cfg, alumnos: options.alumnos });
-      if (![...(sEl.options || [])].some(o => String(o.value || '') === s)) {
-        sEl.innerHTML = `<option value="${s}">${s}</option>`;
+      // FIX Orlando: si no hay sección por datos incompletos, auto-seleccionar por opciones
+      if (!s) {
+        try {
+          const realS = [...(sEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
+          if (realS.length === 1) s = realS[0];
+          else if (realS.length >= 2) s = 'TODOS';
+        } catch(_) {}
       }
-      sEl.value = s;
+      if (s) {
+        if (![...(sEl.options || [])].some(o => String(o.value || '') === s)) {
+          sEl.innerHTML = `<option value="${s}">${s}</option>`;
+        }
+        sEl.value = s;
+        try { _enableSelect(sEl.id || ''); } catch(_){}
+      }
       sEl.disabled = _lockCampos;
     } else {
       try { if (sEl.value) sEl.value = ''; } catch(_) {}
     }
   }
+  // HABILITAR MODALIDAD (cascada final): si Sección tiene valor, habilitar
+  if (_realHaceAutoSelect) {
+    try {
+      const modEl = document.getElementById('fa-modalidad');
+      const sVal = sEl ? String(sEl.value || '').trim() : '';
+      if (modEl && sVal) _enableSelect('fa-modalidad');
+      else if (modEl) { modEl.value = ''; _disableSelect('fa-modalidad'); }
+    } catch(_){}
+  }
 
   setTimeout(() => {
-    // PASO FUERTE: sin importar el caso, si el select tiene '' habilitado y esta en otra cosa → ''
-    try {
-      if (nEl && nEl.options && [...nEl.options].some(o => String(o.value || '') === '')) {
-        if (isProf && !_realHaceAutoSelect && nEl.value !== '') {
-          nEl.value = '';
-          try { if (gEl && gEl.value && !_realHaceAutoSelect) gEl.value = ''; } catch(_) {}
-          try { if (sEl && sEl.value && !_realHaceAutoSelect) sEl.value = ''; } catch(_) {}
-        }
-      }
-    } catch(_) {}
-    if (_realHaceAutoSelect) {
-      if (nEl && !nEl.value) nEl.value = nivel;
-      if (gEl && !gEl.value) gEl.value = g;
-      if (sEl && !sEl.value) sEl.value = s;
-    }
     _tutoriaLocked = false;
-  }, 300);
-  setTimeout(() => {
-    // 2do refuerzo (contra re-renders de DOM):
-    try {
-      if (nEl && nEl.options && [...nEl.options].some(o => String(o.value || '') === '')) {
-        if (isProf && !_realHaceAutoSelect && nEl.value !== '') nEl.value = '';
-      }
-    } catch(_) {}
-  }, 800);
+    // FIX Orlando: Profesor con auto-selección (TODOS o valor) → mostrar la lista.
+    // Para NO-docentes que no sean aula, si el select tenía '' válido → limpiado arriba.
+    try { if (typeof renderAlumnos === 'function') renderAlumnos(); } catch(_) {}
+  }, 250);
 }
 function _rolLabel(r) {
   const v = _normRol(r);
@@ -23474,7 +23531,7 @@ async function poblarFiltroNivel(selectId, onchangeFn, options = {}) {
   if (!nivelesBase.length) {
     nivelesBase.push(...nivelesOficiales);
   }
-  el.innerHTML = `<option value="" disabled selected>-- Nivel --</option>${isProf ? '' : '<option value="TODOS">Todos</option>'}`;
+  el.innerHTML = `<option value="" disabled selected>-- Nivel --</option><option value="TODOS">Todos</option>`;
   nivelesBase.forEach(n => {
     const label = (_MODALIDAD_CEBA_LABEL && typeof _MODALIDAD_CEBA_LABEL === 'object')
       ? (_MODALIDAD_CEBA_LABEL[n] || n)
@@ -23609,7 +23666,7 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
         return String(a).localeCompare(String(b));
       });
 
-  el.innerHTML = `<option value="" disabled selected>-- Grado --</option>${isProf ? '' : '<option value="TODOS">Todos</option>'}`;
+  el.innerHTML = `<option value="" disabled selected>-- Grado --</option><option value="TODOS">Todos</option>`;
   grados.forEach(g => { el.innerHTML += `<option value="${g}">${g}</option>`; });
   try {
     const opts = new Set(Array.from(el.options).map(o => o.value));
@@ -23636,7 +23693,7 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
   // Si la config no cubrió ninguna sección real, mostrar las de alumnos (pero nunca "inventar" secciones para profesor)
   if(secciones.length === 0) secciones = seccionesDeAlumnos.length > 0 ? seccionesDeAlumnos : (isProf ? [] : seccCfg);
 
-  el.innerHTML = `<option value="" disabled selected>-- Sección --</option>${isProf ? '' : '<option value="TODOS">Todas</option>'}`;
+  el.innerHTML = `<option value="" disabled selected>-- Sección --</option><option value="TODOS">Todas</option>`;
   secciones.forEach(s => { el.innerHTML += `<option value="${s}">${s}</option>`; });
   try {
     const opts = new Set(Array.from(el.options).map(o => o.value));
