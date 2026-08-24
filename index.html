@@ -2923,6 +2923,21 @@
     <div class="page-title">Gestión de Alumnos</div>
     <div class="page-sub">Agrega, edita o genera QR para cada alumno</div>
 
+    <!-- ================================================================
+         PANEL DEBUG EXCLUSIVO ORLANDO MARINO (solo lo ve él)
+         uid: 48bbf55d-5b67-4ddf-8f00-dba457e077a4
+         email: orlandomarinohuinchosuarez@gmail.com
+         Petición user: "dime q nivel, grado y modalidades tiene asignado"
+         Se actualiza automáticamente al entrar a la sección.
+         ================================================================ -->
+    <div id="debug-orlando-panel" style="display:none;margin-bottom:14px;padding:14px 18px;border:2px dashed #4f46e5;background:rgba(79,70,229,0.06);border-radius:12px;">
+      <div style="font-weight:700;color:#1e293b;margin-bottom:8px;font-size:0.95rem;">
+        🔍 Panel Debug (SOLO visible para Orlando Marino — uid 48bbf55d)
+      </div>
+      <pre id="debug-orlando-body" style="margin:0;padding:10px 12px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;font-size:0.8rem;color:#0f172a;white-space:pre-wrap;line-height:1.55;"></pre>
+      <button class="btn btn-ghost" style="margin-top:8px;font-size:0.82rem;" onclick="renderDebugOrlando(true)">🔄 Actualizar</button>
+    </div>
+
     <!-- Filtros -->
     <div class="card" style="padding:16px 20px;margin-bottom:16px;">
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
@@ -6196,15 +6211,21 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
     // 6. LIMPIADORES DE SEGURIDAD ASÍNCRONOS (para cualquier race condition
     //    de poblarFiltro/promises que se ejecutan después):
     //    100ms, 300ms, 500ms y 1200ms → re-limpia values y re-aplica cascada disabled.
-    //    (Orlando no debe ver NADA seleccionado sin elegirlo manualmente).
+    //    CONDICIÓN: SOLO si NO ha habido interacción MANUAL del docente
+    //    (window._tutoriaInteraccionManual = false). Si Orlando ya tocó el select,
+    //    NO limpiamos para no perder su selección.
+    //    Casos especiales que también limpiamos (si !interaccionManual):
+    //    • value === 'TODOS' → bug browser auto-selecciona la opción después
+    //      de recargar innerHTML options → volvemos a placeholder ''.
     [100, 300, 500, 1200].forEach(delayMs => {
       setTimeout(() => {
         try {
+          if (window._tutoriaInteraccionManual === true) return; // docente ya tocó → no tocar
           const nE = document.getElementById(nivelId);
           const gE = document.getElementById(gradoId);
           const sE = document.getElementById(seccionId);
           const mE = document.getElementById('fa-modalidad');
-          if (nE && String(nE.value||'') === '' && [...(nE.options||[])].some(o => String(o.value||'') === '')) {
+          if (nE && (String(nE.value||'') === '' || String(nE.value||'').toUpperCase() === 'TODOS')) {
             try { nE.value = ''; } catch(_) {}
             try { nE.disabled = false; _enableSelect(nivelId); } catch(_) {}
           }
@@ -23645,7 +23666,145 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
   } catch(e) {}
 }
 
+/**
+ * renderDebugOrlando (SOLO para uid=48bbf55d Orlando Marino):
+ * Muestra EXACTAMENTE qué aulas / nivel / grado / sección / modalidad
+ * le fueron asignadas en Firebase Custom Claims y Supabase.
+ * Responde a la pregunta del user: "dime q nivel, grado y modalidades tiene asignado".
+ */
+async function renderDebugOrlando(force = false) {
+  try {
+    const uidVal = (window.currentUser && window.currentUser.uid) ? String(window.currentUser.uid) : '';
+    const emailVal = (window.currentUser && window.currentUser.email) ? String(window.currentUser.email).toLowerCase() : '';
+    const ES_ORLANDO = (uidVal === '48bbf55d-5b67-4ddf-8f00-dba457e077a4') ||
+      (emailVal === 'orlandomarinohuinchosuarez@gmail.com');
+    const panel = document.getElementById('debug-orlando-panel');
+    if (!panel) return;
+    if (!ES_ORLANDO) {
+      // Solo Orlando lo ve. Asegurarse que esté oculto para cualquiera otro.
+      panel.style.display = 'none';
+      return;
+    }
+    // Mostrar panel
+    panel.style.display = 'block';
+    const body = document.getElementById('debug-orlando-body');
+    if (!body) return;
+    const rol = _normRol(window.currentRol || '');
+    const ti = window.currentTutorInfo || {};
+    const tutorGrado = String(ti.tutorGrado || '').trim();
+    const tutorSeccion = String(ti.tutorSeccion || '').trim().toUpperCase();
+    const tutorTurno = String(ti.tutorTurno || '').trim();
+    const tutorAulasRaw = ti.tutorAulas || ti.tutor_aulas || ti.tutorAulasJson || null;
+    let tutorAulasArray = [];
+    try {
+      if (typeof tutorAulasRaw === 'string') tutorAulasArray = JSON.parse(tutorAulasRaw);
+      else if (Array.isArray(tutorAulasRaw)) tutorAulasArray = tutorAulasRaw;
+    } catch(_) { tutorAulasArray = []; }
+    if (!Array.isArray(tutorAulasArray)) tutorAulasArray = [];
+
+    // Fallback aula unica legacy
+    let aulasFusionadas = [];
+    try { aulasFusionadas = JSON.parse(JSON.stringify(tutorAulasArray || [])); } catch(_) { aulasFusionadas = []; }
+    if ((!aulasFusionadas || !aulasFusionadas.length) && (tutorGrado || tutorSeccion)) {
+      aulasFusionadas.push({ ciclo: '', grado: tutorGrado, seccion: tutorSeccion, turno: tutorTurno });
+    }
+
+    // Alumnos scope
+    let totalAlumnosScope = 0;
+    let alumnosSampleIds = [];
+    let nivelesConteo = {};
+    let modalidadesConteo = {};
+    let turnosConteo = {};
+    try {
+      const alumnos = (force ? null : window.__alumnosScopedCached) || await getAlumnosFiltrados();
+      if (!force) try { window.__alumnosScopedCached = alumnos; } catch(_) {}
+      totalAlumnosScope = (alumnos || []).length;
+      alumnosSampleIds = (alumnos || []).slice(0, 5).map(a => `${a.id||''} ${a.apellidos||''} ${a.nombres||''} [${a.grado||''}${a.seccion||''}·${a.ciclo||''}·${a.turno||''}]`.trim());
+      (alumnos || []).forEach(a => {
+        const c = String(a.ciclo || '').trim() || '(vacio)';
+        const t = String(a.turno || '').trim() || '(vacio)';
+        nivelesConteo[c] = (nivelesConteo[c]||0) + 1;
+        turnosConteo[t] = (turnosConteo[t]||0) + 1;
+      });
+      Object.keys(nivelesConteo).sort().forEach(k => nivelesConteo[k] = nivelesConteo[k]);
+    } catch(eScoped) {
+      totalAlumnosScope = -1;
+      nivelesConteo = { error: String(eScoped?.message || eScoped) };
+    }
+
+    // ROL
+    let esDocenteCheck = false;
+    try { esDocenteCheck = _esRolDocenteAqui(); } catch(_) {}
+
+    const lines = [];
+    lines.push('📌 DATOS DE SESIÓN');
+    lines.push(`  UID:              ${uidVal || '(vacio)'}`);
+    lines.push(`  Email:            ${emailVal || '(vacio)'}`);
+    lines.push(`  Nombre (display): ${(window.currentUser && window.currentUser.displayName) ? window.currentUser.displayName : '(vacio)'}`);
+    lines.push('');
+    lines.push('🎭 ROL');
+    lines.push(`  currentRol raw:     ${window.currentRol || '(vacio)'}`);
+    lines.push(`  currentRol norm:    ${rol || '(vacio)'}`);
+    lines.push(`  _esRolDocenteAqui:  ${esDocenteCheck ? 'SÍ (docente/profesor)' : 'NO (admin/director/coord/otro)'}`);
+    lines.push('');
+    lines.push('👨‍🏫 AULAS ASIGNADAS (Firebase currentTutorInfo)');
+    lines.push(`  tutorGrado:         ${tutorGrado || '(vacio)'}`);
+    lines.push(`  tutorSeccion:       ${tutorSeccion || '(vacio)'}`);
+    lines.push(`  tutorTurno:         ${tutorTurno || '(vacio)'}`);
+    lines.push(`  tutorAulas (raw):   ${typeof tutorAulasRaw === 'string' ? tutorAulasRaw : (Array.isArray(tutorAulasRaw) ? JSON.stringify(tutorAulasRaw, null, 0) : (tutorAulasRaw ? String(tutorAulasRaw) : '(vacio)'))}`);
+    lines.push('');
+    lines.push(`  Total aulas listadas (tutorAulasArray): ${tutorAulasArray.length}`);
+    if (tutorAulasArray.length > 0) {
+      tutorAulasArray.forEach((au, idx) => {
+        lines.push(`    Aula #${idx+1}: ciclo="${au.ciclo||''}", grado="${au.grado||''}", seccion="${au.seccion||''}", turno="${au.turno||''}"`);
+      });
+    } else {
+      lines.push(`    (array vacío — usara fallback tutorGrado+tutorSeccion)`);
+    }
+    lines.push('');
+    lines.push('🎯 AULAS FUSIONADAS (aplicarFiltroProfesor usará ESTAS para matchear alumnos)');
+    lines.push(`  Total aulas: ${aulasFusionadas.length || 0}`);
+    (aulasFusionadas.length ? aulasFusionadas : [{ciclo:'(sin aulas)', grado:'', seccion:'', turno:''}]).forEach((au, idx) => {
+      lines.push(`    AulaF #${idx+1}: ciclo="${au.ciclo||''}", grado="${au.grado||''}", seccion="${au.seccion||''}", turno="${au.turno||''}"`);
+    });
+    lines.push('');
+    lines.push('📚 ALUMNOS EN TU SCOPE (getAlumnosFiltrados)');
+    lines.push(`  Total alumnos que TE CORRESPONDEN VER: ${totalAlumnosScope === -1 ? '[ERROR al cargar, mira consola]' : totalAlumnosScope}`);
+    if (Object.keys(nivelesConteo).length) {
+      lines.push(`  Distribución POR NIVEL en tus alumnos:`);
+      Object.keys(nivelesConteo).sort().forEach(k => lines.push(`    - ${k}: ${nivelesConteo[k]} alumnos`));
+    }
+    if (Object.keys(turnosConteo).length) {
+      lines.push(`  Distribución POR TURNO/MODALIDAD en tus alumnos:`);
+      Object.keys(turnosConteo).sort().forEach(k => lines.push(`    - ${k}: ${turnosConteo[k]} alumnos`));
+    }
+    if (alumnosSampleIds && alumnosSampleIds.length) {
+      lines.push(`  Primeros 5 IDs alumnos (muestra):`);
+      alumnosSampleIds.forEach(s => lines.push(`    • ${s}`));
+    }
+    lines.push('');
+    lines.push('🧭 CÓMO LEER ESTO:');
+    lines.push('  • Si "Total alumnos en tu scope = 0" y "Tutor Grado/Sección" están vacíos');
+    lines.push('    → Admin NO te ha asignado aula en Firebase (Moisés debe ir a:');
+    lines.push('      Configuraciones → Usuarios → Orlando → Asignar Grado 1, Sección A).');
+    lines.push('  • Si scope > 0 pero en la UI te sale 0 → haz click en Nivel = "Todos".');
+    body.textContent = lines.join('\n');
+  } catch(eDebugOrl) {
+    try {
+      const body = document.getElementById('debug-orlando-body');
+      if (body) body.textContent = '[renderDebugOrlando error]: ' + (eDebugOrl?.stack || eDebugOrl?.message || eDebugOrl);
+    } catch(_) {}
+  }
+}
+
+// Flag de interacción MANUAL del docente en los filtros (solo set a true en onchange handlers MANUALES)
+// Los limpiadores setTimeout de _autoSelectTutoria SOLO actúan si este flag = false (no hubo click del docente).
+window._tutoriaInteraccionManual = false;
+
 async function onNivelChangeAlumnos() {
+  // Interacción MANUAL del docente: desde este momento, NO limpiamos más selects en los respaldos.
+  window._tutoriaInteraccionManual = true;
+
   // SOFT EXIT durante _autoSelectTutoria docente sin-auto (Orlando):
   // cualquier onchange residual por poblar innerHTML → NO hace NADA.
   try { if (window._asmqrSinAutoTut === true) return; } catch(_) {}
@@ -23936,6 +24095,30 @@ async function inicializarFiltros(options = {}) {
     _autoSelectTutoria('fa-nivel', 'fa-grado', 'fa-seccion', { cfg, alumnos }),
     _autoSelectTutoria('filter-nivel', 'filter-grado', 'filter-seccion', { cfg, alumnos })
   ]);
+
+  // ================================================================
+  // Panel DEBUG EXCLUSIVO ORLANDO.
+  // - Solo lo VE él (uid o email match).
+  // - Oculta para ADMIN / OTROS.
+  // - Se llama después de inicializarFiltros para que currentTutorInfo
+  //   y alumnos scoped estén listos.
+  // ================================================================
+  try {
+    if (typeof renderDebugOrlando === 'function') {
+      window.__alumnosScopedCached = null;
+      const activeAl = document.getElementById('sec-alumnos')?.classList?.contains('active');
+      if (activeAl) {
+        try { await renderDebugOrlando(true); } catch(_) {}
+      } else {
+        // Cargar async cuando entre a alumnos
+        try { setTimeout(() => {
+          if (document.getElementById('sec-alumnos')?.classList?.contains('active')) {
+            try { renderDebugOrlando(true); } catch(_) {}
+          }
+        }, 1000); } catch(_) {}
+      }
+    }
+  } catch(_dbgAfterInit) {}
 }
 
 // ============================================================
