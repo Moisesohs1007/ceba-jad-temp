@@ -6204,6 +6204,28 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
     // 5. RESTAURAR ONCHANGE (antes de salir)
     try { restOnChange(); } catch(_) {}
     try { window._asmqrSinAutoTut = false; } catch(_) {}
+    // FIX CASCADA DEFINITIVA: attach listeners change DIRECTOS 4 selects
+    // (es INDEPENDIENTE de inline onchange → no se pierde nunca por removeAttr).
+    try { if (typeof _attachCascadaListenersAlumnos === 'function') _attachCascadaListenersAlumnos(); } catch(_) {}
+    // FIX EXTRA: como last-ditch 200ms después volver attach por si el DOM
+    // estaba mid-render durante inicializarFiltros.
+    try { setTimeout(() => { if (typeof _attachCascadaListenersAlumnos === 'function') _attachCascadaListenersAlumnos(); }, 200); } catch(_) {}
+    // FIX SEGURIDAD MÁXIMA: garantizar que la cascada inicial no se rompió
+    // (solo si Orlando NO ha tocado nada manualmente):
+    try {
+      if (window._tutoriaInteraccionManual !== true && nEl) {
+        try { nEl.disabled = false; _enableSelect(nivelId); } catch(_) {}
+        // Si el nivel seleccionó algo por accidente (bug DOM innerHTML auto-select):
+        // habilitar grado acá también (por si onNivelChange no se disparó por inline perdido).
+        if (String(nEl.value || '').trim() && !/--/.test(String(nEl.value || '')) && gEl) {
+          try { gEl.disabled = false; _enableSelect(gradoId); } catch(_) {}
+        } else if (gEl) {
+          try { gEl.disabled = true; _disableSelect(gradoId); } catch(_) {}
+        }
+        if (sEl) { try { sEl.disabled = true; _disableSelect(seccionId); } catch(_) {} }
+        if (modEl) { try { modEl.disabled = true; _disableSelect('fa-modalidad'); } catch(_) {} }
+      }
+    } catch(_) {}
 
     // 5bis. NUNCA llamar renderAlumnos() → deja el placeholder
     //    "Usa los filtros de arriba para buscar alumnos".
@@ -6232,6 +6254,9 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
           if (gE) { try { gE.value = ''; gE.disabled = true; _disableSelect(gradoId); } catch(_) {} }
           if (sE) { try { sE.value = ''; sE.disabled = true; _disableSelect(seccionId); } catch(_) {} }
           if (mE) { try { mE.value = ''; mE.disabled = true; _disableSelect('fa-modalidad'); } catch(_) {} }
+          // Fix cascada listeners: volvemos a attach al final de cada cleanup por si poblarFiltroGrado/Seccion
+          // re-write el innerHTML y el browser se cargó el listener.
+          try { if (typeof _attachCascadaListenersAlumnos === 'function') _attachCascadaListenersAlumnos(); } catch(_) {}
         } catch(_cleanUpErr) {}
       }, delayMs);
     });
@@ -24006,6 +24031,42 @@ async function renderDebugOrlando(force = false) {
     lines.push(`  fa-seccion.value  = [${document.getElementById('fa-seccion')?.value || ''}] (total options: ${faSeccOpts.length})`);
     faSeccOpts.forEach(o => lines.push(`    ${o}`));
     lines.push(`  fa-modalidad.value= [${document.getElementById('fa-modalidad')?.value || ''}]`);
+    // ================================================================
+    // DIAGNÓSTICO CASCADA HABILITACIÓN (bug user: "solo Nivel, resto disabled"
+    // después de cambiar a Avanzado). Nos dice SI el prop disabled está en true
+    // despite having selected value. También si onchange inline fue restaurado y si
+    // los addEventListener change ya fueron attached (flag).
+    // ================================================================
+    let _onInlineNV = '(no element)';
+    let _onPropNV = '(no element)';
+    let _disNV = '(no element)';
+    try { const el = document.getElementById('fa-nivel'); if (el) { _disNV = el.disabled ? 'DISABLED ⛔' : 'OK ✅'; _onInlineNV = String(el.getAttribute && el.getAttribute('onchange') || '(sin attr onchange)').slice(0, 100); _onPropNV = typeof el.onchange; } } catch(_) {}
+    let _onInlineGR = '(no element)';
+    let _onPropGR = '(no element)';
+    let _disGR = '(no element)';
+    try { const el = document.getElementById('fa-grado'); if (el) { _disGR = el.disabled ? 'DISABLED ⛔' : 'OK ✅'; _onInlineGR = String(el.getAttribute && el.getAttribute('onchange') || '(sin attr onchange)').slice(0, 100); _onPropGR = typeof el.onchange; } } catch(_) {}
+    let _onInlineSC = '(no element)';
+    let _onPropSC = '(no element)';
+    let _disSC = '(no element)';
+    try { const el = document.getElementById('fa-seccion'); if (el) { _disSC = el.disabled ? 'DISABLED ⛔' : 'OK ✅'; _onInlineSC = String(el.getAttribute && el.getAttribute('onchange') || '(sin attr onchange)').slice(0, 100); _onPropSC = typeof el.onchange; } } catch(_) {}
+    let _onInlineMO = '(no element)';
+    let _onPropMO = '(no element)';
+    let _disMO = '(no element)';
+    try { const el = document.getElementById('fa-modalidad'); if (el) { _disMO = el.disabled ? 'DISABLED ⛔' : 'OK ✅'; _onInlineMO = String(el.getAttribute && el.getAttribute('onchange') || '(sin attr onchange)').slice(0, 100); _onPropMO = typeof el.onchange; } } catch(_) {}
+    const _cascAtt = (window._cascadaListenersAttachedAlumnos === true) ? 'SÍ ✅' : 'NO ⛔';
+    lines.push('');
+    lines.push('🚦 CASCADA HABILITACIÓN (estado de los 4 selects)');
+    lines.push(`  _cascadaListenersAttachedAlumnos: ${_cascAtt}`);
+    lines.push(`  fa-nivel      : disabled? ${_disNV}   | inline-onchange="${_onInlineNV}"   | prop onchange: ${_onPropNV}`);
+    lines.push(`  fa-grado      : disabled? ${_disGR}   | inline-onchange="${_onInlineGR}"   | prop onchange: ${_onPropGR}`);
+    lines.push(`  fa-seccion    : disabled? ${_disSC}   | inline-onchange="${_onInlineSC}"   | prop onchange: ${_onPropSC}`);
+    lines.push(`  fa-modalidad  : disabled? ${_disMO}   | inline-onchange="${_onInlineMO}"   | prop onchange: ${_onPropMO}`);
+    try {
+      const _gE = document.getElementById('fa-grado');
+      if (_gE && _gE.disabled && document.getElementById('fa-nivel') && String(document.getElementById('fa-nivel').value || '').trim() && !/--/.test(String(document.getElementById('fa-nivel').value || ''))) {
+        lines.push('  ⚠️ AVISO: NIVEL TIENE VALOR PERO fa-grado SIGUE DISABLED. Esto significa que onNivelChangeAlumnos NO se disparó (inline onchange perdido o listener no attach). Solución: _attachCascadaListenersAlumnos() lo arregla automáticamente; si aquí sale NO ⛔ → refrescar.');
+      }
+    } catch(_) {}
     lines.push('');
     lines.push('📚 ALUMNOS EN TU SCOPE (getAlumnosFiltrados)');
     lines.push(`  Total alumnos que TE CORRESPONDEN VER: ${totalAlumnosScope === -1 ? '[ERROR al cargar, mira consola]' : totalAlumnosScope}`);
@@ -24126,29 +24187,89 @@ window._tutoriaInteraccionManual = false;
 async function onNivelChangeAlumnos() {
   // Interacción MANUAL del docente: desde este momento, NO limpiamos más selects en los respaldos.
   window._tutoriaInteraccionManual = true;
+  const nV = document.getElementById('fa-nivel').value;
+
+  // ═══════════════════════════════════════════════════════════════
+  // FIX 2026-08-24 CASCADA HABILITACIÓN (bug Orlando no podía seleccionar Grado):
+  //   ANTES: SOFT EXIT (_asmqrSinAutoTut === true) SUSPENDÍA todo incluyendo el enable Grado.
+  //          Si la flag se atascaba por exception en restOnChange → CASCADA ROTÍSIMA.
+  //   AHORA: SOFT EXIT SÓLO SUSPENDE renderAlumnos y poblarFiltro (solo cosas de init),
+  //          PERO NUNCA SUSPENDE LA HABILITACIÓN EN CASCADA.
+  //   Además: PRIMERO habilitamos/deshabilitamos los selects según nV (SIEMPRE),
+  //          LUEGO el soft exit por flag.
+  // ═══════════════════════════════════════════════════════════════
+  const gEl = document.getElementById('fa-grado');
+  const sEl = document.getElementById('fa-seccion');
+  const mEl = document.getElementById('fa-modalidad');
+  if (gEl) try { gEl.value = ''; } catch(_) {}
+  if (sEl) try { sEl.value = ''; } catch(_) {}
+  if (mEl) try { mEl.value = ''; } catch(_) {}
+  try { document.getElementById('search-alumnos').value = ''; } catch(_) {}
+  // Cascada seccion/modalidad: SIEMPRE se deshabilitan al cambiar nivel
+  try { sEl && _disableSelect('fa-seccion'); } catch(_) {}
+  try { mEl && _disableSelect('fa-modalidad'); } catch(_) {}
+  // Habilitación Grado: CUALQUIER valor no vacío placeholder (incl. TODOS y Avanzado)
+  if (nV && String(nV).trim() !== '' && !/--/.test(String(nV))) {
+    try { gEl && gEl.disabled && (gEl.disabled = false); } catch(_) {}
+    try { _enableSelect('fa-grado'); } catch(_) {}
+  } else {
+    try { gEl && (gEl.disabled = true); } catch(_) {}
+    try { _disableSelect('fa-grado'); } catch(_) {}
+  }
 
   // SOFT EXIT durante _autoSelectTutoria docente sin-auto (Orlando):
-  // cualquier onchange residual por poblar innerHTML → NO hace NADA.
+  // cualquier onchange residual por poblar innerHTML → NO hace NADA (excepto la cascada anterior, que SÍ se ejecutó).
   try { if (window._asmqrSinAutoTut === true) return; } catch(_) {}
-  document.getElementById('fa-grado').value   = '';
-  document.getElementById('fa-seccion').value = '';
-  document.getElementById('fa-modalidad').value = '';
-  document.getElementById('search-alumnos').value = '';
-  // CASCADA 4 niveles: NIVEL → solo habilita GRADO. Seccion y Modalidad siguen DISABLED hasta sus pasos.
-  _disableSelect('fa-seccion');
-  _disableSelect('fa-modalidad');
-  const nivel = document.getElementById('fa-nivel').value;
-  if(nivel && nivel !== 'TODOS') {
-    await poblarFiltroGrado('fa-grado', nivel);
-    _enableSelect('fa-grado');
-  } else if(nivel === 'TODOS') {
+  if(nV && nV !== 'TODOS') {
+    await poblarFiltroGrado('fa-grado', nV);
+    try { gEl && (gEl.disabled = false); } catch(_) {}
+    try { _enableSelect('fa-grado'); } catch(_) {}
+  } else if(nV === 'TODOS') {
     await poblarFiltroGrado('fa-grado', null);
-    _enableSelect('fa-grado');
+    try { gEl && (gEl.disabled = false); } catch(_) {}
+    try { _enableSelect('fa-grado'); } catch(_) {}
   } else {
-    _disableSelect('fa-grado');
+    try { gEl && (gEl.disabled = true); } catch(_) {}
+    try { _disableSelect('fa-grado'); } catch(_) {}
   }
   await poblarFiltroSeccion('fa-seccion', null);
   renderAlumnos();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FIX CASCADA DEFINITIVA 2026-08-24 (por pérdida inline onchange):
+//   El inline onchange HTML L2931-L2949 se puede perder
+//   PERMANENTEMENTE cuando _autoSelectTutoria L6157 removeAttribute
+//   y luego no se restaura bien (porque saveHandlers[id] = el.onchange
+//   retorna null en Chrome cuando solo se definió como atributo HTML).
+//   Así que agregamos eventListener DIRECTO por addEventListener()
+//   (ES INDEPENDIENTE DEL ATRIBUTO inline) y lo enganchamos con
+//   flag _cascadaListenersAttached para no duplicar nunca.
+//   LOS 4 SELECTS: NIVEL / GRADO / SECCIÓN / MODALIDAD
+// ═══════════════════════════════════════════════════════════════
+function _attachCascadaListenersAlumnos() {
+  try {
+    if (window._cascadaListenersAttachedAlumnos === true) return;
+    window._cascadaListenersAttachedAlumnos = true;
+  } catch(_) {}
+  const pairs = [
+    ['fa-nivel',      () => { try { onNivelChangeAlumnos();     } catch(e) { console.error('[cascada] fa-nivel error:', e); } }],
+    ['fa-grado',      () => { try { onGradoChangeAlumnos();     } catch(e) { console.error('[cascada] fa-grado error:', e); } }],
+    ['fa-seccion',    () => { try { onSeccionChangeAlumnos();   } catch(e) { console.error('[cascada] fa-seccion error:', e); } }],
+    ['fa-modalidad',  () => { try { onModalidadChangeAlumnos(); } catch(e) { console.error('[cascada] fa-modalidad error:', e); } }]
+  ];
+  pairs.forEach(([id, cb]) => {
+    try {
+      const el = document.getElementById(id);
+      if (!el) return;
+      // Doble attach: change (estándar) + input (por si acaso browser viejo)
+      el.addEventListener('change', cb, false);
+      try { el.addEventListener('input', cb, false); } catch(_) {}
+    } catch(e) { console.error('[cascada] failed attach ', id, e); }
+  });
+  // Ejecutar 1 sola vez inmediatamente después de attach. Si los 4 selects ya
+  // estaban creados antes de attach → los listeners ya funcionan.
+  try { console.info('[cascada] listeners alumnos attach:', pairs.map(x => x[0]).join(',')); } catch(_) {}
 }
 
 async function onGradoChangeAlumnos() {
@@ -24365,6 +24486,13 @@ async function inicializarFiltros(options = {}) {
     _disableSelect('fa-grado');
     _disableSelect('fa-seccion');
   }
+  // ═══════════════════════════════════════════════════════════════
+  // FIX CASCADA DEFINITIVA: attach listeners change directos en los
+  // 4 selects fa-nivel/grado/seccion/modalidad (INDEPENDIENTE del
+  // inline onchange HTML, que se puede perder al removeAttr/restore).
+  // Solo 1 vez (flag _cascadaListenersAttachedAlumnos).
+  // ═══════════════════════════════════════════════════════════════
+  try { if (typeof _attachCascadaListenersAlumnos === 'function') _attachCascadaListenersAlumnos(); } catch(_) {}
 
   const modalidad = _cfgModalidadConInferencia(cfg, alumnos);
   const esEBR = modalidad === 'EBR';
