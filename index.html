@@ -11794,13 +11794,57 @@ async function handleExcel(e) {
   function _inferTurnoDesdeSheetName(nombre) {
     const s = String(nombre || '').trim().toUpperCase();
     if (!s) return '';
-    // PRE / PRESENCIAL
-    if (/^PRE($|ESENCIAL|SENCIA|_|-|\s)/i.test(s) || s.includes('PRESEN') || s === 'PRE' || s.startsWith('PRE ')) return 'PRESENCIAL';
-    // SEMI / SEMIPRESENCIAL
-    if (/^SEMI($|PRESENCIAL|_|-|\s)/i.test(s) || s.includes('SEMIPRESEN') || s === 'SEMI' || s.startsWith('SEMI ')) return 'SEMIPRESENCIAL';
-    // VIRT / VIRTUAL / REMOTO
-    if (/^VIRT($|UAL|_|-|\s)/i.test(s) || s.includes('VIRTU') || s.includes('REMOTO') || s === 'VIRT' || s.startsWith('VIRT ')) return 'VIRTUAL';
+    // PRE / PRESENCIAL (empieza O TERMINA por PRE: PRE hoja legacy, 1A PRE nueva)
+    if (/PRE($|ESENCIAL|SENCIA|_|-|\s)/.test(s) || s.startsWith('PRE') || /(^|\s|_|-|\.)PRE$/.test(s)) return 'PRESENCIAL';
+    // SEMI / SEMIPRESENCIAL (empieza O TERMINA por SEMI)
+    if (/SEMI($|PRESENCIAL|_|-|\s)/.test(s) || s.startsWith('SEMI') || /(^|\s|_|-|\.)SEMI$/.test(s)) return 'SEMIPRESENCIAL';
+    // VIRT / VIRTUAL / REMOTO (empieza O TERMINA por VIRT)
+    if (/VIRT($|UAL|_|-|\s)/.test(s) || s.startsWith('VIRT') || /(^|\s|_|-|\.)VIRT$/.test(s) || s.includes('VIRTU') || s.includes('REMOTO')) return 'VIRTUAL';
     return '';
+  }
+  // Helper: buscar key insensible en un row (sheet_to_json object por headers)
+  function _findKey(obj, regex) {
+    if (!obj || typeof obj !== 'object') return '';
+    const k = Object.keys(obj).find(k => regex.test(String(k).trim()));
+    return k != null ? String(obj[k] || '').trim() : '';
+  }
+  // Helper: separar "APELLIDOS Y NOMBRES" (todo junto) en apellidos + nombres heuristico
+  function _splitApellidosNombres(completo) {
+    let txt = String(completo || '').trim().replace(/\s+/g, ' ');
+    if (!txt) return { apellidos: '', nombres: '' };
+    // Si contiene coma → "APELLIDOS, NOMBRES"
+    if (txt.includes(',')) {
+      const [a, ...nArr] = txt.split(',');
+      return { apellidos: a.trim(), nombres: nArr.join(',').trim() };
+    }
+    // Heurística: palabras mayúscula todo >1 token = apellidos (2 ultimas palabras son apellidos paterno+materno si >=3 palabras; sino todo a apellidos)
+    const toks = txt.split(' ').filter(Boolean);
+    if (toks.length >= 3) {
+      // 2 ultimas palabras = apellidos paterno + materno (estilo peruano)
+      const names = toks.slice(0, toks.length - 2).join(' ');
+      const apell = toks.slice(toks.length - 2).join(' ');
+      return { apellidos: apell, nombres: names };
+    }
+    // 2 palabras: asume 1 apellido + 1 nombre
+    if (toks.length === 2) {
+      return { apellidos: toks[0], nombres: toks[1] };
+    }
+    // 1 palabra: apellidos
+    return { apellidos: txt, nombres: '' };
+  }
+  // Helper: separar "1A" / "3 B" / "4C " en grado nro + seccion letra
+  function _splitGradoSeccion(gradoSeccionRaw) {
+    const txt = String(gradoSeccionRaw || '').trim();
+    if (!txt) return { grado: '', seccion: '' };
+    const m = txt.match(/(\d+)[A-Za-zÁÉÍÓÚáéíóúÜüÑñ\s]*?([A-Za-z])\s*$/);
+    if (m) return { grado: m[1], seccion: m[2].toUpperCase() };
+    const soloGrado = txt.match(/(\d+)/);
+    if (soloGrado) return { grado: soloGrado[1], seccion: 'A' };
+    return { grado: '', seccion: '' };
+  }
+  // Helper: normalizar DNI (quita puntos, comas, espacios, letras finales)
+  function _normDni(raw) {
+    return String(raw || '').replace(/[.,\s-]/g, '').replace(/[A-Za-z]$/,'').trim();
   }
 
   // Cargar SheetJS dinámicamente
@@ -11821,66 +11865,87 @@ async function handleExcel(e) {
       const data = new Uint8Array(ev.target.result);
       const wb   = XLSX.read(data, { type: 'array' });
 
-      // ===== NUEVO: Leer TODAS las hojas (no solo la primera) y fusionar por DNI.
-      // Si la hoja se llama PRE/SEMI/VIRT/PRESENCIAL/SEMIPRESENCIAL/VIRTUAL → usar su nombre para setear turno default.
-      const filasPorDni = new Map(); // dni → {cols, sheetTurno, sheetNamePriority}
+      // ===== NUEVO (format Excel 2026 CEBA JAD): Leer TODAS hojas. CADA fila = OBJECT con keys = HEADERS de columna (DNI, APELLIDOS Y NOMBRES, GRADO, NIVEL, MODALIDAD, TELEFONO, APELLIDOS Y NOMBRES DEL APODERADO, TEL. APODERADO, PARENTESCO). NO usar mapeo posicional cols[] → orden columnas cambió.
+      const filasPorDni = new Map(); // dni → {row, sheetTurno, sheetNamePriority}
       let skippedGlobal = 0;
       const nombresHojas = wb.SheetNames || [];
       nombresHojas.forEach((sheetName, sheetIdx) => {
         const ws = wb.Sheets[sheetName];
         if (!ws) return;
-        let rows;
-        try { rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }); } catch(_e) { return; }
-        if (!rows || !Array.isArray(rows) || !rows.length) return;
-
-        // Detectar fila de encabezado POR HOJA
-        let startRow = 0;
-        for(let i = 0; i < Math.min(5, rows.length); i++) {
-          const row = (rows[i] || []).map(c => String(c).toLowerCase());
-          if(row.some(c => c.includes('dni') || c.includes('nombres'))) {
-            startRow = i + 1;
-            break;
-          }
-        }
+        let rowsObj;
+        try { rowsObj = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false }); } catch(_e) { return; }
+        if (!rowsObj || !Array.isArray(rowsObj) || !rowsObj.length) return;
         const sheetTurno = _inferTurnoDesdeSheetName(sheetName);
-
-        // Prioridad por hoja: si un DNI está en varias hojas, gana la hoja cuyo nombre
-        // coincide con modalidad atención (solo 0/1 si es hoja PRE/SEMI/VIRT real)
+        // Prioridad por hoja: si un DNI está en varias hojas, gana la hoja cuyo nombre coincida con modalidad (PRE/SEMI/VIRT detectado = priority 2, else 1)
         const priority = sheetTurno ? 2 : 1;
 
-        for(let i = startRow; i < rows.length; i++) {
-          const rawCols = rows[i] || [];
-          const cols = rawCols.map(c => String(c).trim());
-          const [id, nombres, apellidos, turno, grado, seccion, foto,
-            apoderadoNombres, apoderadoApellidos, telefono, correoApoderado,
-            consanguinidad, consanguinidadDetalle,
-            apoderado2Nombres, apoderado2Apellidos, telefono2, correoApoderado2,
-            consanguinidad2, consanguinidadDetalle2] = cols;
-          if(!id || !/^\d{8}$/.test(id)) { skippedGlobal++; continue; }
+        for (let i = 0; i < rowsObj.length; i++) {
+          const row = rowsObj[i] || {};
+          // Extraer campos BUSCANDO POR HEADER (insensible a mayús/minús y espacios finales)
+          const dniRaw = _findKey(row, /^(DNI|DOCUMENTO|NRO\s*DOC|ID)$/i) || _findKey(row, /dni|docu|nro\s*doc|^id$/i);
+          const dni = _normDni(dniRaw);
+          if(!dni || !/^\d{8}$/.test(dni)) { skippedGlobal++; continue; }
+
+          const nomCompleto = _findKey(row, /^APELLIDOS\s*Y\s*NOMBRES/i) || _findKey(row, /nombre|apellido|apeynom|fullname/i);
+          // Posibilidad legacy nombres + apellidos por separado (columnas "NOMBRES" y "APELLIDOS")
+          const soloNombres = _findKey(row, /^NOMBRES?$/i);
+          const soloApellidos = _findKey(row, /^APELLIDOS?$/i);
+          let nombres, apellidos;
+          if (soloApellidos || soloNombres) {
+            apellidos = soloApellidos; nombres = soloNombres;
+          } else {
+            const spl = _splitApellidosNombres(nomCompleto);
+            apellidos = spl.apellidos; nombres = spl.nombres;
+          }
           if(!nombres && !apellidos) { skippedGlobal++; continue; }
-          const dni = String(id).trim();
+
+          const gradoRaw = _findKey(row, /^GRADO$/i) || _findKey(row, /grado/i);
+          const seccionRaw = _findKey(row, /^(SECCION|SECCIÓN|SECC)$/i) || _findKey(row, /secc|secci/i);
+          const gs = _splitGradoSeccion(gradoRaw);
+          let gradoFin = gs.grado || gradoRaw || '';
+          let seccionFin = seccionRaw ? String(seccionRaw).trim().toUpperCase() : gs.seccion || 'A';
+
+          const nivelRaw = _findKey(row, /^(NIVEL|CICLO|MODALIDAD\s*CEBA|MODALIDAD\s*PEDAGOGICA)$/i) || _findKey(row, /nivel|ciclo/i);
+          const modalidadRaw = _findKey(row, /^(MODALIDAD\s*ATENCIÓN|MODALIDAD\s*ATENCION|MODALIDAD|TURNO|JORNADA|TIPO\s*ATENCIÓN|TIPO\s*ATENCION|ATENCIÓN|ATENCION)$/i) || _findKey(row, /modalidad|turno|jornada|aten/i);
+
+          const telefono = _findKey(row, /^TELEFONO$/i) || _findKey(row, /^TEL[ÉE]FONO$/i) || _findKey(row, /cel|fono|telef/i);
+          const apoderadoNomCom = _findKey(row, /APELLIDOS\s*Y\s*NOMBRES\s*DEL\s*APODERADO/i) || _findKey(row, /apoderado.*nom|nom.*apoder/i);
+          const apoSoloNom = _findKey(row, /NOMBRES?\s*APODERADO/i);
+          const apoSoloApe = _findKey(row, /APELLIDOS?\s*APODERADO/i);
+          let apoderadoNombres, apoderadoApellidos;
+          if (apoSoloNom || apoSoloApe) { apoderadoApellidos = apoSoloApe; apoderadoNombres = apoSoloNom; }
+          else { const s = _splitApellidosNombres(apoderadoNomCom); apoderadoApellidos = s.apellidos; apoderadoNombres = s.nombres; }
+          const telApoderado = _findKey(row, /TEL[ÉE]\.\s*APODERADO|TELEFONO\s*APOD/i) || _findKey(row, /apo.*tel|tel.*apo/i);
+          const parentesco = _findKey(row, /^PARENTESCO$/i) || _findKey(row, /parent|consan/i);
+
+          const entryData = {
+            nombres, apellidos,
+            grado: gradoFin, seccion: seccionFin,
+            nivelRaw, modalidadRaw,
+            telefono,
+            apoderadoNombres, apoderadoApellidos, telApoderado,
+            consanguinidad: parentesco,
+          };
+
           const prev = filasPorDni.get(dni);
           if (prev) {
-            // Si ya existe → merge (prioridad >, o datos más completos)
-            if (priority > prev.priority || (priority === prev.priority &&
-              ((String(nombres||apellidos||'').length > String(prev.cols[1]||prev.cols[2]||'').length) ||
-               (String(apoderadoNombres||apoderadoApellidos||'').length > String(prev.cols[7]||prev.cols[8]||'').length)))) {
-              filasPorDni.set(dni, { cols, sheetTurno, priority, sheetIdx });
+            // Merge por prioridad hoja o datos más completos
+            const lenNew = (String(nombres||apellidos||'').length + String(apoderadoNombres||apoderadoApellidos||'').length);
+            const lenPrev = (String(prev.data.nombres||prev.data.apellidos||'').length + String(prev.data.apoderadoNombres||prev.data.apoderadoApellidos||'').length);
+            if (priority > prev.priority || (priority === prev.priority && lenNew > lenPrev)) {
+              filasPorDni.set(dni, { data: entryData, sheetTurno, priority, sheetIdx });
             } else {
-              // Si existente no tiene turno de sheet Y nueva sí → heredar sheetTurno
               if (!prev.sheetTurno && sheetTurno) prev.sheetTurno = sheetTurno;
-              // Completar datos faltantes:
-              const pc = prev.cols;
-              for (let j = 1; j < 20; j++) {
-                if ((!pc[j] || String(pc[j]||'').trim() === '') && cols[j]) pc[j] = cols[j];
-              }
+              // Completar campos vacíos del existente
+              const d = prev.data;
+              for (const k of Object.keys(entryData)) { if ((d[k] == null || String(d[k]||'').trim() === '') && entryData[k]) d[k] = entryData[k]; }
             }
           } else {
-            filasPorDni.set(dni, { cols: cols.slice(), sheetTurno, priority, sheetIdx });
+            filasPorDni.set(dni, { data: entryData, sheetTurno, priority, sheetIdx });
           }
         }
       });
-      // Fin lectura multiple hojas
+      // Fin lectura multiple hojas (por OBJECT headers, no cols[] posicional)
 
       const alumnosExistentes = await DB.getAlumnos();
       const existingIds = new Set(alumnosExistentes.map(a => a.id));
@@ -11888,7 +11953,7 @@ async function handleExcel(e) {
 
       // Armamos array final de filas (sin duplicados, mejor turno por sheet)
       const filasValidas = [];
-      filasPorDni.forEach(entry => filasValidas.push(entry));
+      filasPorDni.forEach((entry, dni) => filasValidas.push({ dni, ...entry }));
       const total = filasValidas.length;
 
       // Mostrar barra de progreso
@@ -11904,71 +11969,82 @@ async function handleExcel(e) {
 
       for(let i = 0; i < filasValidas.length; i++) {
         const entry = filasValidas[i];
-        const cols = entry.cols;
-        const [
-          id, nombres, apellidos, turno, grado, seccion, foto,
-          apoderadoNombres, apoderadoApellidos, telefono, correoApoderado,
-          consanguinidad, consanguinidadDetalle,
-          apoderado2Nombres, apoderado2Apellidos, telefono2, correoApoderado2,
-          consanguinidad2, consanguinidadDetalle2
-        ] = cols;
+        const d = entry.data || {};
+        const id = String(entry.dni || '').trim();
 
-        // ===== IMPORTANTE: Turno final = sheetTurno (nombre hoja PRE/SEMI/VIRT) si existe,
-        // sino el valor de la columna D (turno), sino default PRESENCIAL.
-        const turnoRaw = String(turno || '').trim();
-        const turnoHoja = String(entry.sheetTurno || '').trim();
-        let turnoFinal = turnoHoja || turnoRaw || 'PRESENCIAL';
+        const nombres = d.nombres || '';
+        const apellidos = d.apellidos || '';
+        const grado = String(d.grado || '').trim();
+        const seccion = String(d.seccion || 'A').trim().toUpperCase() || 'A';
+
+        // Turno/Modalidad Atencion: (1) Columna MODALIDAD del Excel (prioridad MAXIMA), (2) fallback nombre hoja, (3) PRESENCIAL default.
+        const turnoRawColumna = String(d.modalidadRaw || '').trim();
+        const turnoHojaFb = String(entry.sheetTurno || '').trim();
+        let turnoFinal = turnoRawColumna || turnoHojaFb || 'PRESENCIAL';
         turnoFinal = (typeof _normModAtencion === 'function') ? (_normModAtencion(turnoFinal) || turnoFinal) : turnoFinal;
         if (!turnoFinal) turnoFinal = 'PRESENCIAL';
 
-        // Determinar CICLO para el alumno CEBA: usar columna D (ciclo pedagógico INICIAL/INTERMEDIO/AVANZADO)
-        // Si la columna D trae PRESENCIAL (nombre modalidad atención por error en Excel legacy),
-        // entonces inferimos ciclo por otra vía (más adelante desde grado o default).
-        let cicloParaLimite;
-        if (['INICIAL','INTERMEDIO','AVANZADO'].includes(String(turnoRaw).trim().toUpperCase())) {
-          cicloParaLimite = String(turnoRaw).trim().toUpperCase();
-        } else {
-          cicloParaLimite = (typeof _canonCicloJS === 'function') ? _canonCicloJS(turnoRaw || '') : '';
+        // Ciclo/Nivel: (1) Columna NIVEL explicit del Excel, (2) canon, (3) infer luego
+        const nivelRawColumna = String(d.nivelRaw || '').trim();
+        let cicloParaLimite = (typeof _canonCicloJS === 'function')
+          ? (_canonCicloJS(nivelRawColumna) || '')
+          : (nivelRawColumna || '');
+        if (['INICIAL','INTERMEDIO','AVANZADO'].includes(String(nivelRawColumna).trim().toUpperCase()) && !cicloParaLimite) {
+          cicloParaLimite = String(nivelRawColumna).trim().toUpperCase();
         }
-        // Si no lo sacamos, intentar grado (1-4 Ini, 5-6 Int, 1-6 avanzado - lo decide getLimiteByNivel via key compuesta)
-        const objTmpNiv2 = { turno: turnoFinal, ciclo: cicloParaLimite, grado: String(grado || '').trim(), seccion: String(seccion || '').trim() };
+
+        // Obj para getLimiteByNivel (key compuesta CEBA)
+        const objTmpNiv2 = { turno: turnoFinal, ciclo: cicloParaLimite, grado, seccion };
         const limite = await getLimiteByNivel(objTmpNiv2);
+
+        const telefono = String(d.telefono || '').trim();
+        const apoderadoNombres = String(d.apoderadoNombres || '').trim();
+        const apoderadoApellidos = String(d.apoderadoApellidos || '').trim();
+        const telApoderado = String(d.telApoderado || '').trim();
+        const consanguinidad = String(d.consanguinidad || '').trim();
+        // sin apoderado2 legacy por ahora (no lo usan)
+        const correoApoderado = '';
+
         const alumno = {
           id,
-          nombres:            nombres || '',
-          apellidos:          apellidos || '',
-          grado:              grado || '',
-          seccion:            seccion || 'A',
-          turno:              turnoFinal,
-          ciclo:              cicloParaLimite,
+          nombres,
+          apellidos,
+          grado,
+          seccion,
+          turno: turnoFinal,
+          ciclo: cicloParaLimite,
           limite,
-          foto:               foto || '',
-          apoderadoNombres:   apoderadoNombres || '',
-          apoderadoApellidos: apoderadoApellidos || '',
-          telefono:           telefono || '',
-          apoderado2Nombres:  apoderado2Nombres || '',
-          apoderado2Apellidos: apoderado2Apellidos || '',
-          telefono2:          telefono2 || '',
-          correoApoderado:    correoApoderado || ''
+          foto: '',
+          apoderadoNombres,
+          apoderadoApellidos,
+          telefono,
+          apoderado2Nombres: '',
+          apoderado2Apellidos: '',
+          telefono2: telApoderado,
+          correoApoderado,
         };
         if(existingIds.has(id)) {
           const existente = alumnosExistentes.find(a => a.id === id);
           if(!alumno.foto && existente?.foto) alumno.foto = existente.foto;
+          if (!alumno.telefono && existente?.telefono) alumno.telefono = existente.telefono;
+          if (!alumno.apoderadoNombres && existente?.apoderadoNombres) alumno.apoderadoNombres = existente.apoderadoNombres;
+          if (!alumno.apoderadoApellidos && existente?.apoderadoApellidos) alumno.apoderadoApellidos = existente.apoderadoApellidos;
+          if (!alumno.telefono2 && existente?.telefono2) alumno.telefono2 = existente.telefono2;
           await DB.saveAlumno(alumno);
           await _upsertApoderadosFromImport({
             id,
             apoderadoNombres,
             apoderadoApellidos,
-            telefono,
+            telefono: telApoderado || telefono,
             correoApoderado,
             consanguinidad,
-            consanguinidadDetalle,
-            apoderado2Nombres,
-            apoderado2Apellidos,
-            telefono2,
-            correoApoderado2,
-            consanguinidad2,
-            consanguinidadDetalle2
+            consanguinidadDetalle: '',
+            apoderado2Nombres: '',
+            apoderado2Apellidos: '',
+            telefono2: '',
+            correoApoderado2: '',
+            consanguinidad2: '',
+            consanguinidadDetalle2: ''
           });
           updated++;
         } else {
@@ -11977,16 +12053,16 @@ async function handleExcel(e) {
             id,
             apoderadoNombres,
             apoderadoApellidos,
-            telefono,
+            telefono: telApoderado || telefono,
             correoApoderado,
             consanguinidad,
-            consanguinidadDetalle,
-            apoderado2Nombres,
-            apoderado2Apellidos,
-            telefono2,
-            correoApoderado2,
-            consanguinidad2,
-            consanguinidadDetalle2
+            consanguinidadDetalle: '',
+            apoderado2Nombres: '',
+            apoderado2Apellidos: '',
+            telefono2: '',
+            correoApoderado2: '',
+            consanguinidad2: '',
+            consanguinidadDetalle2: ''
           });
           added++;
         }
