@@ -5623,7 +5623,7 @@ function _modalidadDesdeCiclo(ciclo) {
 // Dada una MODALIDAD CEBA, devuelve LISTA DE CICLOS (para filtros)
 function _ciclosDesdeModalidad(modalidad) {
   const m = _normModalidadCEBA(modalidad);
-  if (m === 'INICIAL/INTERMEDIO') return ['INICIAL', 'INTERMEDIO'];
+  if (m === 'INICIAL/INTERMEDIO') return ['INICIAL/INTERMEDIO'];
   if (m === 'AVANZADO') return ['AVANZADO'];
   return [];
 }
@@ -20304,16 +20304,16 @@ let editingUsuarioId = null;
 let _uTutorAulasForm = [];
 
 function _canonCicloJS(c){
-  const x = String(c||'').trim().toUpperCase();
+  const x = String(c||'').trim().toUpperCase().replace(/[ /]+/g,'/');
   const map = {
-    'CICLO INICIAL':'INICIAL','INICIAL':'INICIAL','PRE ESCOLAR':'INICIAL','EBR INICIAL':'INICIAL',
-    'CICLO INTERMEDIO':'INTERMEDIO','INTERMEDIO':'INTERMEDIO',
-    'INICIAL/INTERMEDIO':'INTERMEDIO','INICIAL / INTERMEDIO':'INTERMEDIO','INI/INT':'INTERMEDIO','INI / INT':'INTERMEDIO',
+    'CICLO INICIAL':'INICIAL/INTERMEDIO','INICIAL':'INICIAL/INTERMEDIO','PRE ESCOLAR':'INICIAL/INTERMEDIO',
+    'CICLO INTERMEDIO':'INICIAL/INTERMEDIO','INTERMEDIO':'INICIAL/INTERMEDIO',
+    'INICIAL/INTERMEDIO':'INICIAL/INTERMEDIO','INI/INT':'INICIAL/INTERMEDIO',
     'CICLO AVANZADO':'AVANZADO','AVANZADO':'AVANZADO',
-    'PRIMARIA':'PRIMARIA','EBR PRIMARIA':'PRIMARIA',
-    'SECUNDARIA':'SECUNDARIA','EBR SECUNDARIA':'SECUNDARIA'
+    'PRIMARIA':'PRIMARIA','EBR PRIMARIA':'PRIMARIA','EBR INICIAL':'Inicial','EBR SECUNDARIA':'SECUNDARIA',
+    'SECUNDARIA':'SECUNDARIA'
   };
-  return map[x] || x;
+  return map[x] || String(c||'').trim();
 }
 
 function _aulaKey(ciclo, grado, seccion){
@@ -22869,14 +22869,16 @@ function _profesorAsignacionesAulasList() {
         let c = '';
         try { c = _canonCicloJS(_agendaInferNivelByGrado(g, null) || ''); } catch(_) {}
         // Deducción segura CEBA por grado si cfg no pudo inferir:
-        // Grados 1,2,3 = INICIAL | Grados 4,5,6 = INTERMEDIO
+        // TODO Presencial 1-6 = INICIAL/INTERMEDIO (1 solo valor no 2 separados).
+        // CEBA NO separa Inicial de Intermedio. Son 2 niveles totales (Inicial/Intermedio + Avanzado).
         if (!c) {
           try {
             const gNum = parseInt((String(g).match(/\d+/)||[])[0]||'0', 10);
-            if (gNum >= 1 && gNum <= 3) c = 'INICIAL';
-            else if (gNum >= 4 && gNum <= 6) c = 'INTERMEDIO';
+            if (gNum >= 1 && gNum <= 6) c = 'INICIAL/INTERMEDIO';
           } catch(_) {}
         }
+        // Normalizar cualquier INICIAL / INTERMEDIO solo → a INICIAL/INTERMEDIO canon
+        if (c === 'INICIAL' || c === 'INTERMEDIO') c = 'INICIAL/INTERMEDIO';
         list.push({ ciclo: c, grado: g, seccion: s });
       }
     } catch(_) {}
@@ -23608,12 +23610,11 @@ function _matchNivel(obj, nivelSel, cfg, alumnosArr) {
   const f = _nivelFieldName(cfg, alumnosArr);
   const valObj = String(obj && obj[f] || '').trim();
   const nivel = String(nivelSel).trim();
-  // CEBA: INICIAL/INTERMEDIO agrupado incluye alumnos con ciclo INICIAL o INTERMEDIO estrictamente.
-  // NUNCA incluye alumnos de ciclo AVANZADO aunque sean Presencial grado 1..6 (el usuario debe
-  // seleccionar Nivel=AVANZADO para ver esos alumnos; o ejecutar 🛠 Reparar Rápido para reclasificarlos).
+  // CEBA: INICIAL/INTERMEDIO agrupado incluye alumnos con ciclo INICIAL/INTERMEDIO (exacto el valor canon).
+  // NUNCA busca INICIAL o INTERMEDIO separados (CEBA son 2 niveles, no 3). Modelo confirmado por user.
   if (nivel === 'INICIAL/INTERMEDIO' || nivel === 'INICIAL / INTERMEDIO') {
-    const c = String((obj||{}).ciclo || '').trim().toUpperCase();
-    if (c === 'INICIAL' || c === 'INTERMEDIO') return true;
+    const c = String((obj||{}).ciclo || '').trim().toUpperCase().replace(/[ /]+/g,'/');
+    if (c === 'INICIAL/INTERMEDIO') return true;
     return false;
   }
   if (valObj === nivel) return true;
@@ -23627,13 +23628,14 @@ function _nivelesDesdeAlumnos(alumnosArr, cfg) {
   catch(_) { modalidad = String(((cfg||{}).modalidadEducativa || (cfg||{}).modalidad_educativa || '')).toUpperCase(); }
   const usaCiclo = (modalidad === 'CEBA' || modalidad === 'EBA');
   const f = _nivelFieldName(cfg, alumnos);
-  // Para CEBA/EBA: agrupar INICIAL+INTERMEDIO en INICIAL/INTERMEDIO (2 modalidades, no 3)
+  // Para CEBA/EBA: agrupar TODO en INICIAL/INTERMEDIO (no buscar INICIAL ni INTERMEDIO separados).
+  // Modelo confirmado: 2 niveles CEBA. NUNCA 3.
   if (usaCiclo) {
-    const setRaw = new Set(alumnos.map(a => String(a[f] || a.ciclo || '').trim().toUpperCase()).filter(Boolean));
+    const setRaw = new Set(alumnos.map(a => String(a[f] || a.ciclo || '').trim().toUpperCase().replace(/[ /]+/g,'/')).filter(Boolean));
     const out = new Set();
-    if (setRaw.has('INICIAL') || setRaw.has('INTERMEDIO')) out.add('INICIAL/INTERMEDIO');
+    if (setRaw.has('INICIAL/INTERMEDIO') || setRaw.has('INICIAL') || setRaw.has('INTERMEDIO')) out.add('INICIAL/INTERMEDIO');
     if (setRaw.has('AVANZADO')) out.add('AVANZADO');
-    setRaw.forEach(v => { if(v && v !== 'INICIAL' && v !== 'INTERMEDIO' && v !== 'AVANZADO') out.add(v); });
+    setRaw.forEach(v => { if(v && v !== 'INICIAL/INTERMEDIO' && v !== 'INICIAL' && v !== 'INTERMEDIO' && v !== 'AVANZADO') out.add(v); });
     const orden = ['INICIAL/INTERMEDIO','AVANZADO'];
     return orden.filter(c => out.has(c)).concat([...out].filter(v => !orden.includes(v)));
   }
@@ -27068,13 +27070,24 @@ async function repararRapidoAlumnos() {
           }
         }
       }
-      // 3) ciclo INICIAL/INTERMEDIO agrupado → deducir por grado numérico
+      // 3) ciclo INICIAL/INTERMEDIO agrupado → lo NORMALIZAMOS a "INICIAL/INTERMEDIO" (NO separar, CEBA tiene 2 niveles).
+      // Antes (mal): 1-3=INICIAL / 4-6=INTERMEDIO (3 niveles). Ahora (correcto): TODO Presencial 1-6 = INICIAL/INTERMEDIO (1 nivel no 2).
       let cicloUp = String(a.ciclo || '').toUpperCase();
       if ((cicloUp === 'INICIAL/INTERMEDIO' || cicloUp === 'INICIAL / INTERMEDIO') && a.grado) {
-        const gnum = parseInt(String(a.grado).match(/\d+/)?.[0] || '0', 10);
-        if (gnum >= 1 && gnum <= 3) { a.ciclo = 'INICIAL'; changed = true; fixes.cicloDeducido++; }
-        else if (gnum >= 4 && gnum <= 6) { a.ciclo = 'INTERMEDIO'; changed = true; fixes.cicloDeducido++; }
+        a.ciclo = 'INICIAL/INTERMEDIO';
+        changed = true;
+        fixes.cicloDeducido++;
         cicloUp = String(a.ciclo || '').toUpperCase();
+      }
+      if ((cicloUp === 'INICIAL' || cicloUp === 'INTERMEDIO') && a.grado) {
+        // Normalizar también valores antiguos separados INICIAL / INTERMEDIO → a INICIAL/INTERMEDIO (CEBA 2 niveles no 3)
+        const gnum = parseInt(String(a.grado).match(/\d+/)?.[0] || '0', 10);
+        if (gnum >= 1 && gnum <= 6) {
+          a.ciclo = 'INICIAL/INTERMEDIO';
+          changed = true;
+          fixes.cicloDeducido++;
+          cicloUp = String(a.ciclo || '').toUpperCase();
+        }
       }
       // 4) seccion mayúscula y solo letra
       if (a.seccion) {
@@ -27086,16 +27099,17 @@ async function repararRapidoAlumnos() {
         const nt = (typeof _normModAtencion === 'function') ? _normModAtencion(a.turno) : a.turno;
         if (nt && nt !== String(a.turno)) { a.turno = nt; changed = true; }
       }
-      // 6) RECLASIFICACIÓN CICLO SEGURA (solo CEBA, no toca EBR)
+      // 6) RECLASIFICACIÓN CICLO SEGURA (solo CEBA, no toca EBR).
+      // MODELO FINAL 2 NIVELES CEBA: (1) INICIAL/INTERMEDIO (Presencial 1-6), (2) AVANZADO (Pres/Semi/Virtual cualquier grado).
+      // NUNCA separar INICIAL de INTERMEDIO (no 3 niveles). Eso es clave que confirmaste.
       const esCicloCEBA = cicloCebas.has(cicloUp);
       const turnoNorm = (typeof _normModAtencion === 'function') ? _normModAtencion(a.turno || '') : String(a.turno || '').toUpperCase();
       const gnum2 = parseInt(String(a.grado || '').match(/\d+/)?.[0] || '0', 10);
       if (esCicloCEBA && turnoNorm) {
-        // Caso A: PRESENCIAL + Grado 1..6 → debe ser INICIAL (1-3) o INTERMEDIO (4-6)
+        // Caso A: PRESENCIAL + Grado 1..6 → ciclo = INICIAL/INTERMEDIO (1 valor no 2)
         if (turnoNorm === 'PRESENCIAL' && gnum2 >= 1 && gnum2 <= 6) {
-          const cicloEsperado = (gnum2 <= 3) ? 'INICIAL' : 'INTERMEDIO';
-          if (String(a.ciclo || '').toUpperCase() !== cicloEsperado.toUpperCase()) {
-            a.ciclo = cicloEsperado;
+          if (String(a.ciclo || '').toUpperCase() !== 'INICIAL/INTERMEDIO') {
+            a.ciclo = 'INICIAL/INTERMEDIO';
             changed = true;
             fixes.cicloReclasificado++;
           }
