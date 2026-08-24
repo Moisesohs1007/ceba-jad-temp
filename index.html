@@ -23088,11 +23088,13 @@ async function getAlumnosFiltrados() {
     }
     return [];
   }
-  const now = Date.now();
-  if(_alumnosCacheFull && now - _alumnosCacheTs < 90000) return _alumnosCacheFull;
-  _alumnosCacheFull = await DB.getAlumnos();
-  _alumnosCacheTs = now;
-  return _alumnosCacheFull;
+  // NO usar caché 90s global: causa bugs al cambiar usuario (Orlando→Moises)
+  // y también retorna datos obsoletos después de guardar/importar alumnos.
+  // Supabase ya tiene su propio caché de red y LSCache tiene TTL propio.
+  _alumnosCacheFull = null;
+  _alumnosCacheTs = 0;
+  const alumnos = await DB.getAlumnos();
+  return alumnos || [];
 }
 
 // ============================================================
