@@ -22937,8 +22937,16 @@ async function onUsuarioAsignacionesInput() {
 }
 
 async function abrirModalPrivilegios() {
-  await cargarCheckboxesPrivilegios(null); // usa tempAsignaciones
-  document.getElementById('modal-privilegios').classList.add('open');
+  // FIX 2026-08-24: si venimos de Editar Usuario (editingUsuarioId global
+  // definido) y NO se pasó uid → usarlo. Así cargamos data DESDE FIRESTORE
+  // y no dependemos de tempAsignaciones en memoria (que se puede perder
+  // entre aperturas del modal). Garantiza marcas al REABRIR.
+  const _uid = (typeof editingUsuarioId !== 'undefined' && editingUsuarioId)
+    ? String(editingUsuarioId)
+    : null;
+  await cargarCheckboxesPrivilegios(_uid, null);
+  const m = document.getElementById('modal-privilegios');
+  if (m) m.classList.add('open');
 }
 
 async function savePrivilegios() {
@@ -23169,6 +23177,14 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     if (mergedKeys.length > 0) {
       mergedKeys.forEach(g => { tempAsignaciones[g] = Array.from(mergeByGrado[g]).sort(); });
     }
+    // FIX 2026-08-24 (último bug "marcas no aparecen al reabrir"):
+    // Asegurar referencias cruzadas: helper granular lee window.tempAsignaciones,
+    // y variable local const asignaciones = tempAsignaciones. Si la referencia
+    // no coincide por cualquier razón, el helper no ve las secciones → forzamos.
+    try { window.tempAsignaciones = tempAsignaciones; } catch(_){}
+    if (typeof window.__tempAsignacionesProxy__ === 'undefined' || !window.__tempAsignacionesProxy__) {
+      // Sin proxy, dejamos igual (ya asignamos window.tempAsignaciones arriba).
+    }
   })();
 
   // ================================================================
@@ -23264,11 +23280,15 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     const numG = g.match(/(\d+)/); const gK = numG ? numG[1] : g;
     const sK = String(seccionRaw||'').trim().toUpperCase();
     if (!gK || !sK) return false;
-    const tempObj = window.tempAsignaciones || {};
+    const tempObj = window.tempAsignaciones || tempAsignaciones || {};
     if (!Object.prototype.hasOwnProperty.call(tempObj, gK)) return false;
     const secsArr = Array.isArray(tempObj[gK]) ? tempObj[gK] : [];
     const hasGlobal = secsArr.some(x => String(x||'').trim().toUpperCase() === sK);
     if (!hasGlobal) return false;
+    // PASO 0: si el nivel es INICIAL / INTERMEDIO (canon), SOLO Presencial es válido.
+    // Si la sección está presente, marcar en la tarjeta Presencial (única que existe en B1).
+    const esIniInt = (cicloT === 'INICIAL' || cicloT === 'INTERMEDIO' || cicloT === 'INICIAL/INTERMEDIO');
+    if (esIniInt) return (turnoTarjeta === 'PRESENCIAL');
     // 1) BD match exacto en ESTA modalidad
     if (byTurnoGradoSec[`${turnoTarjeta}|${gK}|${sK}`]) return true;
     // 2) Legacy fallback match exacto (tutorAulas string dijo: SEMI/VIRT para este grado/sección)
@@ -23294,6 +23314,17 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     //    marcarla TODAS las modalidades (evitar perder la marca del usuario).
     //    (solo para secciones distintas A/B/C; D = Presencial también)
     if (hasGlobal && sK === 'D' && turnoTarjeta === 'PRESENCIAL') return true;
+    // 5) PASO 5: GARANTÍA TOTAL DE PERSISTENCIA.
+    //    Si llegamos hasta aquí y hasGlobal=true (la data SÍ está en BD),
+    //    marcamos por: (a) A,PRE; (b) B,SEMI; (c) C,VIRT; D,PRE
+    //    Ciclo no INI/INT = AVANZADO y 3 subtarjetas presentes.
+    //    Evita que cualquier desfase de byTurnoGradoSec (alumnosCache vacío)
+    //    deje sin marcar un checkbox que SÍ existe en asignaciones persistido.
+    if (hasGlobal && !esIniInt) {
+      if (turnoTarjeta === 'PRESENCIAL' && (sK === 'A' || sK === 'D')) return true;
+      if (turnoTarjeta === 'SEMIPRESENCIAL' && sK === 'B') return true;
+      if (turnoTarjeta === 'VIRTUAL' && sK === 'C') return true;
+    }
     return false;
   };
 
