@@ -5624,11 +5624,14 @@ function _normModAtencion(val) {
   // Paso 1: Quitar acentos/diacríticos (NFD) + uppercase + quitar espacios/guiones/bajos/puntos
   let s = String(val || '').trim();
   try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch(_) {}
-  s = s.toUpperCase().replace(/[\s\-_\.·,;]/g, '');
+  s = s.toUpperCase().replace(/[\s\-_\.·,;\/\\]/g, '');
   if (!s) return '';
-  if (s.includes('PRESEN') || s === 'P' || s === 'PRE' || s.startsWith('PRES')) return 'PRESENCIAL';
-  if (s.includes('SEMI') || s === 'S' || s === 'SEM' || s.includes('MIXTO') || s.includes('HIBRIDO') || s.includes('HÍBRIDO') || s.startsWith('SEM')) return 'SEMIPRESENCIAL';
+  // ⚠️ ORDEN MUY IMPORTANTE: PRIMERO chequear tokens que contienen "SEMI" O "VIRT" ANTES que PRESEN
+  // porque "SEMIPRESENCIAL" (junto o separado sin espacios) INCLUYE la substring PRESEN →
+  // si revisamos PRESEN primero, devolveríamos PRESENCIAL para un SEMIPRESENCIAL escrito junto.
+  if (s.includes('SEMI') || s === 'S' || s === 'SEM' || s.includes('MIXTO') || s.includes('HIBRIDO') || s.startsWith('SEM')) return 'SEMIPRESENCIAL';
   if (s.includes('VIRT') || s === 'V' || s.includes('REMOTO') || s.includes('ONLINE') || s.startsWith('VIR')) return 'VIRTUAL';
+  if (s.includes('PRESEN') || s === 'P' || s === 'PRE' || s.startsWith('PRES')) return 'PRESENCIAL';
   // Legacy INICIAL/INTERMEDIO desde modalidadCEBA → forzar PRESENCIAL (casos borde)
   if (s.includes('INICIAL') || s.includes('INTERMEDIO')) return 'PRESENCIAL';
   // Fallback final: aplicar la misma normalización sin acentos al return para que compare bien
@@ -9542,9 +9545,9 @@ async function renderAlumnos() {
         // Estrategia 1: normal oficial (si existe)
         try { if (_normModAtencion) { const tC = _normModAtencion(t); const mC = _normModAtencion(modT); if (tC && mC && tC === mC) E1=true; } } catch(_) {}
         if (E1) { try { _matchMod._lastDebug = { t:t, modT:modT, E1:true, E2:false, E3:false, E4:false, E5:false }; } catch(_){} return true; }
-        // Estrategia 2: ultraNorm (quita todo no letra)
+        // Estrategia 2: ultraNorm (quita todo no letra) → SOLO IGUALDAD EXACTA (nunca startsWith, evita SEMIPRESENCIAL.startsWith(PRESENCIAL)=true que causaba 39Pres pasar Semi)
         const tu = _ultraNorm(t), mu = _ultraNorm(modT);
-        if (tu && mu && (tu === mu || tu.startsWith(mu) || mu.startsWith(tu))) {
+        if (tu && mu && tu === mu) {
           E2 = true; try { _matchMod._lastDebug = { t:t, modT:modT, E1:false, E2:true, E3:false, E4:false, E5:false }; } catch(_){} return true;
         }
         // ═══════════════════════════════════════════════════════════
@@ -9775,11 +9778,9 @@ async function renderAlumnos() {
 
         // ═══════════════════════════════════════════════════════════════
         // DEBUG VISIBLE EN PANTALLA (SIN F12) para inconsistencias Semi
-        // Si hay 0 alumnos y tenemos al menos Grado (o Seccion o Mod)
-        // mostramos una tabla HTML compacta con los alumnos que EXISTEN
-        // para la combinación Grado+Sección (sin aplicar filtro Mod) →
-        // podemos ver de inmediato si existen los alumnos y qué valor
-        // tienen en el campo TURNO (raw) y el CANON que se calcula.
+        // SIEMPRE SE MUESTRA aunque _todosSinMod.length = 0 (para que el
+        // usuario vea EXPLÍCITAMENTE que no existen alumnos en G+S y sepa
+        // que debe presionar Importar Excel LISTA GENERAL.xlsx actualizado).
         // ═══════════════════════════════════════════════════════════════
         try {
           // Limpiar debug anterior
@@ -9788,20 +9789,33 @@ async function renderAlumnos() {
           if (!_vQ) { // Solo si NO hay búsqueda (evitar spam al buscar por DNI)
             const _cfgDbg = typeof configCache !== 'undefined' ? configCache : {};
             const _todosDbg = prep.sorted || [];
+            const _totalDB = _todosDbg.length;
             const _todosSinMod = _todosDbg.filter(a => {
               if (_vGrado && String(a.grado||'').trim() !== _vGrado) return false;
               if (_vSeccion && String(a.seccion||'').trim() !== _vSeccion) return false;
               if (_vNivel) { if (!_matchNivel(a, _vNivel, _cfgDbg)) return false; }
               return true;
             });
-            if (_todosSinMod.length > 0) {
-              _dbgDiv = document.createElement('div');
-              _dbgDiv.id = 'alumnos-empty-debug';
-              _dbgDiv.setAttribute('style','margin-top:18px;border:1px solid #fbbf24;border-radius:10px;padding:14px 16px;background:rgba(251,191,36,0.06);');
-              const _tMod = (_vMod || '').trim() || '(ninguno)';
-              let _html = '';
-              _html += '<div style="font-weight:700;color:#f59e0b;margin-bottom:8px;font-size:0.9rem;">📋 Diagnóstico Modalidad Atención (0 alumnos · sin F12)</div>';
-              _html += `<div style="font-size:0.78rem;color:#cbd5e1;margin-bottom:10px;">Filtro Mod seleccionado: <b style="color:#fff;">${_tMod}</b> · Alumnos en N+G+S (sin Mod): <b style="color:#fff;">${_todosSinMod.length}</b> (si sale 0 aquí, NO existen alumnos para este Grado+Sección)</div>`;
+            // SIEMPRE crear el panel naranja (incluso si _todosSinMod.length = 0 → caso más importante!)
+            _dbgDiv = document.createElement('div');
+            _dbgDiv.id = 'alumnos-empty-debug';
+            _dbgDiv.setAttribute('style','margin-top:18px;border:1px solid #fbbf24;border-radius:10px;padding:14px 16px;background:rgba(251,191,36,0.06);');
+            const _tMod = (_vMod || '').trim() || '(ninguno)';
+            let _html = '';
+            _html += '<div style="font-weight:700;color:#f59e0b;margin-bottom:8px;font-size:0.9rem;">📋 Diagnóstico Modalidad Atención (0 alumnos · sin F12)</div>';
+            _html += `<div style="font-size:0.78rem;color:#cbd5e1;margin-bottom:10px;">Filtro Mod seleccionado: <b style="color:#fff;">${_tMod}</b> · Alumnos en N+G+S (sin Mod): <b style="color:#fff;">${_todosSinMod.length}</b> · Total alumnos en BD: <b style="color:#fff;">${_totalDB}</b></div>`;
+
+            // CASO 0 alumnos en N+G+S: EL USUARIO NO HA IMPORTADO LOS ALUMNOS DE ESTE GRADO/SECCIÓN.
+            // Mostrar alerta GRANDE EXPLÍCITA con la acción que debe hacer.
+            if (_todosSinMod.length === 0) {
+              _html += `<div style="margin:6px 0 12px;padding:12px 14px;border:1px dashed #f87171;border-radius:8px;background:rgba(239,68,68,0.08);">
+                <div style="color:#f87171;font-weight:700;font-size:0.85rem;margin-bottom:6px;">⚠️ NO HAY ALUMNOS REGISTRADOS para este Grado/Sección</div>
+                <div style="color:#fca5a5;font-size:0.78rem;line-height:1.5;">
+                  Causa: el sistema no tiene alumnos de <b style="color:#fff;">${_vNivel||'Nivel'} · Grado ${_vGrado||'?'} · Sección ${_vSeccion||'?'}</b> guardados en la base de datos.<br>
+                  <b style="color:#fff;">Solución: presiona el botón 📊 <u>Importar Excel</u> de arriba y selecciona el archivo <u>LISTA GENERAL.xlsx</u> (actualizado) que contiene las 12 hojas (1A PRE, 1B SEMI, etc).</b>
+                </div>
+              </div>`;
+            } else {
               _html += '<div style="max-height:360px;overflow:auto;border:1px solid #334155;border-radius:6px;">';
               _html += '<table style="width:100%;border-collapse:collapse;font-size:0.75rem;min-width:720px;">';
               _html += '<thead style="position:sticky;top:0;background:#1e293b;z-index:2;">';
@@ -9835,8 +9849,8 @@ async function renderAlumnos() {
                 const mu = _uN(MT), tu = _uN(T);
                 // E1 canon oficial
                 try { if (_normModAtencion) { const tC = _normModAtencion(T); const mC = _normModAtencion(MT); if (tC && mC && tC === mC) return `✅ SÍ (E1 canon · ${tC})`; } } catch(_) {}
-                // E2 ultraNorm
-                if (tu && mu && (tu === mu || tu.startsWith(mu) || mu.startsWith(tu))) return `✅ SÍ (E2 ultraNorm · ${tu} === ${mu})`;
+                // E2 ultraNorm — SOLO IGUALDAD EXACTA (igual que filtro principal, elimina startsWith para no false-positive SEMI vs PRESENCIAL)
+                if (tu && mu && tu === mu) return `✅ SÍ (E2 ultraNorm · ${tu} === ${mu})`;
                 // E3 solo mu canon
                 if (mu === 'SEMIPRESENCIAL' && /SEMI|MIXTO|HIBR|HÍBR|SEMI\s*PRESEN/i.test(T)) return `✅ SÍ (E3 regex SEMI)`;
                 if (mu === 'PRESENCIAL' && /PRESEN|^PRE$|^P$|PRES/i.test(T)) return `✅ SÍ (E3 regex PRES)`;
@@ -9877,9 +9891,9 @@ async function renderAlumnos() {
               }
               _html += '</tbody></table></div>';
               _html += `<div style="margin-top:10px;font-size:0.72rem;color:#94a3b8;line-height:1.45;"><b>Instrucción rápida:</b> si la columna <b>Turno (Canon)</b> es correcta pero la columna <b>Match mod?</b> dice NO → es bug de estrategia. Si el Canon es PRESENCIAL y tú filtras Semi → el alumno NO es Semi (fue mal importado / mal guardado).</div>`;
-              _dbgDiv.innerHTML = _html;
-              try { empty.appendChild(_dbgDiv); } catch(_){}
             }
+            _dbgDiv.innerHTML = _html;
+            try { empty.appendChild(_dbgDiv); } catch(_){}
           }
         } catch(_dbgExcep) { console.warn('[empty debug] error UI:', _dbgExcep?.message || _dbgExcep); }
 
