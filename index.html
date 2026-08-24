@@ -23201,6 +23201,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
   let alumnosAll = [];
   const byTurnoGradoSec = {};
   const byCicloTurno = {};
+  const byCicloTurnoGradoSec = {}; // FIX: pista EXACTA ciclo+turno+grado+seccion (INI/INT vs AVANZADO)
   try {
     alumnosAll = Array.isArray(window.alumnosCache) ? window.alumnosCache.slice() : [];
     if (!alumnosAll.length && typeof DB?.getAlumnos === 'function') {
@@ -23218,6 +23219,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
       const s = String(a.seccion||'').trim().toUpperCase();
       const numG = g.match(/(\d+)/); const gK = numG ? numG[1] : g;
       if (gK && s) byTurnoGradoSec[`${tur}|${gK}|${s}`] = true;
+      if (gK && s) byCicloTurnoGradoSec[`${cic}|${tur}|${gK}|${s}`] = true;
       byCicloTurno[`${cic}|${tur}`] = (byCicloTurno[`${cic}|${tur}`] || 0) + 1;
     });
   } catch(eGran) {}
@@ -23285,15 +23287,46 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     const secsArr = Array.isArray(tempObj[gK]) ? tempObj[gK] : [];
     const hasGlobal = secsArr.some(x => String(x||'').trim().toUpperCase() === sK);
     if (!hasGlobal) return false;
-    // PASO 0: si el nivel es INICIAL / INTERMEDIO (canon), SOLO Presencial es válido.
-    // Si la sección está presente, marcar en la tarjeta Presencial (única que existe en B1).
     const esIniInt = (cicloT === 'INICIAL' || cicloT === 'INTERMEDIO' || cicloT === 'INICIAL/INTERMEDIO');
-    if (esIniInt) return (turnoTarjeta === 'PRESENCIAL');
-    // 1) BD match exacto en ESTA modalidad
+    // ===================================================================
+    // FIX 2026-08-24 (BUG CRÍTICO: marcas INI/INT AUTO-MARCADAS sin que
+    // el usuario lo marque): tempAsignaciones es PLANO {4:[B,C]} y NO
+    // distingue entre niveles. El PASO0 anterior retorna true si el
+    // ciclo=INI/INT y turno=PRESENCIAL aunque hasGlobal=AVANZADO →
+    // marcaba mal en AMBOS bloques.
+    // SOLUCIÓN:
+    // · Para BLOQUE 1 (INI/INTERMEDIO): solo marcar SI HAY PISTA EXPLÍCITA
+    //   de que la asignación ES PARA INI/INTERMEDIO (no por heurística
+    //   canónica que por defecto = AVANZADO según Excel actual GOLD RULE).
+    //   Pistas válidas:
+    //     a) BD exacta INI/INT: byCicloTurnoGradoSec['INICIAL|PRES|4|B']
+    //        o similar (alumnos reales en ese ciclo/nivel).
+    //     b) Legacy string tutorAulas menciona INICIAL/INTERMEDIO (fb).
+    //     c) byCicloTurno['INICIAL|PRESENCIAL'] > 0 o INTERMEDIO > 0.
+    //   SI NO HAY PISTAS → tempAsignaciones plano {4:[B,C]} = AVANZADO.
+    // ===================================================================
+    if (esIniInt) {
+      const pistaBD1 = (
+        !!byCicloTurnoGradoSec[`INICIAL|${turnoTarjeta}|${gK}|${sK}`] ||
+        !!byCicloTurnoGradoSec[`INTERMEDIO|${turnoTarjeta}|${gK}|${sK}`] ||
+        !!byCicloTurnoGradoSec[`INICIAL/INTERMEDIO|${turnoTarjeta}|${gK}|${sK}`]
+      );
+      const hayAlumnosIniInt = ((byCicloTurno['INICIAL|PRESENCIAL'] || 0) + (byCicloTurno['INTERMEDIO|PRESENCIAL'] || 0) + (byCicloTurno['INICIAL/INTERMEDIO|PRESENCIAL'] || 0)) > 0;
+      const fb = modaFallbackPorGs[`${gK}|${sK}`];
+      const fbIniIntStr = (typeof fb === 'string' && (
+        fb.includes('INICIAL') || fb.includes('INTERMEDIO') || fb.includes('INI')
+      ));
+      const pistaFB = (fbIniIntStr && turnoTarjeta === 'PRESENCIAL');
+      const pistaBD2 = (hayAlumnosIniInt && turnoTarjeta === 'PRESENCIAL' && byTurnoGradoSec[`PRESENCIAL|${gK}|${sK}`]);
+      const _validaIniInt = (!!pistaBD1 || !!pistaFB || !!pistaBD2) && (turnoTarjeta === 'PRESENCIAL');
+      if (!_validaIniInt) return false;
+      return true;
+    }
+    // 1) BD match exacto en ESTA modalidad (AVANZADO, no INI/INT filtro anterior)
     if (byTurnoGradoSec[`${turnoTarjeta}|${gK}|${sK}`]) return true;
     // 2) Legacy fallback match exacto (tutorAulas string dijo: SEMI/VIRT para este grado/sección)
-    const fb = modaFallbackPorGs[`${gK}|${sK}`];
-    if (fb && fb === turnoTarjeta) return true;
+    const fbGlobal = modaFallbackPorGs[`${gK}|${sK}`];
+    if (fbGlobal && fbGlobal === turnoTarjeta) return true;
     // ================================================================
     // 3) HEURÍSTICA CANÓNICA CEBA (paso fuerte): si tempAsignaciones
     //    plano {4:[B,C]} SIN BD ni legacy (paso1/2 vacíos): marcar por
@@ -23314,7 +23347,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     //    marcarla TODAS las modalidades (evitar perder la marca del usuario).
     //    (solo para secciones distintas A/B/C; D = Presencial también)
     if (hasGlobal && sK === 'D' && turnoTarjeta === 'PRESENCIAL') return true;
-    // 5) PASO 5: GARANTÍA TOTAL DE PERSISTENCIA.
+    // 5) PASO 5: GARANTÍA TOTAL DE PERSISTENCIA (solo AVANZADO).
     //    Si llegamos hasta aquí y hasGlobal=true (la data SÍ está en BD),
     //    marcamos por: (a) A,PRE; (b) B,SEMI; (c) C,VIRT; D,PRE
     //    Ciclo no INI/INT = AVANZADO y 3 subtarjetas presentes.
