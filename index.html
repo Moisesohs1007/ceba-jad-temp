@@ -9519,7 +9519,7 @@ async function renderAlumnos() {
     }
     if (_vMod) {
       const modNorm = (_normModAtencion ? _normModAtencion(_vMod) : String(_vMod||'').trim().toUpperCase().replace(/[\s\-_]/g,'')) || String(_vMod||'').trim();
-      // 4 estrategias de match por si la normalización falla por UTF-8 raro o variantes.
+      // 5 estrategias de match por si la normalización falla por UTF-8 raro o variantes.
       function _matchMod(aTurnoRaw, modTarget) {
         const t = String(aTurnoRaw || '').trim();
         const modT = String(modTarget || '').trim().toUpperCase();
@@ -9532,37 +9532,75 @@ async function renderAlumnos() {
           s = s.toUpperCase().replace(/[^A-Z0-9]/g, '');
           return s;
         }
-        let E1=false, E2=false, E3=false, E4=false;
+        // Helper Estrategia 5: tokens split (cualquier separador)
+        function _tokensOf(x) {
+          let s = String(x || '').trim();
+          try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch(_) {}
+          return s.toUpperCase().split(/[\s\-_·,;\/\\]+/).filter(Boolean);
+        }
+        let E1=false, E2=false, E3=false, E4=false, E5=false;
         // Estrategia 1: normal oficial (si existe)
         try { if (_normModAtencion) { const tC = _normModAtencion(t); const mC = _normModAtencion(modT); if (tC && mC && tC === mC) E1=true; } } catch(_) {}
-        if (E1) return true;
+        if (E1) { try { _matchMod._lastDebug = { t:t, modT:modT, E1:true, E2:false, E3:false, E4:false, E5:false }; } catch(_){} return true; }
         // Estrategia 2: ultraNorm (quita todo no letra)
         const tu = _ultraNorm(t), mu = _ultraNorm(modT);
-        if (tu && mu && (tu === mu || tu.startsWith(mu) || mu.startsWith(tu))) { E2 = true; return true; }
+        if (tu && mu && (tu === mu || tu.startsWith(mu) || mu.startsWith(tu))) {
+          E2 = true; try { _matchMod._lastDebug = { t:t, modT:modT, E1:false, E2:true, E3:false, E4:false, E5:false }; } catch(_){} return true;
+        }
         // ═══════════════════════════════════════════════════════════
-        // Estrategia 3 FIX Moises #29: SOLO mu CANÓNICOS (NO modT.indexOf )
-        // ───────────────────────────────────────────────────────────
-        // ANTERIOR (BUG ROOT 39Pres en Semi):
-        //   if (mu === 'PRESENCIAL' || modT.indexOf('PRESEN') !== -1)
-        //   → "SEMIPRESENCIAL".indexOf('PRESEN') !== -1 → TRUE!
-        //   → Presencial pasaba por filtro Semi.
-        // AHORA (FIX):
-        //   SOLO evaluamos mu (mu  職 CANÓNICO EXACTO (3 únicos)
-        //   NO usamos modT. Nunca más substring falsos positivos.
+        // Estrategia 3: SOLO mu CANÓNICOS EXACTOS (NO modT.indexOf)
         // ═══════════════════════════════════════════════════════════
         if (mu === 'SEMIPRESENCIAL') {
-          if (/SEMI|MIXTO|HIBR|HÍBR|SEMI\s*PRESEN/i.test(t)) { E3 = true; return true; }
+          if (/SEMI|MIXTO|HIBR|HÍBR|SEMI\s*PRESEN/i.test(t)) {
+            E3 = true; try { _matchMod._lastDebug = { t:t, modT:modT, E1:false, E2:false, E3:true, E4:false, E5:false }; } catch(_){} return true;
+          }
         }
         if (mu === 'PRESENCIAL') {
-          if (/PRESEN|^PRE$|^P$|PRES/i.test(t)) { E3 = true; return true; }
+          if (/PRESEN|^PRE$|^P$|PRES/i.test(t)) {
+            E3 = true; try { _matchMod._lastDebug = { t:t, modT:modT, E1:false, E2:false, E3:true, E4:false, E5:false }; } catch(_){} return true;
+          }
         }
         if (mu === 'VIRTUAL') {
-          if (/VIRT|REMOTO|ONLINE|VIRTU/i.test(t)) { E3 = true; return true; }
+          if (/VIRT|REMOTO|ONLINE|VIRTU/i.test(t)) {
+            E3 = true; try { _matchMod._lastDebug = { t:t, modT:modT, E1:false, E2:false, E3:true, E4:false, E5:false }; } catch(_){} return true;
+          }
         }
         // Estrategia 4: después de todo, raw toUpperCase ===
-        if (String(t).toUpperCase().replace(/\s+/g,'') === String(modT).toUpperCase().replace(/\s+/g,'')) { E4 = true; return true; }
-        // Guardar para debug: las vars E1/E2/E3/E4 por alumno: retornan false después del return false; no hay objeto match info
-        try { _matchMod._lastDebug = { t:t, modT:modT, tu:tu, mu:mu, E1:E1, E2:E2, E3:E3, E4:E4 }; } catch(_) {}
+        if (String(t).toUpperCase().replace(/\s+/g,'') === String(modT).toUpperCase().replace(/\s+/g,'')) {
+          E4 = true; try { _matchMod._lastDebug = { t:t, modT:modT, E1:false, E2:false, E3:false, E4:true, E5:false }; } catch(_){} return true;
+        }
+        // ═══════════════════════════════════════════════════════════
+        // Estrategia 5 (NUEVA FIX #29 Moises Semi Presencial): TOKENS
+        // Splittea turno raw y target por cualquier separador
+        // Ejemplos captura: "Semi Presencial", "Semi-Presencial", "semi. presencial", "Se:Mi  PrEsEnCiAl"
+        // - Si target es SEMIPRESENCIAL: necesitas AL MENOS 1 token "tipo SEMI" + AL MENOS 1 token "tipo PRESEN" (cualquier orden/combinacion)
+        // - Si target es PRESENCIAL: AL MENOS 1 token tipo PRESEN y NINGUN token tipo SEMI/VIRT
+        // - Si target es VIRTUAL: AL MENOS 1 token tipo VIRT y NINGUN token tipo SEMI/PRESEN
+        // ═══════════════════════════════════════════════════════════
+        try {
+          const tTokens = _tokensOf(t);
+          const muCanon = (mu === 'PRESENCIAL' || mu === 'SEMIPRESENCIAL' || mu === 'VIRTUAL') ? mu : '';
+          if (muCanon) {
+            const hasSemi = tTokens.some(tk => /^(SEMI|MIXTO|HIBR|HIBRIDO|SE)$/.test(tk) || tk.startsWith('SEMI'));
+            const hasPres = tTokens.some(tk => /^(PRESENCIAL|PRESEN|PRE|P)$/.test(tk) || tk.startsWith('PRES'));
+            const hasVirt = tTokens.some(tk => /^(VIRTUAL|VIRT|VIR|REMOTO|ONLINE)$/.test(tk) || tk.startsWith('VIRT'));
+            if (muCanon === 'SEMIPRESENCIAL') {
+              if (hasSemi && hasPres) { E5 = true; }
+              // Caso borde: unico token SEMIPRESENCIAL (todo junto) también vale
+              if (!E5 && tTokens.some(tk => tk.includes('SEMI') && tk.includes('PRESEN'))) { E5 = true; }
+            }
+            if (muCanon === 'PRESENCIAL') {
+              if (hasPres && !hasSemi && !hasVirt) { E5 = true; }
+            }
+            if (muCanon === 'VIRTUAL') {
+              if (hasVirt && !hasSemi) { E5 = true; }
+            }
+            try { _matchMod._lastDebug = { t:t, modT:modT, tu:tu, mu:mu, E1:false, E2:false, E3:false, E4:false, E5:E5, tTokens:tTokens.join('|') }; } catch(_){}
+            if (E5) return true;
+          }
+        } catch(_e5) {}
+        // Guardar para debug: las vars E1/E2/E3/E4 por alumno
+        try { _matchMod._lastDebug = { t:t, modT:modT, tu:tu, mu:mu, E1:E1, E2:E2, E3:E3, E4:E4, E5:E5 }; } catch(_) {}
         return false;
       }
       const countAntes = alumnos.length;
@@ -9577,17 +9615,19 @@ async function renderAlumnos() {
         info.nombres = String(a?.nombres||'').slice(0,15);
         info.grado = String(a?.grado||'');
         info.seccion = String(a?.seccion||'');
-        info.turnoRaw = JSON.stringify(a?.turno||'');
+        info['turnoRaw'] = JSON.stringify(a?.turno||'');
         info.modTarget = JSON.stringify(modNorm);
         info.E1 = !!(_matchMod._lastDebug||{}).E1 || false;
         info.E2 = !!(_matchMod._lastDebug||{}).E2 || false;
         info.E3 = !!(_matchMod._lastDebug||{}).E3 || false;
         info.E4 = !!(_matchMod._lastDebug||{}).E4 || false;
+        info.E5 = !!(_matchMod._lastDebug||{}).E5 || false;
         info.match = !!match;
+        info.tokens = String((_matchMod._lastDebug||{}).tTokens||'');
         _dbgMatchArr.push(info);
-        // Debug 1·B siempre y cuando sea 1·B (debugger;
+        // Debug 1·B siempre
         if (a && (String(a.grado||'').trim() === '1') && (String(a.seccion||'').trim().toUpperCase() === 'B')) {
-          try { console.debug('[1·B debug] alumno=', a.apellidos, a.nombres, 'turnoRaw=', JSON.stringify(a.turno||''), 'modTarget=', JSON.stringify(modNorm), 'match=', match, 'E1=', info.E1, 'E2=', info.E2, 'E3=', info.E3, 'E4=', info.E4); } catch(_) {}
+          try { console.debug('[1·B debug] alumno=', a.apellidos, a.nombres, 'turnoRaw=', JSON.stringify(a.turno||''), 'modTarget=', JSON.stringify(modNorm), 'match=', match, 'E1=', info.E1, 'E2=', info.E2, 'E3=', info.E3, 'E4=', info.E4, 'E5=', info.E5, 'tokens=', info.tokens); } catch(_) {}
         }
         return match;
       });
@@ -9595,13 +9635,7 @@ async function renderAlumnos() {
         console.groupCollapsed('%c[filterMod estrategias match]', 'color:#f59e0b;font-weight:bold');
         console.log('total antes filtro:', countAntes, 'después:', alumnos.length, 'modTarget=', JSON.stringify(modNorm));
         if (_dbgMatchArr.length > 0) {
-          // Solo las filas RELEVANTES para no saturar:
-            //   a) los que MATCHEAN (si countAntes<=60 sino primeras 60.
-            //   b) los que NO match pero E1-E4 todos false pero son del grado+seccion del filtro.
-          const _dbgRelevantes = (countAntes <= 60)
-            ? _dbgMatchArr
-            : _dbgMatchArr.filter(x => !!x.match).concat(_dbgMatchArr.filter(x => !x.match).slice(0, 10));
-          console.table(_dbgRelevantes);
+          console.table(_dbgMatchArr);
         }
         console.groupEnd();
       } catch(_) {}
@@ -9738,6 +9772,117 @@ async function renderAlumnos() {
           // Por si escribio una busqueda y luego no hay coincidencia
         }
         empty.querySelector('p').innerHTML = _msg;
+
+        // ═══════════════════════════════════════════════════════════════
+        // DEBUG VISIBLE EN PANTALLA (SIN F12) para inconsistencias Semi
+        // Si hay 0 alumnos y tenemos al menos Grado (o Seccion o Mod)
+        // mostramos una tabla HTML compacta con los alumnos que EXISTEN
+        // para la combinación Grado+Sección (sin aplicar filtro Mod) →
+        // podemos ver de inmediato si existen los alumnos y qué valor
+        // tienen en el campo TURNO (raw) y el CANON que se calcula.
+        // ═══════════════════════════════════════════════════════════════
+        try {
+          // Limpiar debug anterior
+          let _dbgDiv = empty.querySelector('#alumnos-empty-debug');
+          if (_dbgDiv) { try { _dbgDiv.remove(); } catch(_){} }
+          if (!_vQ) { // Solo si NO hay búsqueda (evitar spam al buscar por DNI)
+            const _cfgDbg = typeof configCache !== 'undefined' ? configCache : {};
+            const _todosDbg = prep.sorted || [];
+            const _todosSinMod = _todosDbg.filter(a => {
+              if (_vGrado && String(a.grado||'').trim() !== _vGrado) return false;
+              if (_vSeccion && String(a.seccion||'').trim() !== _vSeccion) return false;
+              if (_vNivel) { if (!_matchNivel(a, _vNivel, _cfgDbg)) return false; }
+              return true;
+            });
+            if (_todosSinMod.length > 0) {
+              _dbgDiv = document.createElement('div');
+              _dbgDiv.id = 'alumnos-empty-debug';
+              _dbgDiv.setAttribute('style','margin-top:18px;border:1px solid #fbbf24;border-radius:10px;padding:14px 16px;background:rgba(251,191,36,0.06);');
+              const _tMod = (_vMod || '').trim() || '(ninguno)';
+              let _html = '';
+              _html += '<div style="font-weight:700;color:#f59e0b;margin-bottom:8px;font-size:0.9rem;">📋 Diagnóstico Modalidad Atención (0 alumnos · sin F12)</div>';
+              _html += `<div style="font-size:0.78rem;color:#cbd5e1;margin-bottom:10px;">Filtro Mod seleccionado: <b style="color:#fff;">${_tMod}</b> · Alumnos en N+G+S (sin Mod): <b style="color:#fff;">${_todosSinMod.length}</b> (si sale 0 aquí, NO existen alumnos para este Grado+Sección)</div>`;
+              _html += '<div style="max-height:360px;overflow:auto;border:1px solid #334155;border-radius:6px;">';
+              _html += '<table style="width:100%;border-collapse:collapse;font-size:0.75rem;min-width:720px;">';
+              _html += '<thead style="position:sticky;top:0;background:#1e293b;z-index:2;">';
+              _html += '<tr style="color:#cbd5e1;">';
+              _html += '<th style="padding:7px 8px;text-align:left;border-bottom:1px solid #334155;">#</th>';
+              _html += '<th style="padding:7px 8px;text-align:left;border-bottom:1px solid #334155;">Apellidos</th>';
+              _html += '<th style="padding:7px 8px;text-align:left;border-bottom:1px solid #334155;">Nombres</th>';
+              _html += '<th style="padding:7px 8px;text-align:left;border-bottom:1px solid #334155;">G</th>';
+              _html += '<th style="padding:7px 8px;text-align:left;border-bottom:1px solid #334155;">S</th>';
+              _html += '<th style="padding:7px 8px;text-align:left;border-bottom:1px solid #334155;">Ciclo</th>';
+              _html += '<th style="padding:7px 8px;text-align:left;border-bottom:1px solid #334155;">Turno (raw en BD)</th>';
+              _html += '<th style="padding:7px 8px;text-align:left;border-bottom:1px solid #334155;">Turno (Canon)</th>';
+              _html += '<th style="padding:7px 8px;text-align:left;border-bottom:1px solid #334155;">Match mod?</th>';
+              _html += '</tr></thead><tbody>';
+              // Helper match reutilizable inline (igual que arriba) para calcular match aquí
+              function _dbgMatchMod(t, modTarget) {
+                function _uN(x) {
+                  let s = String(x||'').trim();
+                  try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g,''); } catch(_) {}
+                  return s.toUpperCase().replace(/[^A-Z0-9]/g,'');
+                }
+                function _tkN(x) {
+                  let s = String(x||'').trim();
+                  try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g,''); } catch(_) {}
+                  return s.toUpperCase().split(/[\s\-_·,;\/\\]+/).filter(Boolean);
+                }
+                const T = String(t||'').trim();
+                const MT = String(modTarget||'').trim().toUpperCase();
+                if (!T && !MT) return '✅ SÍ (ambos vacíos)';
+                if (!T || !MT) return '❌ NO (faltan)';
+                const mu = _uN(MT), tu = _uN(T);
+                // E1 canon oficial
+                try { if (_normModAtencion) { const tC = _normModAtencion(T); const mC = _normModAtencion(MT); if (tC && mC && tC === mC) return `✅ SÍ (E1 canon · ${tC})`; } } catch(_) {}
+                // E2 ultraNorm
+                if (tu && mu && (tu === mu || tu.startsWith(mu) || mu.startsWith(tu))) return `✅ SÍ (E2 ultraNorm · ${tu} === ${mu})`;
+                // E3 solo mu canon
+                if (mu === 'SEMIPRESENCIAL' && /SEMI|MIXTO|HIBR|HÍBR|SEMI\s*PRESEN/i.test(T)) return `✅ SÍ (E3 regex SEMI)`;
+                if (mu === 'PRESENCIAL' && /PRESEN|^PRE$|^P$|PRES/i.test(T)) return `✅ SÍ (E3 regex PRES)`;
+                if (mu === 'VIRTUAL' && /VIRT|REMOTO|ONLINE|VIRTU/i.test(T)) return `✅ SÍ (E3 regex VIRT)`;
+                // E4 raw igual
+                if (T.toUpperCase().replace(/\s+/g,'') === MT.toUpperCase().replace(/\s+/g,'')) return '✅ SÍ (E4 raw)';
+                // E5 tokens
+                try {
+                  const toks = _tkN(T);
+                  const hs = toks.some(tk => /^(SEMI|MIXTO|HIBR|HIBRIDO|SE)$/.test(tk) || tk.startsWith('SEMI'));
+                  const hp = toks.some(tk => /^(PRESENCIAL|PRESEN|PRE|P)$/.test(tk) || tk.startsWith('PRES'));
+                  const hv = toks.some(tk => /^(VIRTUAL|VIRT|VIR|REMOTO|ONLINE)$/.test(tk) || tk.startsWith('VIRT'));
+                  if (mu === 'SEMIPRESENCIAL' && ((hs && hp) || toks.some(tk => tk.includes('SEMI') && tk.includes('PRESEN')))) return `✅ SÍ (E5 tokens · ${toks.join('|')})`;
+                  if (mu === 'PRESENCIAL' && hp && !hs && !hv) return `✅ SÍ (E5 tokens PRES · ${toks.join('|')})`;
+                  if (mu === 'VIRTUAL' && hv && !hs) return `✅ SÍ (E5 tokens VIRT · ${toks.join('|')})`;
+                } catch(_) {}
+                return `❌ NO (debe ser "${_vMod || MT}" · canon actual: "${(_normModAtencion ? (_normModAtencion(T)||'') : '')}")`;
+              }
+              _todosSinMod.slice(0, 80).forEach((a, i) => {
+                const canon = (_normModAtencion ? (_normModAtencion(a.turno || '') || '') : String(a.turno||''));
+                const estado = _vMod ? _dbgMatchMod(a.turno || '', modNorm) : '(sin filtro Mod)';
+                const estColor = (String(estado).startsWith('✅') ? 'color:#22c55e' : 'color:#ef4444');
+                const canonColor = (canon === 'SEMIPRESENCIAL' ? 'color:#f59e0b' : canon === 'PRESENCIAL' ? 'color:#22c55e' : canon === 'VIRTUAL' ? 'color:#3b82f6' : 'color:#94a3b8');
+                _html += `<tr style="border-bottom:1px solid #1e293b;">`;
+                _html += `<td style="padding:6px 8px;color:#94a3b8;">${i+1}</td>`;
+                _html += `<td style="padding:6px 8px;color:#e2e8f0;">${String(a.apellidos||'').slice(0,22)}</td>`;
+                _html += `<td style="padding:6px 8px;color:#e2e8f0;">${String(a.nombres||'').slice(0,18)}</td>`;
+                _html += `<td style="padding:6px 8px;color:#e2e8f0;text-align:center;">${String(a.grado||'')}</td>`;
+                _html += `<td style="padding:6px 8px;color:#e2e8f0;text-align:center;">${String(a.seccion||'')}</td>`;
+                _html += `<td style="padding:6px 8px;color:#cbd5e1;font-size:0.7rem;">${String(a.ciclo||'').slice(0,22)}</td>`;
+                _html += `<td style="padding:6px 8px;color:#fbbf24;font-family:ui-monospace,Consolas,monospace;font-size:0.7rem;">${JSON.stringify(a.turno||'')}</td>`;
+                _html += `<td style="padding:6px 8px;${canonColor};font-weight:700;font-size:0.75rem;">${canon || '(vacio)'}</td>`;
+                _html += `<td style="padding:6px 8px;${estColor};font-size:0.75rem;font-weight:600;">${estado}</td>`;
+                _html += `</tr>`;
+              });
+              if (_todosSinMod.length > 80) {
+                _html += `<tr><td colspan="9" style="padding:6px 8px;color:#94a3b8;text-align:center;">… y ${_todosSinMod.length - 80} más (ver F12 → console tabla [filterMod estrategias match])</td></tr>`;
+              }
+              _html += '</tbody></table></div>';
+              _html += `<div style="margin-top:10px;font-size:0.72rem;color:#94a3b8;line-height:1.45;"><b>Instrucción rápida:</b> si la columna <b>Turno (Canon)</b> es correcta pero la columna <b>Match mod?</b> dice NO → es bug de estrategia. Si el Canon es PRESENCIAL y tú filtras Semi → el alumno NO es Semi (fue mal importado / mal guardado).</div>`;
+              _dbgDiv.innerHTML = _html;
+              try { empty.appendChild(_dbgDiv); } catch(_){}
+            }
+          }
+        } catch(_dbgExcep) { console.warn('[empty debug] error UI:', _dbgExcep?.message || _dbgExcep); }
+
       } catch(_ex) {
         empty.querySelector('p').textContent = 'No se encontraron alumnos con ese filtro';
       }
