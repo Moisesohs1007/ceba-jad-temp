@@ -6091,6 +6091,21 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   const nEl = document.getElementById(nivelId);
   const gEl = document.getElementById(gradoId);
   const sEl = document.getElementById(seccionId);
+  // ═══════════════════════════════════════════════════════════════
+  // FIX SUPERADMIN / ADMIN / DIRECTOR: NUNCA auto-seleccionar nada.
+  // Estos roles MANEJAN sus filtros manualmente (selección libre,
+  // placeholder "-- Nivel --" inicial). Si no sale aquí: el bug
+  // Captura2 admin Moises ve lista sin abrir nada + FIX0 resetea a ''
+  // cuando selecciona Avanzado.
+  // ═══════════════════════════════════════════════════════════════
+  if (typeof _isSuperAdmin === 'function' && _isSuperAdmin()) return;
+  if (typeof _isAdminDirector === 'function' && _isAdminDirector()) {
+    // Asegurarnos que el nivel NO quede en la 1ra option por accidente
+    if (nEl && nEl.options && nEl.options[0]?.value === '' && nEl.value !== '') {
+      try { nEl.value = ''; } catch(_) {}
+    }
+    return;
+  }
   const r = _normRol(currentRol);
   const isProf = (r === 'profesor' || r === 'psicologo');
   // SIEMPRE: al terminar asegurarnos que el nivel NO quede en la 1ra option por accidente (Avanzado).
@@ -9489,7 +9504,22 @@ async function renderAlumnos() {
     if (!_uReal || !_uReal.uid) {
       try { _uReal = window._lastUser || _userData || null; } catch(_) { _uReal = null; }
     }
-    const _esDocenteOProf = !!isProf || ( _uReal && (_uReal.rol === 'profesor' || (_uReal.cargo && String(_uReal.cargo).toLowerCase().includes('docente'))) );
+    // ═══════════════════════════════════════════════════════════════
+    // FIX: ADMIN (superAdmin/admin/director/coord) NUNCA son docente.
+    // Anteriormente un admin con cargo "docente" string matcheaba
+    // _esDocenteOProf y se le aplicaban FIX0 Orlando, auto-select
+    // tutoria y toast "mostrando asignados" → loop.
+    // ═══════════════════════════════════════════════════════════════
+    const _userEsAdmin = (
+      (typeof _isSuperAdmin === 'function' && _isSuperAdmin()) ||
+      (typeof _isAdminDirector === 'function' && _isAdminDirector()) ||
+      (typeof _isCoord === 'function' && _isCoord())
+    );
+    let _esDocenteOProf = false;
+    if (!_userEsAdmin) {
+      const cargoDocente = _uReal && _uReal.cargo && String(_uReal.cargo).toLowerCase().includes('docente');
+      _esDocenteOProf = !!isProf || ( _uReal && (_uReal.rol === 'profesor' || cargoDocente) );
+    }
 
     // ------------------------------------------------------------------
     // CARGA DE ALUMNOS: método original + fallback laxos (SOLO para docentes)
@@ -9788,7 +9818,10 @@ async function renderAlumnos() {
               if (sEl) try { sEl.value = ''; } catch(_) {}
               // mEl NUNCA se limpia (si user seleccionó Virtual → Virtual se mantiene)
               try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
-              try { toast(`✅ Se encontraron ${totalDB} alumnos para ti - mostrando todos tus asignados`, 'success', 4000); } catch(_) {}
+              // FIX: toast "mostrando asignados" SOLO para docentes/profesores
+              if (isProf) {
+                try { toast(`✅ Se encontraron ${totalDB} alumnos para ti - mostrando todos tus asignados`, 'success', 4000); } catch(_) {}
+              }
               setTimeout(() => renderAlumnos(), 50);
               return;
             }
