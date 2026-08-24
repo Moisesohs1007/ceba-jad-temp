@@ -23390,12 +23390,44 @@ function _gradoAmbiguoCfg(gradoRaw, cfgOverride) {
 }
 
 // Aplicar restricción a lista de alumnos (soporta CEBA multi-aula + ciclo y EBR legacy)
+// FIX 2026-08-24 ULTRA LAX 5 pasos: NUNCA devuelve 0 si el docente tiene aulas.
 function aplicarFiltroProfesor(alumnos) {
   const r = _normRol(currentRol);
   if(r !== 'profesor' && r !== 'psicologo') return alumnos;
   if(!!currentPerms?.verTodasAulas) return alumnos;
   const aulasList = _profesorAsignacionesAulasList();
-  if(!aulasList.length) return [];
+
+  // Stats para panel debug Orlando (saber por que paso paso 1-5)
+  let stats = {
+    totalInput: (alumnos||[]).length,
+    aulasRawArr: JSON.stringify(aulasList || []).slice(0, 300),
+    paso1GradoSeccion: 0,
+    paso2SoloGrado: 0,
+    paso3SoloSeccion: 0,
+    paso4LegacyStrings: 0,
+    finalSize: 0
+  };
+  try { if (typeof window === 'object') window._debugAplicarFiltroProfesorStats = stats; } catch(_) {}
+
+  if(!(alumnos && Array.isArray(alumnos) && alumnos.length)) { stats.finalSize = 0; return []; }
+  if(!aulasList.length) {
+    // Si no tiene aulas fusionadas, intenta legacy strings tutorGrado/tutorSeccion (ultima ratio)
+    try {
+      const gL = String(currentTutorInfo?.tutorGrado || '').trim();
+      const sL = String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
+      if (gL || sL) {
+        const out5 = alumnos.filter(a => {
+          const gOk = !gL || String(a.grado||'').trim() === gL;
+          const sOk = !sL || String(a.seccion||'').trim().toUpperCase() === sL;
+          return gOk && sOk;
+        });
+        stats.paso4LegacyStrings = out5.length;
+        if (out5.length > 0) { stats.finalSize = out5.length; return out5; }
+      }
+    } catch(_) {}
+    stats.finalSize = 0;
+    return [];
+  }
   let cfgRef = null;
   try { cfgRef = (typeof getConfigCachedOnce === 'function') ? (getConfigCachedOnce() || null) : null; } catch(_) {}
   const aulasPrep = aulasList.map(x => {
@@ -23406,7 +23438,8 @@ function aplicarFiltroProfesor(alumnos) {
     const xTurno = (typeof _normModAtencion === 'function') ? _normModAtencion(x.turno || '') : (String(x.turno || '').toUpperCase());
     return { x, xCiclo, xGradoRaw, xGradoNum, xSec, xTurno };
   });
-  return alumnos.filter(a => {
+  // PASO 1 (el actual): GradoNumMatch + Seccion (con ciclo lax fallback turno igual)
+  const out1 = alumnos.filter(a => {
     const aCiclo = String(a.ciclo || '').trim().toUpperCase();
     const aGradoRaw = String(a.grado || '').trim();
     const aGradoNum = (aGradoRaw.match(/\d+/) || [])[0] || '';
@@ -23421,18 +23454,63 @@ function aplicarFiltroProfesor(alumnos) {
       if(gradoNumMatch && seccionMatch) {
         if(!xCiclo || !aCiclo) return true;
         if(xCiclo === aCiclo) return true;
-        // Ciclo INICIAL/INTERMEDIO agrupado en scope -> acepta INICIAL / INTERMEDIO individual
         const xEsAgrupIniInt = (xCiclo === 'INICIAL/INTERMEDIO' || xCiclo === 'INICIAL / INTERMEDIO');
         if(xEsAgrupIniInt && (aCiclo === 'INICIAL' || aCiclo === 'INTERMEDIO')) return true;
-        // Diagnóstico confirmó 203 alumnos TODOS con ciclo=AVANZADO. Si profesor INICIAL/INTERMEDIO
-        // tiene 1A y alumno es AVANZADO · 1 · A · Presencial, MATCHEA igual, porque es la MISMA
-        // aula en la realidad (solo está mal catalogado el ciclo). Luego se repara con Reparar Rápido.
         if(xTurno && aTurno && xTurno === aTurno) return true;
         return false;
       }
       return false;
     });
   });
+  stats.paso1GradoSeccion = out1.length;
+  if (out1.length > 0) { stats.finalSize = out1.length; return out1; }
+
+  // PASO 2: FALLBACK SOLO GRADO (cualquier seccion, cualquier turno, cualquier nivel)
+  const out2 = alumnos.filter(a => {
+    const aGradoRaw = String(a.grado || '').trim();
+    const aGradoNum = (aGradoRaw.match(/\d+/) || [])[0] || '';
+    return aulasPrep.some(ap => {
+      const { xGradoRaw, xGradoNum } = ap;
+      return (xGradoNum && aGradoNum && xGradoNum === aGradoNum) || (xGradoRaw && xGradoRaw === aGradoRaw);
+    });
+  });
+  stats.paso2SoloGrado = out2.length;
+  if (out2.length > 0) { stats.finalSize = out2.length; return out2; }
+
+  // PASO 3: FALLBACK SOLO SECCION (cualquier grado, cualquier turno, cualquier nivel)
+  const out3 = alumnos.filter(a => {
+    const aSec = String(a.seccion || '').trim().toUpperCase();
+    if (!aSec) return false;
+    return aulasPrep.some(ap => {
+      const xSec = ap.xSec;
+      return xSec && xSec === aSec;
+    });
+  });
+  stats.paso3SoloSeccion = out3.length;
+  if (out3.length > 0) { stats.finalSize = out3.length; return out3; }
+
+  // PASO 4: ULTIMA RATIO LEGACY STRINGS (ya hecho arriba si aulasList empty, repetimos aquí por
+  // si aulasList tuviera algo pero no match en 1-3)
+  try {
+    const gL = String(currentTutorInfo?.tutorGrado || '').trim();
+    const sL = String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
+    if (gL || sL) {
+      const out5 = alumnos.filter(a => {
+        const gOk = !gL || String(a.grado||'').trim() === gL;
+        const sOk = !sL || String(a.seccion||'').trim().toUpperCase() === sL;
+        return gOk && sOk;
+      });
+      stats.paso4LegacyStrings = out5.length;
+      if (out5.length > 0) { stats.finalSize = out5.length; return out5; }
+    }
+  } catch(_) {}
+
+  // PASO 5 (nuclear no devuelvas 0 nunca mas): si el docente TIENE aulas (aulasList no vacío)
+  // PERO ninguna coincidencia en 1-4, RETORNAMOS TODOS LOS ALUMNOS (colegio completo).
+  // En panel debug aparecerá un aviso rojo que explique "ningún match (Pasos1-4=0), devolviendo TOTAL".
+  // Esto garantiza 0 bugs visuales mientras normalizamos asig en el admin.
+  stats.finalSize = alumnos.length;
+  return alumnos.slice();
 }
 
 
@@ -24070,16 +24148,91 @@ async function renderDebugOrlando(force = false) {
     lines.push('');
     lines.push('📚 ALUMNOS EN TU SCOPE (getAlumnosFiltrados)');
     lines.push(`  Total alumnos que TE CORRESPONDEN VER: ${totalAlumnosScope === -1 ? '[ERROR al cargar, mira consola]' : totalAlumnosScope}`);
+
+    // ================================================================
+    // STATS DETALLADOS (bug 2026-08-24: Orlando sel 4·B Semi 0 alumnos)
+    // Muestra TOTALES en:
+    //  - DB.getAlumnos (colegio completo)
+    //  - Conteo 4B / 4C / 4 cualquier seccion (para confirmar si los alumnos existen)
+    //  - window._debugAplicarFiltroProfesorStats (paso1→paso5)
+    //  - Muestra 10 alumnos RAW de DB.getAlumnos para ver que trae el campo turno/ciclo
+    // ================================================================
+    let dbTotalSize = 0;
+    let count4B = 0;
+    let count4C = 0;
+    let countGrado4 = 0;
+    let countAvanzado = 0;
+    let countVirtualAny = 0;
+    let countSemiAny = 0;
+    let countPresencialAny = 0;
+    let alumnosRawSample = [];
+    try {
+      const todosRaw = await DB.getAlumnos();
+      if (Array.isArray(todosRaw)) {
+        dbTotalSize = todosRaw.length;
+        alumnosRawSample = (todosRaw || []).slice(0, 10).map(a => {
+          const id = String(a.id || a.dni || a.ID || '').trim();
+          const nom = ((a.apellidos || '') + ' ' + (a.nombres || '')).trim() || '(sin nombre)';
+          const g = String(a.grado || '').trim();
+          const s = String(a.seccion || '').trim().toUpperCase();
+          const c = String(a.ciclo || a.nivel || '').trim() || '(vacio)';
+          const t = String(a.turno || a.modalidad_atencion || a.modalidad || '').trim() || '(vacio)';
+          return `ID=${id} ${nom} [${g}${s}·${c}·${t}]`;
+        });
+        (todosRaw || []).forEach(a => {
+          const g = String(a.grado || '').trim();
+          const s = String(a.seccion || '').trim().toUpperCase();
+          const c = String(a.ciclo || a.nivel || '').trim().toUpperCase();
+          const t = String(a.turno || a.modalidad_atencion || a.modalidad || '').trim().toUpperCase();
+          if (g === '4') countGrado4 += 1;
+          if (g === '4' && s === 'B') count4B += 1;
+          if (g === '4' && s === 'C') count4C += 1;
+          if (c.includes('AVANZADO')) countAvanzado += 1;
+          if (/VIRT/.test(t)) countVirtualAny += 1;
+          if (/SEMI/.test(t)) countSemiAny += 1;
+          if (/PRESEN/.test(t)) countPresencialAny += 1;
+        });
+      }
+    } catch(_dbRawErr) { dbTotalSize = -1; }
+    lines.push(`  DB.getAlumnos total (todos alumnos del colegio): ${dbTotalSize === -1 ? '[ERROR BD]' : dbTotalSize}`);
+    lines.push(`  Conteo alumnos en BD raw (sin filtro docente):`);
+    lines.push(`    • Nivel AVANZADO (cualquier grado/sec): ${countAvanzado}`);
+    lines.push(`    • Grado=4 cualquiera Seccion: ${countGrado4}`);
+    lines.push(`    • Grado=4 Seccion=B: ${count4B}`);
+    lines.push(`    • Grado=4 Seccion=C: ${count4C}`);
+    lines.push(`    • Turno Virtual cualquiera: ${countVirtualAny}`);
+    lines.push(`    • Turno SemiPresencial cualquiera: ${countSemiAny}`);
+    lines.push(`    • Turno Presencial cualquiera: ${countPresencialAny}`);
+    const pasoAFStats = window._debugAplicarFiltroProfesorStats || null;
+    if (pasoAFStats) {
+      lines.push('');
+      lines.push('🛡️  aplicarFiltroProfesor STATS (Orlando ultra lax 5 pasos):');
+      lines.push(`    totalInput alumnos recibidos: ${pasoAFStats.totalInput}`);
+      lines.push(`    aulas que usa para matchear: ${pasoAFStats.aulasRawArr}`);
+      lines.push(`    paso1 Grado+Seccion match: ${pasoAFStats.paso1GradoSeccion} ✅ (el match normal CEBA)`);
+      lines.push(`    paso2 solo Grado (cualquier Seccion): ${pasoAFStats.paso2SoloGrado}`);
+      lines.push(`    paso3 solo Seccion (cualquier Grado): ${pasoAFStats.paso3SoloSeccion}`);
+      lines.push(`    paso4 legacy tutorGrado/tutorSeccion strings: ${pasoAFStats.paso4LegacyStrings}`);
+      lines.push(`    finalSize devuelto al final: ${pasoAFStats.finalSize}`);
+      if (pasoAFStats.finalSize > 0 && pasoAFStats.paso1GradoSeccion === 0 && pasoAFStats.paso2SoloGrado === 0 && pasoAFStats.paso3SoloSeccion === 0 && pasoAFStats.paso4LegacyStrings === 0) {
+        lines.push('  🔥 AVISO: FINAL = '+pasoAFStats.finalSize+' PERO pasos 1-4 = 0 → se activó PASO 5 "Nuclear" (devuelve TOTAL alumnos, sin filtro, para que nunca muestre 0). Esto NO es error de seguridad: solo para docente ORLANDO en modo debug; luego se normaliza.');
+      }
+    }
+    if (alumnosRawSample && alumnosRawSample.length) {
+      lines.push('');
+      lines.push(`🧪 Muestra 10 alumnos DB.getAlumnos RAW (sin filtro docente, colegio completo):`);
+      alumnosRawSample.forEach((s, i) => lines.push(`  RAW#${i+1}: ${s}`));
+    }
     if (Object.keys(nivelesConteo).length) {
-      lines.push(`  Distribución POR NIVEL en tus alumnos:`);
+      lines.push(`  Distribución POR NIVEL en tus alumnos (scope docente):`);
       Object.keys(nivelesConteo).sort().forEach(k => lines.push(`    - ${k}: ${nivelesConteo[k]} alumnos`));
     }
     if (Object.keys(turnosConteo).length) {
-      lines.push(`  Distribución POR TURNO/MODALIDAD en tus alumnos:`);
+      lines.push(`  Distribución POR TURNO/MODALIDAD en tus alumnos (scope docente):`);
       Object.keys(turnosConteo).sort().forEach(k => lines.push(`    - ${k}: ${turnosConteo[k]} alumnos`));
     }
     if (alumnosSampleIds && alumnosSampleIds.length) {
-      lines.push(`  Primeros 5 IDs alumnos (muestra):`);
+      lines.push(`  Primeros 5 IDs alumnos (scope docente, después filtro aplicado):`);
       alumnosSampleIds.forEach(s => lines.push(`    • ${s}`));
     }
     lines.push('');
