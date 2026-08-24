@@ -6091,16 +6091,19 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   const nEl = document.getElementById(nivelId);
   const gEl = document.getElementById(gradoId);
   const sEl = document.getElementById(seccionId);
+  const modEl = document.getElementById('fa-modalidad');
   // ═══════════════════════════════════════════════════════════════
-  // FIX SUPERADMIN / ADMIN / DIRECTOR: NUNCA auto-seleccionar nada.
-  // Estos roles MANEJAN sus filtros manualmente (selección libre,
-  // placeholder "-- Nivel --" inicial). Si no sale aquí: el bug
-  // Captura2 admin Moises ve lista sin abrir nada + FIX0 resetea a ''
-  // cuando selecciona Avanzado.
+  // ROLES ADMIN (superAdmin / admin / director): NUNCA auto-select.
+  // Solo asegurar que nivel no quede en la 1ra option (Avanzado)
+  // por default DOM y que los selects estén en cascada correcta.
   // ═══════════════════════════════════════════════════════════════
-  if (typeof _isSuperAdmin === 'function' && _isSuperAdmin()) return;
+  if (typeof _isSuperAdmin === 'function' && _isSuperAdmin()) {
+    if (nEl && nEl.options && nEl.options[0]?.value === '' && nEl.value !== '') {
+      try { nEl.value = ''; } catch(_) {}
+    }
+    return;
+  }
   if (typeof _isAdminDirector === 'function' && _isAdminDirector()) {
-    // Asegurarnos que el nivel NO quede en la 1ra option por accidente
     if (nEl && nEl.options && nEl.options[0]?.value === '' && nEl.value !== '') {
       try { nEl.value = ''; } catch(_) {}
     }
@@ -6108,295 +6111,58 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   }
   const r = _normRol(currentRol);
   const isProf = (r === 'profesor' || r === 'psicologo');
-  // SIEMPRE: al terminar asegurarnos que el nivel NO quede en la 1ra option por accidente (Avanzado).
-  // El auto-select de niveles SOLO ocurre si _isDocenteAula() true.
-  const haceAutoSelect = _isDocenteAula();
-  const _asig = (currentPrivilegios && typeof currentPrivilegios.asignaciones === 'object' && currentPrivilegios.asignaciones) ? currentPrivilegios.asignaciones : {};
-  const aulasList = _profesorAsignacionesAulasList(); // [ {ciclo,grado,seccion} ]
-  const _noLock = String(nivelId || '').startsWith('rep-');
-  // Fix Orlando/NUEVO: NO bloqueamos filtros NUNCA a docentes si tienen SOLO aulas legacy
-  // (sin asignaciones estructuradas) o si hay riesgo de que 1 aula seleccionada
-  // deje 0 alumnos por datos mal catalogados. Así el profesor puede quitar filtros.
-  const _soloAulasLegacy = !(Object.keys(_asig || {}).length > 0) && !(currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length > 0) && !(currentTutorInfo?.gradosAsignados && currentTutorInfo.gradosAsignados.length > 0);
-  if (haceAutoSelect && !aulasList.length && !(Object.keys(_asig||{}).length) && !(currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length)) {
-    // Limpiar value a '' por seguridad (no dejar en Avanzado por default del DOM)
-    if (nEl && nEl.options && nEl.options[0]?.value === '' && nEl.value !== '') {
-      try { nEl.value = ''; } catch(_) {}
-    }
-    return;
-  }
-  const primeraAula = aulasList[0] || null;
-  const g = primeraAula ? String(primeraAula.grado || '').trim() : String(currentTutorInfo?.tutorGrado || '').trim();
-  const s = primeraAula ? String(primeraAula.seccion || '').trim().toUpperCase() : String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
-  const cicloAuto = primeraAula ? String(primeraAula.ciclo || '').trim() : '';
-  // ==============================================================
-  // NUEVO: Si el profesor tiene MÁS DE 1 NIVEL distinto en su scope
-  // (ej: INICIAL + AVANZADO), NO autoseleccionamos NINGÚN FILTRO
-  // (dejamos fa-nivel / fa-grado / fa-seccion = vacíos).
-  // Así renderAlumnos() filtra solo por q (ningún criterio) y muestra
-  // TODOS los alumnos que getAlumnosFiltrados() le devuelve (todos
-  // los de su scope sin importar el nivel). Es el único modo que
-  // Orlando vea sus 38 alumnos de 1A aunque el ciclo esté mal guardado.
-  // ==============================================================
-  let _nivelesScopeUnicos = new Set();
+
+  // ═══════════════════════════════════════════════════════════════
+  // PETICIÓN EXPLÍCITA USUARIO VERBATIM (2026-08-24 Orlando):
+  //   "nunca debe aparecer por defecto nada solo sera mediante el
+  //    docente lo elija"
+  //
+  // => PARA DOCENTES/PROFESORES (incluso Orlando):
+  //    - NUNCA auto-seleccionar Nivel/Grado/Seccion
+  //    - NUNCA mostrar la lista al abrir (NO llamar renderAlumnos)
+  //    - SÓLO NIVEL habilitado, el resto DISABLED/gris
+  //    - El docente elige MANUALMENTE: Nivel → habilita Grado
+  //      → Grado → Seccion → Seccion → Modalidad.
+  // ═══════════════════════════════════════════════════════════════
   try {
-    aulasList.forEach(a => {
-      const c = String(a.ciclo || '').trim();
-      if (c) {
-        const corto = _cfgKeyToNivelCorto(c);
-        if (corto) _nivelesScopeUnicos.add(corto);
-        else _nivelesScopeUnicos.add(c);
-      }
-    });
-  } catch(_) {}
-  const _tieneMultiplesNiveles = (_nivelesScopeUnicos.size >= 2);
-  const _multiplesGsS = (() => {
-    const setGs = new Set();
-    aulasList.forEach(a => {
-      const gx = String(a.grado||'').trim();
-      const sx = String(a.seccion||'').trim().toUpperCase();
-      if (gx && sx) setGs.add(gx + '|' + sx);
-    });
-    return setGs.size >= 2;
-  })();
-  const _noAutoSeleccionarFiltros = (_tieneMultiplesNiveles || _multiplesGsS);
-  let _noAutoSeleccionarFiltrosForzado = false;
-  // =============================================================
-  // FIX TOTAL Orlando (peticion user): NUNCA BLOQUEAR LOS FILTROS NIVEL/GRADO/SECCION/MODALIDAD
-  // a docentes (profesor/psicologo). Incluso si tiene 1 sola aula estructurada: auto-seleccionar
-  // la aula (llenar selects) PERO MANTENERLOS EDITABLES. Asi user puede cambiar filtros si
-  // le apatece ver otras aulas o corregir el 0. La unica condicion para bloquear era old legacy;
-  // user reporta: "ni permite seleccionar el nivel esta deshabilitado solo permite seleccionar modalidad".
-  // Por eso desechamos _lockCampos por completo para docentes.
-  // =============================================================
-  const _lockCampos = false; // NUNCA BLOQUEAR (siempre editable)
-  // FIX Orlando: SI el usuario es PROFESOR + (restringir==true o es_tutor o tiene strings legacy de tutoria)
-  // y además tenemos g && s válidos → FORZAMOS haceAutoSelect=true aunque _isDocenteAula() haya
-  // retornado false por cargo mal formateado (ej: "docente /ciencias" no matchea includes antiguos).
-  let _realHaceAutoSelect = !!haceAutoSelect;
-  if (!_realHaceAutoSelect && isProf && (g && s)) {
-    const condicionFuerte = (
-      (currentPrivilegios && !!currentPrivilegios.restringir) ||
-      (currentTutorInfo && !!currentTutorInfo.es_tutor) ||
-      (aulasList.length > 0) ||
-      (currentPrivilegios?.asignaciones && Object.keys(currentPrivilegios.asignaciones).length > 0)
-    );
-    if (condicionFuerte) _realHaceAutoSelect = true;
-  }
-  // FIX ORLANDO + docentes legacy CEBA: Si SOLO tenemos aulas legacy (no cfg inferible),
-  // grado numérico 1..6 (grado CEBA), NO forzamos el filtro UI de nivel (dejamos ''),
-  // ya que los alumnos podrían estar mal catalogados como AVANZADO. Si hay 1 solo aula
-  // legacy, nos ahorramos el bug de filtrar 0.
-  const _usaSoloLegacyGradoCEBA = (
-    _soloAulasLegacy && (!cicloAuto) &&
-    (() => {
-      try {
-        const gn = parseInt((String(g||'').match(/\d+/)||[])[0]||'0',10);
-        return (gn >= 1 && gn <= 6);
-      } catch(_) { return false; }
-    })()
-  );
-  if (_usaSoloLegacyGradoCEBA && !_noAutoSeleccionarFiltros) _noAutoSeleccionarFiltrosForzado = true;
-  // FIX Req4 (user VERBATIM): "ni bien se abre gestion de aluamnos ya parece la lista y no dberia ser asi"
-  // Para docentes LEGACY CEBA (solo aulas tutor_grado/tutor_seccion sin asignaciones estructuradas ciclo),
-  // si el grado es 1..6 → NUNCA auto-seleccionar filtros (nivel/grado/seccion). Dejar todos vacíos.
-  // El usuario DEBE seleccionar manualmente. Así mostramos mostrarEstadoInicial() al abrir.
-  const _esDocenteLegacyCEBANoAuto = (() => {
-    if (!isProf) return false;
-    if (!g) return false;
-    try {
-      const gn = parseInt((String(g||'').match(/\d+/)||[])[0]||'0', 10);
-      if (!(gn >= 1 && gn <= 6)) return false;
-    } catch(_) { return false; }
-    // Condición legacy: sin tutorAulas estructuradas ni asignaciones estructuradas con ciclo
-    const noAsigEstruct = !(Object.keys(_asig||{}).length);
-    const noTutorAulasStruct = !(currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length > 0);
-    const noGradosAsign = !(currentTutorInfo?.gradosAsignados && currentTutorInfo.gradosAsignados.length > 0);
-    if (!(noAsigEstruct && noTutorAulasStruct && noGradosAsign)) return false;
-    // Además si NO hay cicloAuto (aula legacy sin ciclo) → OK forzar no-auto
-    return !cicloAuto;
-  })();
-  if (_esDocenteLegacyCEBANoAuto) _noAutoSeleccionarFiltrosForzado = true;
-  if (_realHaceAutoSelect && ((_noAutoSeleccionarFiltros || _noAutoSeleccionarFiltrosForzado) || (!g || !s))) {
-    // ==========================================================
-    // FIX NUEVO Orlando + todos los profesores MÚLTIPLES AULAS:
-    // Ya no limpiamos los selects a '' ni llamamos a mostrarEstadoInicial.
-    // En cambio:
-    //  - 1 valor único real en el select → auto-seleccionar ese valor
-    //  - ≥2 valores reales → auto-seleccionar "TODOS" (ahora los profesores
-    //    TAMBIÉN tienen opción Todos en todos los selects, lo hemos añadido
-    //    en poblarFiltroNivel/Grado/Seccion, ya no hay exclusión isProf).
-    // Resultado: PROFESOR ABRE GESTIÓN ALUMNOS → VE TODOS SUS ALUMNOS
-    //            INMEDIATAMENTE sin tener que seleccionar nada manual.
-    // ==========================================================
-    try {
-      // 1. NIVEL: calcular valor auto
-      let cfg = options.cfg || null;
-      try { if(!cfg) cfg = await getConfig(); } catch(e0) {}
-      let nivelSel = '';
-      if (nEl) {
-        const realOpts = [...(nEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
-        if (realOpts.length === 1) nivelSel = realOpts[0];
-        else if (realOpts.length >= 2) nivelSel = 'TODOS';
-        if (nivelSel) nEl.value = nivelSel;
-        nEl.disabled = false;
-      }
-      // 2. Poblar GRADO (con el nivel seleccionado) y auto-seleccionar
-      let gradoSel = '';
-      if (gEl) {
-        await poblarFiltroGrado(gradoId, nivelSel || null, { cfg, alumnos: options.alumnos });
-        const realG = [...(gEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
-        if (realG.length === 1) gradoSel = realG[0];
-        else if (realG.length >= 2) gradoSel = 'TODOS';
-        if (gradoSel) gEl.value = gradoSel;
-        gEl.disabled = false;
-        // Habilitar cascada (nivel ya tiene valor)
-        try { _enableSelect(gEl.id || ''); } catch(_){}
-      }
-      // 3. Poblar SECCIÓN (con el grado seleccionado) y auto-seleccionar
-      let seccSel = '';
-      if (sEl) {
-        await poblarFiltroSeccion(seccionId, gradoSel || null, { cfg, alumnos: options.alumnos });
-        const realS = [...(sEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
-        if (realS.length === 1) seccSel = realS[0];
-        else if (realS.length >= 2) seccSel = 'TODOS';
-        if (seccSel) sEl.value = seccSel;
-        sEl.disabled = false;
-        // Habilitar cascada (grado ya tiene valor → habilitar sección; sección → modalidad)
-        if (gradoSel) try { _enableSelect(sEl.id || ''); } catch(_){}
-      }
-      // 4. Habilitar MODALIDAD si Sección tiene valor seleccionado (cascada)
-      try {
-        const modEl = document.getElementById('fa-modalidad');
-        if (modEl && seccSel) { _enableSelect('fa-modalidad'); }
-        else if (modEl && !seccSel) { modEl.value = ''; _disableSelect('fa-modalidad'); }
-      } catch(_){}
-    } catch(_errTut) { console.warn('[autoSelectTutoria multiAula] error:', _errTut); }
-    _tutoriaLocked = false;
-    // NUNCA llamar a mostrarEstadoInicial aquí → el profesor TIENE aulas asignadas
-    // y renderAlumnos() mostrará la lista con profTieneFiltroReal=true al
-    // tener seleccionado Nivel/Grado/Seccion (incluso TODOS).
-    try { if (typeof renderAlumnos === 'function') renderAlumnos(); } catch(_) {}
-    return;
-  }
+    // 1. Poblar opciones de NIVEL (con "Todos" disponible para docentes)
+    //    (no seleccionar ninguna, dejar placeholder)
+    await poblarFiltroNivel(nivelId, null, { cfg: options.cfg, alumnos: options.alumnos });
 
-  _tutoriaLocked = true;
-
-  // 1. Poblar y seleccionar nivel (si hace autoSelect) o limpiar a ''
-  let nivel = '';
-  if (_realHaceAutoSelect && cicloAuto) {
-    try { nivel = _cfgKeyToNivelCorto(cicloAuto, options.cfg); } catch(_) {}
-  }
-  if (nEl) {
-    let cfg = options.cfg || null;
-    try { if(!cfg) cfg = await getConfig(); } catch(e0) {}
-    if (_realHaceAutoSelect) {
-      await poblarFiltroNivel(nivelId, null, { cfg, alumnos: options.alumnos });
-      if(!nivel) {
-        try {
-          const keyLarga = cfg ? _agendaInferNivelByGrado(g, cfg) : '';
-          nivel = keyLarga ? _cfgKeyToNivelCorto(keyLarga, cfg) : '';
-        } catch(_) {}
-      }
-      // FIX Orlando: si aún no tenemos nivel claro pero hay varias opciones
-      // de nivel en su scope → NO dejar en '' (luego renderAlumnos lo necesita
-      // para profTieneFiltroReal → usa "TODOS" si hay 2+ niveles).
-      const _sinCicloClaro = !cicloAuto && (primeraAula && !String(primeraAula.ciclo||'').trim()) && !nivel;
-      if(!nivel && !_sinCicloClaro) {
-        try {
-          const nivelesScope = _nivelesCortosScopeDocente();
-          const opts = [...(nEl.options || [])].map(o => String(o.value || ''));
-          for (const nCandidato of nivelesScope) {
-            if (opts.includes(nCandidato)) { nivel = nCandidato; break; }
-          }
-        } catch(_) {}
-      }
-      if(!nivel) {
-        // FIX FINAL Orlando: si nivel sigue '' después de todos los fallbacks
-        // → usar la cantidad de opciones reales: 1 valor = escogerlo; ≥2 = TODOS
-        try {
-          const unicas = [...(nEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
-          if (unicas.length === 1) nivel = unicas[0];
-          else if (unicas.length >= 2) nivel = 'TODOS';
-        } catch(_) {}
-      }
-    } else {
-      // NO es docente aula → LIMPIAR nivel a '' (SIEMPRE) para que no quede en 1ra option Avanzado
-      nivel = '';
-    }
-    if (nivel === '' && nEl && nEl.options && [...(nEl.options || [])].some(o => String(o.value || '') === '')) {
+    // 2. Limpiar TODOS los values (incluyendo nivel)
+    if (nEl && nEl.options && [...(nEl.options || [])].some(o => String(o.value || '') === '')) {
       try { nEl.value = ''; } catch(_) {}
-    } else if (_realHaceAutoSelect && nivel) {
-      if (![...(nEl.options || [])].some(o => String(o.value || '') === nivel)) await poblarFiltroNivel(nivelId, null, { cfg, alumnos: options.alumnos });
-      if([...(nEl.options || [])].some(o => String(o.value || '') === nivel)) nEl.value = nivel;
-      nEl.disabled = _lockCampos;
     }
-  }
+    if (gEl) { try { gEl.value = ''; } catch(_) {} }
+    if (sEl) { try { sEl.value = ''; } catch(_) {} }
+    if (modEl) { try { modEl.value = ''; } catch(_) {} }
 
-  if (gEl) {
-    if (_realHaceAutoSelect) {
-      await poblarFiltroGrado(gradoId, nivel, { cfg: options.cfg, alumnos: options.alumnos });
-      // FIX Orlando: si no hay g/s (aulas sin datos completos) pero hay opciones en el
-      // select de grado → auto-seleccionar: 1 valor = único; ≥2 = TODOS (no dejar '')
-      if (!g) {
-        try {
-          const realG = [...(gEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
-          if (realG.length === 1) g = realG[0];
-          else if (realG.length >= 2) g = 'TODOS';
-        } catch(_) {}
-      }
-      if (g) {
-        if (![...(gEl.options || [])].some(o => String(o.value || '') === g)) {
-          gEl.innerHTML = `<option value="${g}">${g}</option>`;
-        }
-        gEl.value = g;
-        try { _enableSelect(gEl.id || ''); } catch(_){}
-      }
-      gEl.disabled = _lockCampos;
-    } else {
-      try { if (gEl.value) gEl.value = ''; } catch(_) {}
-    }
-  }
-  if (sEl) {
-    if (_realHaceAutoSelect) {
-      await poblarFiltroSeccion(seccionId, g, { cfg: options.cfg, alumnos: options.alumnos });
-      // FIX Orlando: si no hay sección por datos incompletos, auto-seleccionar por opciones
-      if (!s) {
-        try {
-          const realS = [...(sEl.options || [])].map(o => String(o.value || '')).filter(v => v && v !== 'TODOS');
-          if (realS.length === 1) s = realS[0];
-          else if (realS.length >= 2) s = 'TODOS';
-        } catch(_) {}
-      }
-      if (s) {
-        if (![...(sEl.options || [])].some(o => String(o.value || '') === s)) {
-          sEl.innerHTML = `<option value="${s}">${s}</option>`;
-        }
-        sEl.value = s;
-        try { _enableSelect(sEl.id || ''); } catch(_){}
-      }
-      sEl.disabled = _lockCampos;
-    } else {
-      try { if (sEl.value) sEl.value = ''; } catch(_) {}
-    }
-  }
-  // HABILITAR MODALIDAD (cascada final): si Sección tiene valor, habilitar
-  if (_realHaceAutoSelect) {
+    // 3. CASCADA INICIAL: SÓLO NIVEL HABILITADO
+    if (nEl) try { nEl.disabled = false; _enableSelect(nEl.id || ''); } catch(_) {}
+    if (gEl) try { gEl.disabled = true; _disableSelect(gEl.id || ''); } catch(_) {}
+    if (sEl) try { sEl.disabled = true; _disableSelect(sEl.id || ''); } catch(_) {}
+    if (modEl) try { modEl.disabled = true; _disableSelect('fa-modalidad'); } catch(_) {}
+
+    // 4. Poblar Grado y Seccion con options (vacíos por cascada,
+    //    pero si no se populan luego el onNivelChange lo hará,
+    //    lo hacemos aquí para que exista el <option Todos> cuando
+    //    los habilite el onchange).
     try {
-      const modEl = document.getElementById('fa-modalidad');
-      const sVal = sEl ? String(sEl.value || '').trim() : '';
-      if (modEl && sVal) _enableSelect('fa-modalidad');
-      else if (modEl) { modEl.value = ''; _disableSelect('fa-modalidad'); }
-    } catch(_){}
+      await poblarFiltroGrado(gradoId, null, { cfg: options.cfg, alumnos: options.alumnos });
+      await poblarFiltroSeccion(seccionId, null, { cfg: options.cfg, alumnos: options.alumnos });
+      if (gEl) { try { gEl.value = ''; } catch(_) {} }
+      if (sEl) { try { sEl.value = ''; } catch(_) {} }
+    } catch(_) {}
+
+    // 5. NUNCA llamar renderAlumnos() → deja el placeholder
+    //    "Usa los filtros de arriba para buscar alumnos".
+    _tutoriaLocked = false;
+    return;
+  } catch(_errTut) {
+    console.warn('[autoSelectTutoria docente sin-auto] error:', _errTut);
   }
 
-  setTimeout(() => {
-    _tutoriaLocked = false;
-    // FIX Orlando: Profesor con auto-selección (TODOS o valor) → mostrar la lista.
-    // Para NO-docentes que no sean aula, si el select tenía '' válido → limpiado arriba.
-    try { if (typeof renderAlumnos === 'function') renderAlumnos(); } catch(_) {}
-  }, 250);
-}
+
 function _rolLabel(r) {
   const v = _normRol(r);
   const map = { admin:'ADMIN', director:'DIRECTOR', coordinador:'COORDINADOR', profesor:'PROFESOR', psicologo:'PSICÓLOGO', auxiliar:'AUXILIAR' };
