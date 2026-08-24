@@ -9901,15 +9901,31 @@ async function renderAlumnos() {
 
         // ═══════════════════════════════════════════════════════════════
         // DEBUG VISIBLE EN PANTALLA (SIN F12) para inconsistencias Semi
-        // SIEMPRE SE MUESTRA aunque _todosSinMod.length = 0 (para que el
-        // usuario vea EXPLÍCITAMENTE que no existen alumnos en G+S y sepa
-        // que debe presionar Importar Excel LISTA GENERAL.xlsx actualizado).
+        //
+        // ✅ SOLO PARA ADMIN (superAdmin / admin / director / coord).
+        //
+        // ❌ PARA DOCENTES/PROFESORES: NO MOSTRAR PANEL NARANJA NI
+        // ALERTA ROJA "Importar Excel". Porque:
+        //   1. El docente NO es responsable de importar (trabajo admin).
+        //   2. Si docente seleccionó Nivel=Avanzado y tiene 39 alumnos en
+        //      INI/INT → el hint arriba ("Nivel AVANZADO no tiene
+        //      alumnos para ti. Se encontraron: 39 en INI/INT 1A") ya
+        //      explica todo lo necesario.
+        //   3. El panel rojo IMPORTAR EXCEL confunde al docente → bug user
+        //      reportó captura 2 Orlando exactamente.
         // ═══════════════════════════════════════════════════════════════
         try {
-          // Limpiar debug anterior
-          let _dbgDiv = empty.querySelector('#alumnos-empty-debug');
-          if (_dbgDiv) { try { _dbgDiv.remove(); } catch(_){} }
-          if (!_vQ) { // Solo si NO hay búsqueda (evitar spam al buscar por DNI)
+          // Primero: decidir si el usuario actual es ADMIN.
+          const _usuarioEsAdminDebug = (
+            (typeof _isSuperAdmin === 'function' && _isSuperAdmin()) ||
+            (typeof _isAdminDirector === 'function' && _isAdminDirector()) ||
+            (typeof _isCoord === 'function' && _isCoord())
+          );
+          if (!_usuarioEsAdminDebug) {
+            // DOCENTE: NO crear panel debug. Limpiar anterior y salir.
+            let _dbgDiv2 = empty.querySelector('#alumnos-empty-debug');
+            if (_dbgDiv2) { try { _dbgDiv2.remove(); } catch(_){} }
+          } else if (!_vQ) { // Solo si NO hay búsqueda (evitar spam al buscar por DNI)
             const _cfgDbg = typeof configCache !== 'undefined' ? configCache : {};
             const _todosDbg = prep.sorted || [];
             const _totalDB = _todosDbg.length;
@@ -10015,8 +10031,10 @@ async function renderAlumnos() {
               _html += '</tbody></table></div>';
               _html += `<div style="margin-top:10px;font-size:0.72rem;color:#94a3b8;line-height:1.45;"><b>Instrucción rápida:</b> si la columna <b>Turno (Canon)</b> es correcta pero la columna <b>Match mod?</b> dice NO → es bug de estrategia. Si el Canon es PRESENCIAL y tú filtras Semi → el alumno NO es Semi (fue mal importado / mal guardado).</div>`;
             }
-            _dbgDiv.innerHTML = _html;
-            try { empty.appendChild(_dbgDiv); } catch(_){}
+            if (_dbgDiv && _html) {
+              _dbgDiv.innerHTML = _html;
+              try { empty.appendChild(_dbgDiv); } catch(_){}
+            }
           }
         } catch(_dbgExcep) { console.warn('[empty debug] error UI:', _dbgExcep?.message || _dbgExcep); }
 
