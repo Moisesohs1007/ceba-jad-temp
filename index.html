@@ -22955,24 +22955,21 @@ async function savePrivilegios() {
     if (!(g in tempAsignaciones)) tempAsignaciones[g] = [];
     if (!tempAsignaciones[g].includes(s)) tempAsignaciones[g].push(s);
   });
-  // Cleanup: eliminar grados vacíos
+  // Cleanup: eliminar grados vacíos y ordenar secciones
   Object.keys(tempAsignaciones).forEach(g => {
     if (!Array.isArray(tempAsignaciones[g]) || !tempAsignaciones[g].length) {
       delete tempAsignaciones[g];
     } else {
-      // Ordenar secciones A,B,C,D por orden alfabético (visual estable)
       tempAsignaciones[g] = tempAsignaciones[g].slice().sort();
     }
   });
-  // Asegurar que también marquen los checkboxes de GRADO PADRE en el DOM
-  // (por si el usuario reabre el modal sin cerrar: ahora debe mostrarse marcado)
+  // Sincronizar DOM: marcar checkboxes GRADO PADRE si tienen secciones marcadas
   try {
     document.querySelectorAll('.chk-grado').forEach(cG => {
       const g = String(cG.dataset.grado || '').trim();
       if (!g) return;
       const secMarc = Array.isArray(tempAsignaciones[g]) && tempAsignaciones[g].length > 0;
       cG.checked = !!secMarc;
-      // toggle display sección div (como hace toggleGradoSecciones)
       const key = cG.dataset.key;
       if (key) {
         const div = document.getElementById('secc-' + key);
@@ -22981,11 +22978,59 @@ async function savePrivilegios() {
     });
   } catch(_syncDom){}
   actualizarResumenPrivilegios();
-  closeModal('modal-privilegios');
   // Auto-check restringir si hay asignaciones
   if(Object.keys(tempAsignaciones).length) {
     try { document.getElementById('u-restringir').checked = true; } catch(_e){}
     try { toggleBtnConfigurar(); } catch(_e){}
+  }
+  // ---------------------------------------------------------------
+  // FIX 2026-08-24 (AHORRA 2 PASOS AL ADMIN): AUTO-GUARDADO PERMANENTE
+  // Si estamos EDITANDO un usuario existente (editingUsuarioId definido
+  // y válido) → GUARDAMOS INMEDIATAMENTE `asignaciones` y `restringir`
+  // en Firestore. Así no hay necesidad de hacer clic en "Guardar" del
+  // modal grande después. Evita el bug "marqué pero no se guardó".
+  // ---------------------------------------------------------------
+  let _escritoOK = false;
+  if (typeof editingUsuarioId !== 'undefined' && editingUsuarioId && typeof db !== 'undefined' && db?.collection) {
+    try {
+      const _restrFinal = !!document.getElementById('u-restringir')?.checked || Object.keys(tempAsignaciones).length > 0;
+      const _payload = {
+        restringir: _restrFinal,
+        asignaciones: tempAsignaciones || {}
+      };
+      // También actualizamos grados_asignados_json (lista flat) para los
+      // helpers runtime (_profesorAsignacionesAulasList merge de 3 fuentes):
+      try {
+        const list = [];
+        Object.entries(tempAsignaciones || {}).forEach(([g, secs]) => {
+          if (!g) return;
+          (Array.isArray(secs) ? secs : []).forEach(s => {
+            if (!s) return;
+            list.push({ ciclo: 'AVANZADO', grado: String(g).trim(), seccion: String(s).trim().toUpperCase() });
+          });
+        });
+        if (list.length) _payload.grados_asignados_json = list;
+      } catch(_e1) {}
+      await db.collection('usuarios').doc(String(editingUsuarioId)).update(_payload);
+      _escritoOK = true;
+      // Invalidar cache de usuarios (para que la tabla muestre actualizado)
+      try { _invalidarUsuarios(); } catch(_e2){}
+    } catch(_errDB) {
+      try { console.error('[savePrivilegios] Firestore update falló', _errDB); } catch(_){}
+    }
+  }
+  closeModal('modal-privilegios');
+  // Toast final (informativo):
+  const _asigs = Object.keys(tempAsignaciones || {});
+  if (!_asigs.length) {
+    toast('⚠ Sin aulas asignadas', 'warning');
+  } else {
+    const _sum = _asigs.map(g => g + (tempAsignaciones[g]?.length ? ' (' + tempAsignaciones[g].join(',') + ')' : '')).join(' · ');
+    if (_escritoOK) {
+      toast('✅ Aulas guardadas: ' + _sum, 'success');
+    } else {
+      toast('💾 Aulas listas: ' + _sum + ' (presiona Guardar en el modal para confirmar)', 'info');
+    }
   }
 }
 
@@ -23491,14 +23536,20 @@ function toggleGradoSecciones(chk) {
 }
 
 function getAsignaciones() {
+  // FIX 2026-08-24: misma lógica que savePrivilegios: NO requerir chk-grado:checked,
+  // iterar chk-seccion:checked directamente (evita pérdida por padre no marcado).
   const result = {};
-  document.querySelectorAll('.chk-grado:checked').forEach(chk => {
-    const g = chk.dataset.grado;
-    const key = chk.dataset.key;
-    const seccs = Array.from(
-      document.querySelectorAll(`.chk-seccion[data-key="${key}"]:checked`)
-    ).map(c => c.value);
-    result[g] = seccs;
+  document.querySelectorAll('.chk-seccion:checked').forEach(c => {
+    const g = String(c.dataset.grado || c.getAttribute('data-grado') || '').trim();
+    const sRaw = String(c.value || '').trim();
+    if (!g || !sRaw) return;
+    const s = sRaw.toUpperCase();
+    if (!(g in result)) result[g] = [];
+    if (!result[g].includes(s)) result[g].push(s);
+  });
+  Object.keys(result).forEach(g => {
+    if (!Array.isArray(result[g]) || !result[g].length) delete result[g];
+    else result[g] = result[g].slice().sort();
   });
   return result;
 }
