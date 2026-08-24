@@ -23130,7 +23130,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
       byCicloTurno[`${cic}|${tur}`] = (byCicloTurno[`${cic}|${tur}`] || 0) + 1;
     });
   } catch(eGran) {}
-  // Heuristica legacy tutorAulas: string tipo "AVANZADO · 4°B" / "4°C VIRT" → turno deducido
+  // Heuristica legacy tutorAulas: string tipo "AVANZADO · 4°B" / "4°C VIRT" / "4B SEMI" / objeto {ciclo,grado,seccion,turno} → turno deducido
   const modaFallbackPorGs = {};
   try {
     const d = (uid && uDataOverride && typeof uDataOverride === 'object')
@@ -23141,20 +23141,36 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     try { if(Array.isArray(d?.tutor_aulas_json)) tutAulasRaw.push(...d.tutor_aulas_json); } catch(_){}
     try { if(Array.isArray(d?.grados_asignados_json)) tutAulasRaw.push(...d.grados_asignados_json); } catch(_){}
     tutAulasRaw.forEach(a => {
-      const aStr = (String(a?.ciclo || a?.nombre || a?.turno || a || '').trim()
-        + ' ' + String(a?.grado || '') + ' ' + String(a?.seccion || '')).toUpperCase();
-      const gRaw = String(a?.grado || '').trim();
-      const numG = gRaw.match(/(\d+)/); const gK = numG ? numG[1] : gRaw;
-      const sK = String(a?.seccion || '').trim().toUpperCase();
+      // Caso 1: entrada string (formato texto libre)
+      const esString = typeof a === 'string';
+      const entryAsStr = esString
+        ? String(a).trim().toUpperCase()
+        : (String(a?.ciclo || a?.nombre || a?.turno || a || '').trim().toUpperCase()
+           + ' ' + String(a?.grado || '') + ' ' + String(a?.seccion || ''));
+      let gK = ''; let sK = '';
+      if (esString) {
+        // Parse inline: "4°B SEMI", "AVANZADO · 4C VIRTUAL", "1A PRES", etc.
+        const m = entryAsStr.match(/(\d)[°\s]*([A-D])/i);
+        if (m) { gK = m[1]; sK = (m[2]||'').toUpperCase(); }
+      } else {
+        const gRaw = String(a?.grado || '').trim();
+        const numG = gRaw.match(/(\d+)/); gK = numG ? numG[1] : gRaw;
+        sK = String(a?.seccion || '').trim().toUpperCase();
+        // Fallback: intentar parsear en las propiedades string concatenado (por si grado="4°B")
+        if (!gK || !sK) {
+          const m2 = (String(a?.grado||'')+String(a?.nombre||'')).toUpperCase().match(/(\d)[°\s]*([A-D])/);
+          if (m2) { gK = m2[1]; sK = (m2[2]||'').toUpperCase(); }
+        }
+      }
       if (!gK || !sK) return;
       let turno = '';
-      if (aStr.includes('VIRT') || /VIRTUAL/i.test(aStr)) turno = 'VIRTUAL';
-      else if (aStr.includes('SEMI') || /SEMIPRES/i.test(aStr)) turno = 'SEMIPRESENCIAL';
-      else if (aStr.includes('PRESEN') || /PRES/i.test(aStr)) turno = 'PRESENCIAL';
+      if (entryAsStr.includes('VIRT') || /VIRTUAL/i.test(entryAsStr)) turno = 'VIRTUAL';
+      else if (entryAsStr.includes('SEMI') || /SEMIPRES/i.test(entryAsStr)) turno = 'SEMIPRESENCIAL';
+      else if (entryAsStr.includes('PRESEN') || /PRES/i.test(entryAsStr)) turno = 'PRESENCIAL';
       if (!turno) {
-        // fallback por hoja nombre canon: 4B = SEMI; 4C = VIRT; 4A = PRES
-        if (/4B|1B|2B|3B/i.test(aStr)) turno = 'SEMIPRESENCIAL';
-        else if (/4C|1C|2C|3C/i.test(aStr)) turno = 'VIRTUAL';
+        // fallback por hoja nombre canon: 4B / 1B / 2B / 3B = SEMI; 4C / 1C / 2C / 3C = VIRT; A = PRES
+        if (/[1-6][°\s]*B/i.test(entryAsStr) || sK === 'B') turno = 'SEMIPRESENCIAL';
+        else if (/[1-6][°\s]*C/i.test(entryAsStr) || sK === 'C') turno = 'VIRTUAL';
         else turno = 'PRESENCIAL';
       }
       modaFallbackPorGs[`${gK}|${sK}`] = turno;
@@ -23183,9 +23199,26 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     // 2) Legacy fallback match exacto (tutorAulas string dijo: SEMI/VIRT para este grado/sección)
     const fb = modaFallbackPorGs[`${gK}|${sK}`];
     if (fb && fb === turnoTarjeta) return true;
-    // 3) Fallback para cuando NO hay data ni BD ni legacy: dejarlo SIN marcar para no confundir.
-    //    Excepción: si el usuario clickeó MANUALMENTE en este checkbox (no re-abriendo)
-    //    → lo maneja el onChange toggle (no esta función). Aquí = SOLO render inicial.
+    // ================================================================
+    // 3) HEURÍSTICA CANÓNICA CEBA (paso fuerte): si tempAsignaciones
+    //    plano {4:[B,C]} SIN BD ni legacy (paso1/2 vacíos): marcar por
+    //    NOMENCLATURA de Excel LISTA GENERAL.xlsx (CANÓN):
+    //      · Nro + Sección A = Presencial (4A PRE, 1A PRE, etc.)
+    //      · Nro + Sección B = Semipresencial (4B SEMI, 1B SEMI)
+    //      · Nro + Sección C = Virtual (4C VIRT, 1C VIRT)
+    //    Así, aunque no haya BD ni legacy deducida de strings tutorAulas, las
+    //    marcas persisten al reabrir el modal.
+    // ================================================================
+    if (hasGlobal) {
+      if (turnoTarjeta === 'PRESENCIAL' && sK === 'A') return true;
+      if (turnoTarjeta === 'SEMIPRESENCIAL' && sK === 'B') return true;
+      if (turnoTarjeta === 'VIRTUAL' && sK === 'C') return true;
+    }
+    // 4) FALLBACK DE ÚLTIMA RATIO: si el tempAsignaciones tiene la sección
+    //    pero NO hay ninguna otra pista (sección D o grado especial):
+    //    marcarla TODAS las modalidades (evitar perder la marca del usuario).
+    //    (solo para secciones distintas A/B/C; D = Presencial también)
+    if (hasGlobal && sK === 'D' && turnoTarjeta === 'PRESENCIAL') return true;
     return false;
   };
 
