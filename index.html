@@ -23096,6 +23096,99 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     }
   })();
 
+  // ================================================================
+  // FIX 2026-08-24 (Admin Moises doble marca modas):
+  // tempAsignaciones es plano {4:[B,C]} sin granularidad MODALIDAD.
+  // Bug: al render 3 tarjetas PRES/SEMI/VIRT, se marcan B y C en TODAS.
+  // Solución: construir mapa `byTurnoGradoSec = { "SEMI|4|B": true, "VIRT|4|C": true }`
+  //   para cada GRADO·SECCION y TARJETA (turno) verificar SI HAY ALUMNOS en BD
+  //   coincidentes (o legacy fallback string tutorAulas "AVANZADO·4°B" = SEMI /
+  //   "4°C VIRT" = VIRT) → solo entonces marcar el checkbox en ESA TARJETA.
+  // Además: filtrar tarjetas (niveles) que NO tengan alumnos en BD (INICIAL/INTERMEDIO
+  //   legacy se omiten porque no hay alumnos hoy: todo = AVANZADO).
+  // ================================================================
+  let alumnosAll = [];
+  const byTurnoGradoSec = {};
+  const byCicloTurno = {};
+  try {
+    alumnosAll = Array.isArray(window.alumnosCache) ? window.alumnosCache.slice() : [];
+    if (!alumnosAll.length && typeof DB?.getAlumnos === 'function') {
+      try { alumnosAll = await DB.getAlumnos(); } catch(_) {}
+    }
+    alumnosAll.forEach(a => {
+      const tur = (typeof _normModAtencion === 'function')
+        ? (_normModAtencion(a.turno) || 'PRESENCIAL')
+        : (String(a.turno||'').trim().toUpperCase() || 'PRESENCIAL');
+      const cicRaw = (typeof _canonCicloJS === 'function')
+        ? (_canonCicloJS(a.ciclo) || '')
+        : '';
+      const cic = (cicRaw || String(a.ciclo||'').trim().toUpperCase() || 'AVANZADO');
+      const g = String(a.grado||'').trim();
+      const s = String(a.seccion||'').trim().toUpperCase();
+      const numG = g.match(/(\d+)/); const gK = numG ? numG[1] : g;
+      if (gK && s) byTurnoGradoSec[`${tur}|${gK}|${s}`] = true;
+      byCicloTurno[`${cic}|${tur}`] = (byCicloTurno[`${cic}|${tur}`] || 0) + 1;
+    });
+  } catch(eGran) {}
+  // Heuristica legacy tutorAulas: string tipo "AVANZADO · 4°B" / "4°C VIRT" → turno deducido
+  const modaFallbackPorGs = {};
+  try {
+    const d = (uid && uDataOverride && typeof uDataOverride === 'object')
+      ? uDataOverride
+      : (uid ? (typeof d2 !== 'undefined' ? d2 : null) : null);
+    const tutAulasRaw = [];
+    try { if(Array.isArray(d?.tutorAulas)) tutAulasRaw.push(...d.tutorAulas); } catch(_){}
+    try { if(Array.isArray(d?.tutor_aulas_json)) tutAulasRaw.push(...d.tutor_aulas_json); } catch(_){}
+    try { if(Array.isArray(d?.grados_asignados_json)) tutAulasRaw.push(...d.grados_asignados_json); } catch(_){}
+    tutAulasRaw.forEach(a => {
+      const aStr = (String(a?.ciclo || a?.nombre || a?.turno || a || '').trim()
+        + ' ' + String(a?.grado || '') + ' ' + String(a?.seccion || '')).toUpperCase();
+      const gRaw = String(a?.grado || '').trim();
+      const numG = gRaw.match(/(\d+)/); const gK = numG ? numG[1] : gRaw;
+      const sK = String(a?.seccion || '').trim().toUpperCase();
+      if (!gK || !sK) return;
+      let turno = '';
+      if (aStr.includes('VIRT') || /VIRTUAL/i.test(aStr)) turno = 'VIRTUAL';
+      else if (aStr.includes('SEMI') || /SEMIPRES/i.test(aStr)) turno = 'SEMIPRESENCIAL';
+      else if (aStr.includes('PRESEN') || /PRES/i.test(aStr)) turno = 'PRESENCIAL';
+      if (!turno) {
+        // fallback por hoja nombre canon: 4B = SEMI; 4C = VIRT; 4A = PRES
+        if (/4B|1B|2B|3B/i.test(aStr)) turno = 'SEMIPRESENCIAL';
+        else if (/4C|1C|2C|3C/i.test(aStr)) turno = 'VIRTUAL';
+        else turno = 'PRESENCIAL';
+      }
+      modaFallbackPorGs[`${gK}|${sK}`] = turno;
+    });
+  } catch(eFb) {}
+  // Helper de chequeo por TARJETA (turnoTarjeta + cicloTarjeta x grado x seccion)
+  // Usado dentro del render para decidir si marcar cada checkbox individual
+  window.__checkAsigGranularPorModTarjeta = function(turnoTarjetaRaw, cicloTarjetaRaw, gradoRaw, seccionRaw) {
+    const turnoTarjeta = (typeof _normModAtencion === 'function')
+      ? (_normModAtencion(turnoTarjetaRaw) || 'PRESENCIAL')
+      : String(turnoTarjetaRaw||'').trim().toUpperCase() || 'PRESENCIAL';
+    const cicloTarjeta = (typeof _canonCicloJS === 'function' && cicloTarjetaRaw)
+      ? (_canonCicloJS(cicloTarjetaRaw) || '') : '';
+    const cicloT = (cicloTarjeta || String(cicloTarjetaRaw||'').trim().toUpperCase() || 'AVANZADO');
+    const g = String(gradoRaw||'').trim();
+    const numG = g.match(/(\d+)/); const gK = numG ? numG[1] : g;
+    const sK = String(seccionRaw||'').trim().toUpperCase();
+    if (!gK || !sK) return false;
+    const tempObj = window.tempAsignaciones || {};
+    if (!Object.prototype.hasOwnProperty.call(tempObj, gK)) return false;
+    const secsArr = Array.isArray(tempObj[gK]) ? tempObj[gK] : [];
+    const hasGlobal = secsArr.some(x => String(x||'').trim().toUpperCase() === sK);
+    if (!hasGlobal) return false;
+    // 1) BD match exacto en ESTA modalidad
+    if (byTurnoGradoSec[`${turnoTarjeta}|${gK}|${sK}`]) return true;
+    // 2) Legacy fallback match exacto (tutorAulas string dijo: SEMI/VIRT para este grado/sección)
+    const fb = modaFallbackPorGs[`${gK}|${sK}`];
+    if (fb && fb === turnoTarjeta) return true;
+    // 3) Fallback para cuando NO hay data ni BD ni legacy: dejarlo SIN marcar para no confundir.
+    //    Excepción: si el usuario clickeó MANUALMENTE en este checkbox (no re-abriendo)
+    //    → lo maneja el onChange toggle (no esta función). Aquí = SOLO render inicial.
+    return false;
+  };
+
   // Helper: extraer key de grados a partir del nombre de nivel (soporta CEBA INICIAL/INTERMEDIO, EBR Inicial, etc.)
   const cleanLabel = (n) => {
     let s = String(n || '').trim();
@@ -23162,6 +23255,40 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
   ));
   let modoFlat = !nivelesList.some(n => getGradosForNivel(n.keys).length > 0);
 
+  // ================================================================
+  // FIX 2026-08-24: FILTRAR TARJETAS (niveles) SIN ALUMNOS EN BD.
+  //   Objetivo: eliminar tarjetas legacy "INICIAL · PRESENCIAL",
+  //   "INTERMEDIO · SEMIPRESENCIAL" etc. que hoy tienen 0 alumnos
+  //   (todos = AVANZADO por Excel LISTA GENERAL.xlsx).
+  //   Solo saltar si total alumnos del ciclo/turno = 0.
+  // ================================================================
+  const _extraerCicloTurnoTarjeta = (nivel) => {
+    const raw = String((nivel?.label||'') + ' ' + (nivel?.keys||[]).join(' ')).trim().toUpperCase();
+    let ciclo = '';
+    let turno = '';
+    if (raw.includes('AVANZADO')) ciclo = 'AVANZADO';
+    else if (raw.includes('INICIAL') && raw.includes('INTERMEDIO')) ciclo = 'INICIAL/INTERMEDIO';
+    else if (raw.includes('INICIAL')) ciclo = 'INICIAL';
+    else if (raw.includes('INTERMEDIO')) ciclo = 'INTERMEDIO';
+    if (raw.includes('VIRT') || raw.includes('REMOTO') || raw.includes('ONLINE')) turno = 'VIRTUAL';
+    else if (raw.includes('SEMI') || raw.includes('MIXTO') || raw.includes('HIBRIDO')) turno = 'SEMIPRESENCIAL';
+    else if (raw.includes('PRESEN') || raw.includes('PRES')) turno = 'PRESENCIAL';
+    return { ciclo, turno };
+  };
+  if (!modoFlat && Object.keys(byCicloTurno).length > 0) {
+    const newList = [];
+    nivelesList.forEach(n => {
+      const { ciclo, turno } = _extraerCicloTurnoTarjeta(n);
+      if (ciclo && turno) {
+        const count = byCicloTurno[`${ciclo}|${turno}`] || 0;
+        if (count <= 0) return; // OMITIR tarjeta legacy sin alumnos
+      }
+      // Si no se pudo deducir, mantener (seguridad)
+      newList.push(n);
+    });
+    if (newList.length > 0) nivelesList = newList;
+  }
+
   const nivelesEl = document.getElementById('u-niveles-checks');
   if(!nivelesEl) return;
   if(modoFlat && flatGrados.length) {
@@ -23209,13 +23336,33 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     if(!grados.length) return ''; // saltar niveles sin grados
     const nKey = n.keys[0] || n.label;
     const nivelKey = String(n.label || '').replace(/[^a-z0-9]/gi,'_') + '_' + Math.floor(Math.random()*1000);
+    // FIX 2026-08-24: Extraer ciclo/turno de ESTA tarjeta para pasar al granular checker
+    const ct = _extraerCicloTurnoTarjeta(n);
+    const turnoTarjeta = ct.turno || '';
+    const cicloTarjeta = ct.ciclo || '';
     return `
       <div style="margin-bottom:16px;padding:12px;background:var(--surface2);border-radius:10px;">
         <div style="font-size:0.88rem;font-weight:800;color:var(--accent);margin-bottom:10px;letter-spacing:0.2px;">📘 ${n.label}</div>
         ${grados.map(g => {
-          const hasGrado = Object.prototype.hasOwnProperty.call((asignaciones || {}), g);
-          const seccsAsignadas = hasGrado ? ((asignaciones || {})[g] || []) : [];
-          const seccsSet = new Set((seccsAsignadas || []).map(x => String(x || '').trim().toUpperCase()).filter(Boolean));
+          // FIX 2026-08-24: hasGrado = AL MENOS 1 sección (A/B/C/D) marcada GRANULARMENTE en esta tarjeta
+          let hasGrado = false;
+          const secMarcadasLocal = {};
+          (seccionesCfg||[]).forEach(sTmp => {
+            const ok = typeof window.__checkAsigGranularPorModTarjeta === 'function'
+              ? window.__checkAsigGranularPorModTarjeta(turnoTarjeta, cicloTarjeta, g, sTmp)
+              : (Object.prototype.hasOwnProperty.call((asignaciones || {}), g) && new Set(((asignaciones || {})[g]||[]).map(x=>String(x||'').trim().toUpperCase()).filter(Boolean)).has(String(sTmp||'').trim().toUpperCase()));
+            secMarcadasLocal[String(sTmp||'').trim().toUpperCase()] = !!ok;
+            if (ok) hasGrado = true;
+          });
+          // Fallback: si al menos 1 sección en tempAsignaciones[g] y ninguna sec marcó granular, marcar grado con lógica antigua para no romper
+          if (!hasGrado && Object.prototype.hasOwnProperty.call((window.tempAsignaciones||{}), g)) {
+            hasGrado = Array.isArray(window.tempAsignaciones[g]) && window.tempAsignaciones[g].length > 0;
+            if (hasGrado) {
+              window.tempAsignaciones[g].forEach(sOld => {
+                secMarcadasLocal[String(sOld||'').trim().toUpperCase()] = true;
+              });
+            }
+          }
           const gradoKey = nivelKey + '_' + String(g).replace(/[^a-z0-9]/gi,'_');
           const secciones = seccionesCfg;
           return `
@@ -23228,14 +23375,17 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
                 <span>Grado ${g}</span>
               </label>
               <div id="secc-${gradoKey}" style="display:${hasGrado?'flex':'none'};flex-wrap:wrap;gap:10px;padding-left:28px;margin-top:4px;">
-                ${(secciones || []).map(s => `
+                ${(secciones || []).map(s => {
+                  const sUp = String(s||'').trim().toUpperCase();
+                  const marcada = !!secMarcadasLocal[sUp];
+                  return `
                   <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.84rem;font-weight:600;background:var(--surface);border:1px solid var(--border);padding:6px 10px;border-radius:8px;">
                     <input type="checkbox" class="chk-seccion" data-grado="${g}" data-key="${gradoKey}" value="${s}"
-                      ${seccsSet.has(String(s || '').trim().toUpperCase())?'checked':''}
+                      ${marcada?'checked':''}
                       style="accent-color:var(--accent);width:15px;height:15px;">
                     Sección ${s}
                   </label>
-                `).join('')}
+                `}).join('')}
               </div>
             </div>
           `;
