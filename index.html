@@ -23026,6 +23026,69 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
 
   const asignaciones = tempAsignaciones;
 
+  // ================================================================
+  // FIX 2026-08-24: DOBLE LLENADO (2 sistemas legacy + nuevo)
+  // "Configurar aulas" (nuevo) mostraba 0 checks aun cuando el docente
+  // sí tenía aulas por TUTOR legacy (Nivel/Grado/Sec + Añadir).
+  // Solución: MERGE tempAsignaciones (nuevo) + tutorAulas (legacy) +
+  // gradosAsignados (legacy) EN MEMORIA antes de renderizar checks
+  // → así la UI refleja TODO lo que tiene asignado (1 sola fuente de
+  // verdad visual para Admin), sin importar por cuál vía se asignó.
+  // ================================================================
+  (() => {
+    const aulasLegacy = [];
+    try {
+      const d = (uid && uDataOverride && typeof uDataOverride === 'object')
+        ? uDataOverride
+        : (uid ? d2 : null); // d2 = doc.data() del try anterior si uid
+      // tutorAulas array (legacy principal)
+      const ta = Array.isArray(d?.tutorAulas) ? d.tutorAulas : (Array.isArray(d?.tutor_aulas_json) ? d.tutor_aulas_json : []);
+      ta.forEach(a => { if(a) aulasLegacy.push(a); });
+      // grados_asignados_json array (legacy gradosAsignados)
+      const ga = Array.isArray(d?.grados_asignados_json) ? d.grados_asignados_json : [];
+      ga.forEach(a => { if(a) aulasLegacy.push(a); });
+      // String raw legacy (tutor_grado / tutorGrado single)
+      const tg = String(d?.tutorGrado || d?.tutor_grado || '').trim();
+      const ts = String(d?.tutorSeccion || d?.tutor_seccion || '').trim().toUpperCase();
+      if (tg) aulasLegacy.push({ grado: tg, seccion: ts || 'A' });
+      // currentPrivilegios.asignaciones Obj (nuevo) si hay
+    } catch(eMerge) {}
+    // Si no hay uid, leer de los selects del modal legacy abierto (DOM)
+    if (!uid && !aulasLegacy.length) {
+      try {
+        const legacy = JSON.parse(String(document.getElementById('u-legacy-aulas-json-raw')?.value || 'null'));
+        if (Array.isArray(legacy) && legacy.length) aulasLegacy.push(...legacy);
+      } catch(_) {}
+    }
+    // Merge al Set (grado -> secciones Set)
+    const mergeByGrado = {};
+    // primero las asignaciones (nuevo) si existen
+    Object.entries(asignaciones || {}).forEach(([g, secsArr]) => {
+      const gC = String(g||'').trim();
+      if (!gC) return;
+      if (!mergeByGrado[gC]) mergeByGrado[gC] = new Set();
+      (Array.isArray(secsArr) ? secsArr : []).forEach(sRaw => {
+        const s = String(sRaw||'').trim().toUpperCase();
+        if (s && s !== 'TODAS') mergeByGrado[gC].add(s);
+      });
+    });
+    // ahora legacy aulas
+    aulasLegacy.forEach(aula => {
+      const aulaG = String(aula?.grado || aula?.grado_num || '').trim();
+      const aulaS = String(aula?.seccion || aula?.seccion_letra || 'A').trim().toUpperCase();
+      if (!aulaG) return;
+      const numOnly = aulaG.match(/(\d+)/);
+      const gKey = numOnly ? numOnly[1] : aulaG;
+      if (!mergeByGrado[gKey]) mergeByGrado[gKey] = new Set();
+      if (aulaS && aulaS !== 'TODAS') mergeByGrado[gKey].add(aulaS);
+    });
+    // Sobrescribir tempAsignaciones visual (no afecta el guardar hasta que clickeen Guardar privilegios)
+    const mergedKeys = Object.keys(mergeByGrado);
+    if (mergedKeys.length > 0) {
+      mergedKeys.forEach(g => { tempAsignaciones[g] = Array.from(mergeByGrado[g]).sort(); });
+    }
+  })();
+
   // Helper: extraer key de grados a partir del nombre de nivel (soporta CEBA INICIAL/INTERMEDIO, EBR Inicial, etc.)
   const cleanLabel = (n) => {
     let s = String(n || '').trim();
