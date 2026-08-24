@@ -592,15 +592,24 @@ const CHAT_APO = {
 };
 
 function _apoCanonCiclo(c) {
-  var s = String(c || '').trim().toUpperCase();
+  var s = String(c || '').trim();
   if (!s) return '';
+  try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch(_) {}
+  s = s.toUpperCase().replace(/[ \-_]+/g, '/').replace(/\/+/g, '/');
   var map = {
-    'CICLO INICIAL':'INICIAL','INICIAL':'INICIAL','PRE ESCOLAR':'INICIAL','PREESCOLAR':'INICIAL','INICIAL 1':'INICIAL','INICIAL 2':'INICIAL','JARDIN':'INICIAL','JARDÍN':'INICIAL',
-    'CICLO INTERMEDIO':'INTERMEDIO','INTERMEDIO':'INTERMEDIO','PRIMARIA':'PRIMARIA','EBR PRIMARIA':'PRIMARIA',
-    'CICLO AVANZADO':'AVANZADO','AVANZADO':'AVANZADO','SECUNDARIA':'SECUNDARIA','EBR SECUNDARIA':'SECUNDARIA'
+    'INICIAL':'INICIAL/INTERMEDIO','CICLO/INICIAL':'INICIAL/INTERMEDIO','PRE/ESCOLAR':'INICIAL/INTERMEDIO','PREESCOLAR':'INICIAL/INTERMEDIO',
+    'INICIAL/1':'INICIAL/INTERMEDIO','INICIAL/2':'INICIAL/INTERMEDIO','JARDIN':'INICIAL/INTERMEDIO','JARDIN':'INICIAL/INTERMEDIO',
+    'INTERMEDIO':'INICIAL/INTERMEDIO','CICLO/INTERMEDIO':'INICIAL/INTERMEDIO','PRIMARIA':'INICIAL/INTERMEDIO','EBR/PRIMARIA':'INICIAL/INTERMEDIO',
+    'INI/INT':'INICIAL/INTERMEDIO','INICIAL/INTERMEDIO':'INICIAL/INTERMEDIO','INI./INT.':'INICIAL/INTERMEDIO','CICLO/INICIAL/INTERMEDIO':'INICIAL/INTERMEDIO',
+    'AVANZADO':'AVANZADO','CICLO/AVANZADO':'AVANZADO','SECUNDARIA':'SECUNDARIA','EBR/SECUNDARIA':'SECUNDARIA'
   };
   if (map[s]) return map[s];
   for (var k in map) { if (s.indexOf(k) !== -1) return map[k]; }
+  // Fallback detecciones: si aparece INICIAL o INTERMEDIO en cualquier variante → canon unico
+  if (s.indexOf('INICIAL') !== -1 || s.indexOf('INTERMEDIO') !== -1 || (s.indexOf('INI') !== -1 && s.indexOf('INT') !== -1)) return 'INICIAL/INTERMEDIO';
+  if (s.indexOf('AVANZADO') !== -1) return 'AVANZADO';
+  if (s.indexOf('SECUNDARIA') !== -1) return 'SECUNDARIA';
+  if (s.indexOf('PRIMARIA') !== -1) return 'INICIAL/INTERMEDIO';
   return s;
 }
 function _apoArrAulasFromUsuario(u) {

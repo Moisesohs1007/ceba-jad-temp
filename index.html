@@ -2946,7 +2946,7 @@
         </div>
         <div class="form-group" style="min-width:160px;">
           <label>Modalidad Atención</label>
-          <select id="fa-modalidad" onchange="onModalidadChangeAlumnos()">
+          <select id="fa-modalidad" onchange="onModalidadChangeAlumnos()" disabled style="opacity:0.45;cursor:not-allowed;">
             <option value="" selected>-- Modalidad --</option>
             <option value="PRESENCIAL">Presencial</option>
             <option value="SEMIPRESENCIAL">Semipresencial</option>
@@ -9247,6 +9247,7 @@ async function limpiarFiltrosAlumnos() {
   await poblarFiltroSeccion('fa-seccion', null);
   _disableSelect('fa-grado');
   _disableSelect('fa-seccion');
+  _disableSelect('fa-modalidad');
   await _autoSelectTutoria('fa-nivel', 'fa-grado', 'fa-seccion');
   const n = document.getElementById('fa-nivel').value;
   const g = document.getElementById('fa-grado').value;
@@ -9346,14 +9347,19 @@ async function renderAlumnos() {
   // ------------------------------------------------------------------
   // CONDICIÓN DE MOSTRAR (ESTRICTA, volviendo al comportamiento ORIGINAL):
   // ------------------------------------------------------------------
-  // - Admin/Director/etc: necesitan algún filtro UI o búsqueda
+  // - Admin/Director/etc: necesitan NIVEL SELECCIONADO o BUSQUEDA (q).
+  //   * Modalidad sola (sin Nivel) o Grado/Seccion solos → NO activan nada (estado inicial Req4).
+  //   * Esto evita el bug "solo toco Modalidad y me aparecieron 119 alumnos" sin elegir Nivel.
   // - Profesor: si ALGÚN FILTRO está seleccionado (grado/seccion/nivel/modalidad/o q) → mostramos
   // - Profesor SIN FILTROS → NO mostramos listado automáticamente (se queda en mostrarEstadoInicial)
   //   * Se espera a que el auto-select de tutoria le seleccione sus aulas (o lo haga manual)
   // - EXCEPCIÓN SAFE: Si el profesor ya tiene SU FILTRO UI seleccionado por auto-select en carga
   //   anterior (fa-nivel/fa-grado/fa-seccion tienen valor real) → mostramos.
   const profTieneFiltroReal = isProf && (_vGrado || _vSeccion || _vNivel || _vMod || _vQ);
-  const filtroActivo = _vGrado || _vSeccion || _vNivel || _vMod || _vQ || (!isProf && aulasList.length > 0) || profTieneFiltroReal;
+  // Regla ADMIN/NO-PROF: Sólo activar si tiene NIVEL REAL (cascada) o BUSQUEDA directa.
+  //   - Modalidad / Grado / Seccion SOLOS no activan nada.
+  const adminTieneFiltroValido = !isProf && ( _vNivel || _vQ );
+  const filtroActivo = adminTieneFiltroValido || (_vNivel && (_vGrado || _vSeccion || _vMod)) || _vQ || (!isProf && aulasList.length > 0) || profTieneFiltroReal;
   if(!filtroActivo) { mostrarEstadoInicial(); return; }
 
   const tbody = document.getElementById('alumnos-tbody');
@@ -9478,7 +9484,16 @@ async function renderAlumnos() {
     }
     if (_vMod) {
       const modNorm = _normModAtencion(_vMod) || _vMod;
-      alumnos = alumnos.filter(a => (_normModAtencion(a.turno || '') || String(a.turno || '').trim()) === modNorm);
+      alumnos = alumnos.filter(a => {
+        const t = String(a.turno || '').trim();
+        const tNorm = _normModAtencion(t);
+        const eq = (tNorm === modNorm);
+        // Debug edge case 1·B Semipresencial
+        if (!eq && (a.grado === '1' || a.grado === 1) && String(a.seccion||'').trim().toUpperCase() === 'B') {
+          console.debug('[filterMod] mismatch 1·B: turno raw=', JSON.stringify(t), 'turnoNorm=', tNorm, 'vMod raw=', JSON.stringify(_vMod), 'modNorm=', modNorm, 'alumno=', a.nombres, a.apellidos);
+        }
+        return eq;
+      });
     }
     if (_vQ) {
       const qRaw = _vQ;
@@ -23319,8 +23334,10 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
 async function onNivelChangeAlumnos() {
   document.getElementById('fa-grado').value   = '';
   document.getElementById('fa-seccion').value = '';
+  document.getElementById('fa-modalidad').value = '';
   document.getElementById('search-alumnos').value = '';
   _disableSelect('fa-seccion');
+  _disableSelect('fa-modalidad');
   const nivel = document.getElementById('fa-nivel').value;
   if(nivel && nivel !== 'TODOS') {
     await poblarFiltroGrado('fa-grado', nivel);
@@ -23334,6 +23351,9 @@ async function onNivelChangeAlumnos() {
   await poblarFiltroSeccion('fa-seccion', null);
   if(nivel) _enableSelect('fa-seccion');
   else _disableSelect('fa-seccion');
+  // Modalidad: habilitada solo si hay Nivel seleccionado
+  if(nivel) _enableSelect('fa-modalidad');
+  else _disableSelect('fa-modalidad');
   renderAlumnos();
 }
 
@@ -23419,10 +23439,25 @@ function onSearchAlumnos() {
     document.getElementById('fa-nivel').value   = '';
     document.getElementById('fa-grado').value   = '';
     document.getElementById('fa-seccion').value = '';
+    document.getElementById('fa-modalidad').value = '';
     _disableSelect('fa-grado');
     _disableSelect('fa-seccion');
+    _disableSelect('fa-modalidad');
   } else {
-    _enableSelect('fa-grado');
+    const n = document.getElementById('fa-nivel').value;
+    if (n && n !== 'TODOS') {
+      _enableSelect('fa-grado');
+      _enableSelect('fa-seccion');
+      _enableSelect('fa-modalidad');
+    } else if (n === 'TODOS') {
+      _enableSelect('fa-grado');
+      _enableSelect('fa-seccion');
+      _enableSelect('fa-modalidad');
+    } else {
+      _disableSelect('fa-grado');
+      _disableSelect('fa-seccion');
+      _disableSelect('fa-modalidad');
+    }
   }
   clearTimeout(_searchAlumnosTimer);
   _searchAlumnosTimer = setTimeout(() => {
