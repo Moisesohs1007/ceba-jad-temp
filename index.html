@@ -12127,6 +12127,13 @@ async function handleExcel(e) {
         };
         if(existingIds.has(id)) {
           const existente = alumnosExistentes.find(a => a.id === id);
+          // ================================================================
+          // FIX 2026-08-24: IMPORTADOR Excel sobreescribe SIEMPRE
+          // turno / ciclo / grado / seccion / limite desde el Excel.
+          // (antes: un importador viejo dejaba PRESENCIAL y al re-importar
+          //  con fix vivo se perdía el SEMIPRESENCIAL por race conditions).
+          // Solo conservamos del existente: foto + teléfonos + nombres apoderados.
+          // ================================================================
           if(!alumno.foto && existente?.foto) alumno.foto = existente.foto;
           if (!alumno.telefono && existente?.telefono) alumno.telefono = existente.telefono;
           if (!alumno.apoderadoNombres && existente?.apoderadoNombres) alumno.apoderadoNombres = existente.apoderadoNombres;
@@ -23967,7 +23974,7 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
   // Si config no tiene grados para este nivel, caer al set de alumnos
   // (siempre: si los grados de config no coinciden con alumnos, usar los del set)
   // FIX: ahora gradosConAlumnos incluye los asigando al docente → nunca vacío si el docente tiene aulas.
-  const desdeCfg = gradosCfg.filter(g => gradosConAlumnos.has(g));
+  const desdeCfg = gradosCfg.filter(g => gradosConAlumnos.has(String(g||'').trim()));
   let grados = desdeCfg.length > 0
     ? desdeCfg
     : [...gradosConAlumnos].sort((a,b) => {
@@ -23975,6 +23982,29 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
         if (!isNaN(na) && !isNaN(nb)) return na - nb;
         return String(a).localeCompare(String(b));
       });
+  // ================================================================
+  // FIX 2026-08-24 (Admin Moises): NO mostrar grados que NO existan en BD.
+  // Si ES ADMIN (no docente), forzamos UNION solo los de cfg ∩ gradosConAlumnos
+  // (ignoramos legacy cfg.grados [5/6 Intermedio, etc.] que no tienen alumnos hoy).
+  // ================================================================
+  if (!isProf) {
+    const soloEnDb = [...gradosConAlumnos].filter(x => String(x||'').trim() !== '').sort((a,b) => {
+      const na = Number(String(a).replace(/\D/g,'')) || 0;
+      const nb = Number(String(b).replace(/\D/g,'')) || 0;
+      if (na && nb) return na - nb;
+      return String(a).localeCompare(String(b));
+    });
+    // Merge sin duplicados, ordenados numéricamente
+    const merged = new Set();
+    (grados || []).forEach(x => { const y = String(x||'').trim(); if (gradosConAlumnos.has(y) || soloEnDb.includes(y)) merged.add(y); });
+    soloEnDb.forEach(x => merged.add(String(x||'').trim()));
+    grados = [...merged].sort((a,b) => {
+      const na = Number(String(a).replace(/\D/g,'')) || 0;
+      const nb = Number(String(b).replace(/\D/g,'')) || 0;
+      if (na && nb) return na - nb;
+      return String(a).localeCompare(String(b));
+    });
+  }
   // FIX FINAL seguridad: si grados sigue vacío PERO hay alumnosConAlumnos Set size>0 (grados numeros no
   // encontrados en cfg.grados por algun bug de keys), AGREGAR los grados tal cual (numeros).
   if ((!grados || !grados.length) && gradosConAlumnos.size > 0) {
