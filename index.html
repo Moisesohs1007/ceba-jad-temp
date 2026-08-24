@@ -23297,8 +23297,18 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
         ? uDataOverride
         : (uid ? (typeof d2 !== 'undefined' ? d2 : null) : null);
       const arr = Array.isArray(d?.grados_asignados_json) ? d.grados_asignados_json : (Array.isArray(window.__asignacionesDetalladasUsuario) ? window.__asignacionesDetalladasUsuario : []);
-      const arr2 = Array.isArray(d?.tutor_aulas_json) ? d.tutor_aulas_json : [];
-      const arr3 = Array.isArray(d?.tutorAulas) ? d.tutorAulas : [];
+      // IMPORTANTE 2026-08-24: tutorAulas / tutor_aulas_json son LEGACY y casi siempre
+      // traen {ciclo,grado,seccion} pero SIN turno. Si defaultamos turno=PRESENCIAL para
+      // estas, el Set detallado se contamina con keys INCORRECTAS (ej B en PRESENCIAL
+      // cuando en realidad la asignación era SEMI). SOLUCIÓN: SÓLO procesar entries LEGACY
+      // que TRAIGAN explícitamente `turno` / `modalidad` / `atencion`. Las demás se saltan
+      // y van al plan B (heurística hasGlobal + normalización).
+      const arr2 = (Array.isArray(d?.tutor_aulas_json) ? d.tutor_aulas_json : []).filter(e =>
+        !!e && typeof e === 'object' && (String(e.turno||'').trim() || String(e.modalidad||'').trim() || String(e.atencion||'').trim())
+      );
+      const arr3 = (Array.isArray(d?.tutorAulas) ? d.tutorAulas : []).filter(e =>
+        !!e && typeof e === 'object' && (String(e.turno||'').trim() || String(e.modalidad||'').trim() || String(e.atencion||'').trim())
+      );
       const all = arr.concat(arr2).concat(arr3);
       let _hayDetallada = false;
       all.forEach(entry => {
@@ -23311,7 +23321,10 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
         if (typeof _normModAtencion === 'function' && _t) _t = (_normModAtencion(_t) || _t);
         const numG = _g.match(/(\d+)/); if (numG) _g = numG[1];
         if (!_g || !_s) return;
-        // Guardar 3 variantes para match tolerante (INI, INTERMEDIO, INI/INT):
+        // ✅ FIX 2026-08-24 CRÍTICO: si esta entrada NO trae turno explícito, NO la
+        // metemos al Set. Evita default PRES = contaminar keys con asignaciones que en
+        // verdad eran SEMI/VIRT (legacy sin info completa → heurística posterior decide).
+        if (!_t) return;
         const _push = (cc, tt) => {
           const keys = [
             `${cc}|${tt}|${_g}|${_s}`,
@@ -23322,7 +23335,6 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
           _hayDetallada = true;
         };
         if (!_c) _c = 'AVANZADO';
-        if (!_t) _t = 'PRESENCIAL';
         const esIniInt = (_c === 'INICIAL' || _c === 'INTERMEDIO' || _c === 'INICIAL/INTERMEDIO');
         if (esIniInt) {
           ['INICIAL','INTERMEDIO','INICIAL/INTERMEDIO'].forEach(cc => _push(cc, _t));
@@ -23363,29 +23375,45 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     // ===================================================================
     if (window.__asigDetalladasHave && window.__asigDetalladasSetGlobal && window.__asigDetalladasSetGlobal.size > 0) {
       const keysProbar = [];
+      const ciclosParaMatch = [];
       if (esIniInt) {
         ['INICIAL','INTERMEDIO','INICIAL/INTERMEDIO'].forEach(cc => {
+          ciclosParaMatch.push(cc);
           keysProbar.push(`${cc}|${turnoTarjeta}|${gK}|${sK}`);
         });
       } else {
+        ciclosParaMatch.push(cicloT);
         keysProbar.push(`${cicloT}|${turnoTarjeta}|${gK}|${sK}`);
-        if (cicloT !== 'AVANZADO') keysProbar.push(`AVANZADO|${turnoTarjeta}|${gK}|${sK}`);
+        if (cicloT !== 'AVANZADO') {
+          ciclosParaMatch.push('AVANZADO');
+          keysProbar.push(`AVANZADO|${turnoTarjeta}|${gK}|${sK}`);
+        }
       }
       const matchExacto = keysProbar.some(k => window.__asigDetalladasSetGlobal.has(k));
       if (matchExacto) return true;
-      // IMPORTANTE: si HAY data detallada para este (gK, sK) PERO en
-      // OTRA modalidad distinta → retornamos FALSE inmediatamente, sin
-      // pasar por heurística canónica. Así B marcado en SEMI nunca se
-      // marca en PRESENCIAL aunque tempAsignaciones plano tenga B.
-      const otrasModalidades = ['PRESENCIAL','SEMIPRESENCIAL','VIRTUAL'];
-      const hayEnOtra = otrasModalidades.some(otraT => {
-        if (otraT === turnoTarjeta) return false;
-        return keysProbar.some(kPrueba => {
-          // reemplazar turnoTarjeta por otraT en la key
-          return !!window.__asigDetalladasSetGlobal.has(kPrueba.replace(`|${turnoTarjeta}|`,`|${otraT}|`));
-        });
-      });
-      if (hayEnOtra) return false;
+      // ✅ FIX 2026-08-24: BUSQUEDA EN OTRA MODALIDAD ROBUSTA.
+      // Si (gK, sK) existe en el Set PERO en PRES / SEMI / VIRT distinto al turnoTarjeta
+      // actual → FALSE inmediatamente (no pasar por heurística). No usa .replace frágil,
+      // construye todas las keys posibles con las 3 modalidades × los ciclos de arriba.
+      const otrasModalidades = ['PRESENCIAL','SEMIPRESENCIAL','VIRTUAL'].filter(t => t !== turnoTarjeta);
+      let hayEnOtraModalidad = false;
+      for (let i = 0; i < otrasModalidades.length; i++) {
+        const otraT = otrasModalidades[i];
+        for (let j = 0; j < ciclosParaMatch.length; j++) {
+          const cc = ciclosParaMatch[j];
+          const _keys = [
+            `${cc}|${otraT}|${gK}|${sK}`,
+            `${cc}|${otraT}|G${gK}|${sK}`,
+            `${cc}|${otraT}|${gK}°|${sK}`
+          ];
+          if (_keys.some(k => window.__asigDetalladasSetGlobal.has(k))) {
+            hayEnOtraModalidad = true;
+            break;
+          }
+        }
+        if (hayEnOtraModalidad) break;
+      }
+      if (hayEnOtraModalidad) return false;
     }
     // ===================================================================
     // RESTO (solo si NO hay data detallada o la sección no se encontró):
