@@ -3231,6 +3231,20 @@
       <button class="btn btn-primary" onclick="guardarSecciones()" style="margin-top:12px;">💾 Guardar secciones</button>
     </div>
 
+    <!-- Acciones rápidas para Admin: Importar Alumnos Excel -->
+    <div class="card" id="cfg-card-importar-admin" style="margin-bottom:20px;padding:20px 24px;border:1.5px solid rgba(16,185,129,0.3);background:rgba(16,185,129,0.05);">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+        <div>
+          <div style="font-family:var(--font-display);font-size:1rem;font-weight:700;margin-bottom:4px;color:#10b981;">📊 Importar / Actualizar Alumnos</div>
+          <div style="color:var(--muted);font-size:0.82rem;">Carga la lista completa de alumnos desde el archivo Excel <b style="color:#fff;">LISTA GENERAL.xlsx</b> (12 hojas: 1A PRE, 1B SEMI, 1C VIRT, ..., 4C VIRT). Reemplaza datos de alumnos existentes por DNI.</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-ghost" onclick="showSection('alumnos');toast('Ve a Gestión de Alumnos → barra superior → 📊 Importar Excel','info');" style="font-size:0.82rem;">📁 Abrir Gestión Alumnos</button>
+          <button class="btn btn-primary" id="cfg-btn-importar-xl" onclick="document.getElementById('excel-input').click()" style="font-size:0.82rem;background:#10b981;border-color:#10b981;">📊 Importar Excel</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Botón Configuraciones Avanzadas -->
     <div style="margin-top:8px;text-align:center;">
       <button class="btn" onclick="abrirConfigAvanzada()" style="background:rgba(100,116,139,0.12);border:1px solid var(--border);color:var(--muted);font-size:0.85rem;gap:8px;padding:10px 20px;">
@@ -7366,6 +7380,10 @@ function aplicarPermisos(rol) {
     if(b2) b2.style.display = canManageAlumnos ? '' : 'none';
     if(b3) b3.style.display = (_normRol(currentRol) === 'admin') ? '' : 'none';
     if(b4) b4.style.display = (canManageAlumnos || !!currentPerms?.alumnosFotosMasivo) ? '' : 'none';
+    const cfgImportCard = document.getElementById('cfg-card-importar-admin');
+    const cfgImportBtn  = document.getElementById('cfg-btn-importar-xl');
+    if(cfgImportCard) cfgImportCard.style.display = canManageAlumnos ? '' : 'none';
+    if(cfgImportBtn)  cfgImportBtn.style.display  = canManageAlumnos ? '' : 'none';
   } catch(e) {}
 
   try {
