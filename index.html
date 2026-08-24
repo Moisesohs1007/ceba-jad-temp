@@ -23329,40 +23329,65 @@ async function poblarFiltroNivel(selectId, onchangeFn, options = {}) {
   const el = document.getElementById(selectId);
   if(!el) return;
   const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
-  // 1) Niveles OFICIALES según modalidad elegida por Admin (prevalece sobre inferencia de alumnos)
+
+  // PETICIÓN EXPLÍCITA USUARIO VERBATIM (2026-08-24):
+  //   "no dberia aparece enada de inicial/intermedio pq no hay ningun
+  //    alumno registrado por ahora en ese nivel"
+  //
+  // => PRIMERO: niveles QUE REALMENTE TIENEN ALUMNOS (fuente de verdad).
+  // => LUEGO: niveles oficiales por modalidad SOLAMENTE si también tienen
+  //           al menos 1 alumno registrado.
+  // => NUNCA mostramos una opción en fa-nivel si NO HAY NINGÚN ALUMNO en ese nivel.
+  //
+  // Excepción: si no hay ningún alumno en absoluto (0 alumnos totales),
+  // mostramos los niveles oficiales como hint para que admin importe.
+
   let nivelesOficiales = [];
   try {
     nivelesOficiales = _nivelesPorModalidad(cfg).map(n => String(n || '').trim()).filter(Boolean);
   } catch(_) { nivelesOficiales = []; }
-  // 2) Niveles REALES desde alumnos (para detectar valores históricos cuando Admin cambió modalidad)
+
   let nivelesDesdeAlumnos = [];
   const alumnosBase = Array.isArray(options.alumnos) ? options.alumnos : null;
+  let totalAlumnos = 0;
   try {
     if (isProf) {
       const alumnos = alumnosBase || await getAlumnosFiltrados();
+      totalAlumnos = alumnos.length;
       nivelesDesdeAlumnos = _nivelesDesdeAlumnos(alumnos, cfg);
     } else {
+      let alumnos;
       if (alumnosBase && alumnosBase.length) {
-        nivelesDesdeAlumnos = _nivelesDesdeAlumnos(alumnosBase, cfg);
+        alumnos = alumnosBase;
       } else {
-        try {
-          const alumnos = await DB.getAlumnos();
-          nivelesDesdeAlumnos = _nivelesDesdeAlumnos(alumnos, cfg);
-        } catch(e) {}
+        try { alumnos = await DB.getAlumnos(); } catch(e) { alumnos = []; }
       }
+      totalAlumnos = (alumnos || []).length;
+      nivelesDesdeAlumnos = _nivelesDesdeAlumnos(alumnos || [], cfg);
       if (!nivelesDesdeAlumnos.length) {
         nivelesDesdeAlumnos = ((cfg||{}).niveles||[]).map(n => (typeof n === 'string' ? n : n.nombre)).filter(Boolean);
       }
     }
   } catch(_) {}
-  // 3) Merge: primero oficiales, luego niveles de alumnos que NO estén ya en oficiales (sin duplicados)
+
+  // Si hay alumnos: niveles oficiales SÓLO se incluyen si ya aparecen en nivelesDesdeAlumnos (== tienen alumnos).
+  // Si NO hay alumnos (totalAlumnos === 0): incluimos niveles oficiales como hint.
   const seen = new Set();
   const nivelesBase = [];
-  nivelesOficiales.forEach(n => { if(n && !seen.has(n)) { seen.add(n); nivelesBase.push(n); } });
   nivelesDesdeAlumnos.forEach(n => { if(n && !seen.has(n)) { seen.add(n); nivelesBase.push(n); } });
+  if (totalAlumnos === 0) {
+    nivelesOficiales.forEach(n => { if(n && !seen.has(n)) { seen.add(n); nivelesBase.push(n); } });
+  } else {
+    nivelesOficiales.forEach(n => {
+      if(n && !seen.has(n) && nivelesDesdeAlumnos.includes(n)) {
+        seen.add(n); nivelesBase.push(n);
+      }
+    });
+  }
   if (!nivelesBase.length) {
     nivelesBase.push(...nivelesOficiales);
   }
+
   el.innerHTML = `<option value="" disabled selected>-- Nivel --</option><option value="TODOS">Todos</option>`;
   nivelesBase.forEach(n => {
     const label = (_MODALIDAD_CEBA_LABEL && typeof _MODALIDAD_CEBA_LABEL === 'object')
@@ -23961,10 +23986,17 @@ function _filtrarPorNivel(arr, nivelSel, cfg) {
   const f = usaCiclo ? 'ciclo' : _nivelFieldName(cfg, arr);
   const nSnorm = (usaCiclo && typeof _normModalidadCEBA === 'function') ? _normModalidadCEBA(nivelSel) : String(nivelSel).trim();
   if (usaCiclo && nSnorm === 'INICIAL/INTERMEDIO') {
-    // Filtrar alumnos con ciclo INICIAL O INTERMEDIO
+    // Filtrar alumnos con ciclo INICIAL/INTERMEDIO (canon único).
+    // Aceptar variantes escritas diferentes (INICIAL, INTERMEDIO, INICIAL / INTERMEDIO, etc.)
+    // que _dbNormCiclo normalizó a INICIAL/INTERMEDIO.
     return arr.filter(o => {
-      const c = String(o && o.ciclo ? o.ciclo : (o && o[f] ? o[f] : '')).trim().toUpperCase();
-      return (c === 'INICIAL' || c === 'INTERMEDIO');
+      const cRaw = String(o && o.ciclo ? o.ciclo : (o && o[f] ? o[f] : '')).trim();
+      const cUp = cRaw.toUpperCase().replace(/[ \/]+/g,'/').replace(/\/+/g,'/');
+      return (
+        cUp === 'INICIAL/INTERMEDIO' ||
+        cUp === 'INICIAL' ||
+        cUp === 'INTERMEDIO'
+      );
     });
   }
   if (usaCiclo && nSnorm === 'AVANZADO') {

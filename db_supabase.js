@@ -40,15 +40,20 @@ const DB = {
     if (!data || !data.length) { try { LSC.del(cacheKey); } catch(_) {} return []; }
 
     // ============================================================
-    // NORMALIZACIÓN SÍNCRONA (SE EJECUTA ANTES DE TODO LO DEMÁS):
+    // NORMALIZACIÓN SÍNCRONA (CANON EXCEL):
     // ============================================================
-    // Aplica las 6 reglas de normalización DIRECTAMENTE al array
-    // `data` de Supabase SIN DEPENDER DE RLS ni de la IIFE async.
-    // Garantiza que:
-    //   - this._alumnosCache use datos canónicos (ciclo/turno/grado/seccion canon)
-    //   - El return inmediato de getAlumnos devuelve datos corregidos
-    //   - Aunque UPDATE Supabase falle por RLS → el usuario ve la UI correcta
-    // Luego la IIFE de abajo solo intenta persistir (no es crítico si falla).
+    // PETICIÓN EXPLÍCITA USUARIO VERBATIM (2026-08-24):
+    //   "se tiene q basar en el excel olvida otra regla anterior, si
+    //    en excel inidca q son avaznado asi sera, y no dberia aparece
+    //    enada de inicial/intermedio pq no hay ningun alumno
+    //    registrado por ahora en ese nivel"
+    //
+    // => NUNCA tocamos el campo ciclo en runtime ni en persistencia.
+    //    Respetamos el VALOR QUE VINO DEL EXCEL importado (y guardado
+    //    tal cual en Supabase).
+    // => Solo normalizamos GRADO, SECCIÓN y TURNO (razones obvias:
+    //    limpiar strings extraños, mayus/minus, acentos, etc).
+    // => AutoFix IIFE background: NO actualizamos ciclo en BD.
     // ============================================================
     try {
       for (let i = 0; i < data.length; i++) {
@@ -71,16 +76,17 @@ const DB = {
         // Turno canon
         const t = _dbNormTurno(rowRaw.turno || '');
 
-        // Ciclo canon + reclasificación
-        const c = _dbNormCiclo(rowRaw.ciclo || '', t, g);
+        // CICLO: LO RESPETAMOS TAL CUAL VINO DEL EXCEL.
+        // NUNCA reclasificamos ni normalizamos ciclo.
+        const c = String(rowRaw.ciclo || '').trim();
 
-        // Aplicar SIEMPRE al objeto row raw para runtime
+        // Aplicar al objeto row raw para runtime
         rowRaw.ciclo   = c;
         rowRaw.grado   = g;
         rowRaw.seccion = s;
         if (t) rowRaw.turno = t;
 
-        // Marcar para la IIFE si cambió (idempotencia UPDATE)
+        // Marcar si cambió (solo grado/seccion/turno — CICLO NUNCA)
         const after = JSON.stringify({
           ciclo: String(rowRaw.ciclo||''),
           grado: String(rowRaw.grado||''),
@@ -95,16 +101,12 @@ const DB = {
 
     // ============================================================
     // REPARACIÓN AUTOMÁTICA TRANSPARENTE (IIFE BACKGROUND — PERSISTENCIA):
-    // Intenta guardar en Supabase los alumnos que cambiaron (marcados con _dbAutoFixChanged=true).
-    // ES NO CRÍTICO: si RLS no permite UPDATE, el runtime ya usa datos correctos
-    // por la normalización síncrona de arriba. Solo logueamos el error para depurar RLS.
-    // Así el usuario NUNCA tiene que tocar botón reparar.
+    // Solo actualizamos grado, seccion y turno canon. CICLO NUNCA.
     // ============================================================
     (async () => {
       try {
         let fixes = 0;
         let rlsFails = 0;
-        const cicloCebas = new Set(['INICIAL','INTERMEDIO','AVANZADO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO']);
         const _norms = (s) => { try { return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,''); } catch(_){ return String(s||''); } };
         const _normModAtencionDB = (val) => {
           let s = String(val || '').trim();
@@ -113,13 +115,10 @@ const DB = {
           if (s.includes('PRESEN') || s === 'P' || s === 'PRE' || s.startsWith('PRES')) return 'PRESENCIAL';
           if (s.includes('SEMI') || s === 'S' || s === 'SEM' || s.includes('MIXTO') || s.includes('HIBRIDO') || s.startsWith('SEM')) return 'SEMIPRESENCIAL';
           if (s.includes('VIRT') || s === 'V' || s.includes('REMOTO') || s.includes('ONLINE') || s.startsWith('VIR')) return 'VIRTUAL';
-          if (s.includes('INICIAL') || s.includes('INTERMEDIO')) return 'PRESENCIAL';
           return String(val || '').trim();
         };
         for (const rowRaw of data) {
-          // Optimizacion: solo los alumnos que realmente cambiaron (marcados por syncFix arriba)
           if (!rowRaw._dbAutoFixChanged) continue;
-          // Limpiar flag antes de compare
           const orig = JSON.stringify({
             ciclo: String(rowRaw.ciclo||''),
             grado: String(rowRaw.grado||''),
@@ -127,52 +126,26 @@ const DB = {
             turno: String(rowRaw.turno||'')
           });
           let row = Object.assign({}, rowRaw);
-          // 1) trim whitespaces
-          row.ciclo   = String(row.ciclo   || '').trim();
+          // ⚠️ CICLO LO RESPETAMOS (trim simple, sin cambio)
+          row.ciclo   = String(row.ciclo || '').trim();
           row.grado   = String(row.grado   || '').trim();
           row.seccion = String(row.seccion || '').trim();
           row.turno   = String(row.turno   || '').trim();
-          // 2) Grado: quitar (Inicial)/(Intermedio)/(Avanzado) -> solo dígito
+          // Grado: solo dígito
           if (row.grado) {
             const m = String(row.grado).match(/(\d+)/);
             if (m) row.grado = m[1];
           }
-          // 3) Ciclo: INICIAL/INTERMEDIO canon único NO separa
-          const cicloUp = String(row.ciclo || '').toUpperCase();
-          if (
-            cicloUp === 'INICIAL/INTERMEDIO' || cicloUp === 'INICIAL / INTERMEDIO' ||
-            cicloUp === 'INICIAL' || cicloUp === 'INTERMEDIO' ||
-            cicloUp === 'INI/INT' || cicloUp === 'INICI/INTER'
-          ) {
-            row.ciclo = 'INICIAL/INTERMEDIO';
-          } else if (cicloUp && (cicloUp.includes('INICIAL') || cicloUp.includes('INTERMEDIO') || cicloUp.includes('INI') || cicloUp.includes('INTER'))) {
-            row.ciclo = 'INICIAL/INTERMEDIO';
-          }
-          if (cicloUp.includes('AVANZADO')) row.ciclo = 'AVANZADO';
-          // 4) Sección: letra mayúscula sola A-Z
+          // Sección: letra mayúscula sola A-Z
           if (row.seccion) {
             const s = String(row.seccion).trim().toUpperCase().match(/[A-Z]/);
             if (s) row.seccion = s[0];
           }
-          // 5) Turno normalizado
+          // Turno normalizado
           if (row.turno) {
             const nt = _normModAtencionDB(row.turno);
             if (nt) row.turno = nt;
           }
-          // 6) Reclasificación ciclo CEBA 2 niveles (no 3)
-          const cu = String(row.ciclo || '').toUpperCase();
-          const esCicloCEBA = cicloCebas.has(cu) || cu === 'INICIAL/INTERMEDIO';
-          const tn = _normModAtencionDB(row.turno || '');
-          const gn2 = parseInt(String(row.grado || '').match(/\d+/)?.[0] || '0', 10);
-          if (esCicloCEBA && tn) {
-            if (tn === 'PRESENCIAL' && gn2 >= 1 && gn2 <= 6) {
-              if (cu !== 'INICIAL/INTERMEDIO') row.ciclo = 'INICIAL/INTERMEDIO';
-            }
-            if ((tn === 'VIRTUAL' || tn === 'SEMIPRESENCIAL') && cu !== 'AVANZADO') {
-              row.ciclo = 'AVANZADO';
-            }
-          }
-          // Comparar vs original
           const after = JSON.stringify({
             ciclo: String(row.ciclo||''),
             grado: String(row.grado||''),
@@ -180,14 +153,13 @@ const DB = {
             turno: String(row.turno||'')
           });
           if (orig !== after) {
-            // Guardar real en Supabase (upsert por id)
             try {
               const cleanId = String(row.id || '').trim().replace(/\s+/g, '');
               if (cleanId) {
                 const { error } = await supabase
                   .from('alumnos')
                   .update({
-                    ciclo:   String(row.ciclo||'').trim(),
+                    // ⚠️ NO actualizamos ciclo — respetamos el valor del Excel
                     grado:   row.grado || '',
                     seccion: row.seccion || '',
                     turno:   row.turno || '',
@@ -196,19 +168,19 @@ const DB = {
                   .eq('id', cleanId);
                 if (error) {
                   rlsFails++;
-                  console.error('[DB autoFix] RLS bloqueó UPDATE (no crítico, runtime ya usa datos buenos) id=' + cleanId + ':', error?.message || JSON.stringify(error));
+                  console.error('[DB autoFix] RLS bloqueó UPDATE (no crítico) id=' + cleanId + ':', error?.message || JSON.stringify(error));
                 } else {
                   fixes++;
                 }
               }
             } catch(_e) {
               rlsFails++;
-              console.error('[DB autoFix] Excepción UPDATE (no crítico) id=' + (row?.id) + ':', _e?.message || _e);
+              console.error('[DB autoFix] Excepción UPDATE id=' + (row?.id) + ':', _e?.message || _e);
             }
           }
         }
         if (fixes > 0 || rlsFails > 0) {
-          console.info(`[DB autoFix] Persistencia finalizada. Guardados OK: ${fixes}/${data.length}. Fallos RLS/excepción: ${rlsFails}. Runtime ya usa datos canónicos.`);
+          console.info(`[DB autoFix] Persistencia finalizada. Guardados OK: ${fixes}/${data.length}. Fallos RLS/excepción: ${rlsFails}.`);
           try {
             try { LSC.del(cacheKey); } catch(_) {}
             try { LSC.del('alumnos'); } catch(_) {}
@@ -219,10 +191,10 @@ const DB = {
               try { window._purgarCacheAlumnos('auto-fix'); } catch(_) {}
             }
             if (typeof window.toast === 'function' && fixes > 0) {
-              window.toast(`✅ Base actualizada: ${fixes} alumnos reparados automáticamente (nada que hacer)`, 'success', 4000);
+              window.toast(`✅ Base actualizada: ${fixes} alumnos (grado/sección/turno) reparados automáticamente`, 'success', 4000);
             }
             if (typeof window.toast === 'function' && rlsFails > 0 && fixes === 0) {
-              window.toast(`ℹ️ Normalización automática aplicada en pantalla (${rlsFails} registros pendientes de guardar en BD — permisos RLS)`, 'info', 5000);
+              window.toast(`ℹ️ Normalización aplicada en pantalla (${rlsFails} registros pendientes de guardar en BD — permisos RLS)`, 'info', 5000);
             }
           } catch(_) {}
         }
@@ -231,8 +203,7 @@ const DB = {
       }
     })();
 
-    // Normalizar nombres de campos (snake_case → camelCase para compat. con código actual)
-    // IMPORTANTE: `data` ya fue normalizado síncronamente arriba → _normAlumno recibe row raw con ciclo/turno/grado/seccion canon.
+    // Normalizar nombres de campos (snake_case → camelCase).
     this._alumnosCache = data.map(_normAlumno);
     this._alumnosCacheKey = cacheKey;
     LSC.set(cacheKey, this._alumnosCache, LSC.TTL_ALUMNOS);
@@ -857,41 +828,33 @@ function _dbNormTurno(val) {
   if (s.includes('PRESEN') || s === 'P' || s === 'PRE' || s.startsWith('PRES')) return 'PRESENCIAL';
   if (s.includes('SEMI') || s === 'S' || s === 'SEM' || s.includes('MIXTO') || s.includes('HIBRIDO') || s.startsWith('SEM')) return 'SEMIPRESENCIAL';
   if (s.includes('VIRT') || s === 'V' || s.includes('REMOTO') || s.includes('ONLINE') || s.startsWith('VIR')) return 'VIRTUAL';
-  if (s.includes('INICIAL') || s.includes('INTERMEDIO')) return 'PRESENCIAL';
   return String(val || '').trim();
 }
 
-// Normalizador de ciclo CEBA 2 niveles canon ÚNICOS: INICIAL/INTERMEDIO | AVANZADO
-function _dbNormCiclo(val, turno, grado) {
-  const cicloUp = _dbNFD(String(val || '')).toUpperCase().trim();
-  const tn = _dbNormTurno(turno || '');
-  const gn = parseInt(String(grado || '').match(/\d+/)?.[0] || '0', 10);
-  let out = '';
+// Normalizador de ciclo CANON EXCEL (NO reclasifica):
+// Respetamos el valor que vino del Excel importado.
+// Solo: trim + uppercase limpio para comparaciones consistentes.
+// NUNCA cambiamos INICIAL/INTERMEDIO ↔ AVANZADO.
+function _dbNormCiclo(val) {
+  const cicloTrim = String(val || '').trim();
+  if (!cicloTrim) return '';
+  const cicloUp = _dbNFD(cicloTrim).toUpperCase();
+  // Unificar variantes del MISMO nivel EXCEL:
   if (
     cicloUp === 'INICIAL/INTERMEDIO' || cicloUp === 'INICIAL / INTERMEDIO' ||
     cicloUp === 'INICIAL' || cicloUp === 'INTERMEDIO' ||
-    cicloUp === 'INI/INT' || cicloUp === 'INICI/INTER' ||
-    cicloUp.includes('INICIAL') || cicloUp.includes('INTERMEDIO') ||
-    cicloUp.includes('INI') || cicloUp.includes('INTER')
+    cicloUp === 'INI/INT' || cicloUp === 'INICI/INTER'
   ) {
-    out = 'INICIAL/INTERMEDIO';
-  } else if (cicloUp.includes('AVANZADO')) {
-    out = 'AVANZADO';
-  } else {
-    out = String(val || '').trim();
+    return 'INICIAL/INTERMEDIO';
   }
-  // Reclasificación CEBA 2 niveles final (canon):
-  if (tn === 'PRESENCIAL' && gn >= 1 && gn <= 6) {
-    out = 'INICIAL/INTERMEDIO';
-  } else if ((tn === 'VIRTUAL' || tn === 'SEMIPRESENCIAL')) {
-    out = 'AVANZADO';
+  if (cicloUp.includes('AVANZADO') || cicloUp.includes('AVANZ') || cicloUp === 'AV') {
+    return 'AVANZADO';
   }
-  return out;
+  return cicloTrim;
 }
 
 function _normAlumno(row) {
-  // Aplicar normalizaciones SÍNCRONAS al row raw para runtime garantizado canon
-  // (aunque UPDATE Supabase falle por RLS → UI siempre ve datos correctos)
+  // ⚠️ CANON EXCEL: Respetamos ciclo tal cual vino del Excel/BD.
   const r = Object.assign({}, row || {});
 
   // (1) Grado: quitar (Inicial)/(Intermedio)/(Avanzado) → solo dígito
@@ -911,8 +874,9 @@ function _normAlumno(row) {
   // (3) Turno canon (PRES/SEMI/VIRT)
   const turnoOut = _dbNormTurno(r.turno || '');
 
-  // (4) Ciclo CEBA canon + reclasificación
-  const cicloOut = _dbNormCiclo(r.ciclo || '', turnoOut, gradoOut);
+  // (4) Ciclo: SOLO normalizar formato (unificar variantes de escritura).
+  //     NUNCA reclasificar según grado/turno. Respetar Excel.
+  const cicloOut = _dbNormCiclo(r.ciclo || '');
 
   return {
     id:                  r.id,
