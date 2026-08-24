@@ -12276,6 +12276,47 @@ function _buildAulasFromUserData(d) {
   gradosAsignados = gradosAsignados.map(a => ({ ciclo: _canonCicloJS(a.ciclo||''), grado: String(a.grado||'').trim(), seccion: String(a.seccion||'').trim().toUpperCase() }))
                                   .filter(a => a.grado && a.seccion);
   const asigObj = (d.asignaciones && typeof d.asignaciones === 'object') ? d.asignaciones : {};
+  // FIX MERGE ASIGNACIONES (2026-08-24):
+  //   Admin Moises marca aulas en la UI de usuarios usando ASIGNACIONES (checkboxes)
+  //   → se guardan en d.asignaciones (obj) y en d.grados_asignados_json (array).
+  //   Además, si el usuario también es tutor → viene en tutorAulas / tutor_aulas_json.
+  //   Anteriormente usábamos || (uno o el otro) → se perdían las aulas nuevas 4B
+  //   si grados_asignados_json ya tenia [4C].
+  //   Solución: MERGEAR las 3 fuentes sin perder ninguna aula (deduplicar).
+  const fromAsigObj = Object.keys(asigObj).length ? (_asignacionesObjToAulasList(asigObj) || []) : [];
+  const mergedGA = [];
+  const seenGA = new Set();
+  [gradosAsignados, fromAsigObj, aulas.slice()].forEach(listSrc => {
+    (listSrc || []).forEach(a => {
+      if(!a || !a.grado || !a.seccion) return;
+      const aGrado = String(a.grado||'').trim();
+      const aSecc = String(a.seccion||'').trim().toUpperCase();
+      const aCiclo = _canonCicloJS(a.ciclo||'');
+      const k = [aCiclo, aGrado, aSecc].join('|');
+      if(seenGA.has(k)) return; seenGA.add(k);
+      mergedGA.push({ ciclo: aCiclo, grado: aGrado, seccion: aSecc });
+    });
+  });
+  gradosAsignados = mergedGA;
+  // FIX (mismo merge TUTOR AULAS): fusionar d.tutor_aulas_json / d.tutorAulas / tutor_raw
+  //   con las aulas nuevas de asignacionesObj/grados_asignados_json (mergea + dedup).
+  //   Nunca más se pierde una aula asignada por Admin Moises.
+  if (fromAsigObj.length || gradosAsignados.length > aulas.length) {
+    const mergedT = [];
+    const seenT = new Set();
+    [aulas, fromAsigObj, gradosAsignados].forEach(listSrc => {
+      (listSrc || []).forEach(a => {
+        if(!a || !a.grado || !a.seccion) return;
+        const aGrado = String(a.grado||'').trim();
+        const aSecc = String(a.seccion||'').trim().toUpperCase();
+        const aCiclo = _canonCicloJS(a.ciclo||'');
+        const k = [aCiclo, aGrado, aSecc].join('|');
+        if(seenT.has(k)) return; seenT.add(k);
+        mergedT.push({ ciclo: aCiclo, grado: aGrado, seccion: aSecc });
+      });
+    });
+    aulas = mergedT;
+  }
   if(!gradosAsignados.length && Object.keys(asigObj).length){
     gradosAsignados = _asignacionesObjToAulasList(asigObj) || [];
   }
@@ -23118,17 +23159,44 @@ async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
         const cfg = cfgCached || await getConfig();
         const preferNivel = _agendaInferNivelByGrado(String(currentTutorInfo?.tutorGrado || '').trim(), cfg);
         currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(currentPrivilegios.asignaciones || {}, cfg, preferNivel) || {};
-        // Auto-sync runtime: si el usuario tiene TUTOR_AULAS (vengan de TUTOR checkbox o de grados_asignados_json)
-        // y asignaciones está VACÍO → copiamos tutor_aulas → asignaciones.
-        // IMPORTANTE: NO encerramos en if(_isTutorUser()) porque un docente puede ser NO tutor PERO tener
-        // grados_asignados_json (asignación manual en usuario) → si no mergeamos aquí, ve 0 alumnos.
+        // FIX 2026-08-24 ASIGNACIONES DOCENTE (Orlando y demás):
+        // ANTES: SOLO copiabamos tutorAsig si Object.keys(asignaciones).length === 0
+        //        → Bug Orlando: Admin asignó 4B+4C pero asignaciones antiguas {4:['C']}
+        //          seguian vigentes (no vacío) → tutorAsig NO se mergeo → perdió 4B.
+        // AHORA: MERGE SIEMPRE (sin condicion vacío) → (asignaciones DB) U (tutorAulas + gradosAsignados).
+        // Además agregamos gradosAsignados (fuente de verdad Admin Usuarios).
         try {
           const tutorAsig = _profesorTutorToAsignaciones();
-          if(tutorAsig && Object.keys(tutorAsig).length > 0) {
-            if(!currentPrivilegios.asignaciones || Object.keys(currentPrivilegios.asignaciones).length === 0) {
-              currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(tutorAsig, cfg, preferNivel) || tutorAsig;
-              if(!currentPrivilegios.restringir) currentPrivilegios.restringir = true;
-            }
+          const gradoAsigObj = {};
+          try {
+            const ga = Array.isArray(currentTutorInfo?.gradosAsignados) ? currentTutorInfo.gradosAsignados : [];
+            ga.forEach(a => {
+              if(!a || !a.grado || !a.seccion) return;
+              const g = String(a.grado||'').trim();
+              const s = String(a.seccion||'').trim().toUpperCase();
+              if(!g || !s || s === 'TODAS') return;
+              if(!(g in gradoAsigObj)) gradoAsigObj[g] = [];
+              if(!gradoAsigObj[g].includes(s)) gradoAsigObj[g].push(s);
+            });
+          } catch(_gaErr) {}
+          // Mergear 3 fuentes: DB.asignaciones ∪ tutorAsig ∪ gradosAsignados
+          const mergedBase = {};
+          [currentPrivilegios.asignaciones || {}, tutorAsig || {}, gradoAsigObj].forEach(src => {
+            Object.entries(src || {}).forEach(([g, secs]) => {
+              if(!g) return;
+              const list = Array.isArray(secs) ? secs : [];
+              if(!list.length) return;
+              if(!(g in mergedBase)) mergedBase[g] = [];
+              list.forEach(sRaw => {
+                const s = String(sRaw||'').trim().toUpperCase();
+                if(!s || s === 'TODAS') return;
+                if(!mergedBase[g].includes(s)) mergedBase[g].push(s);
+              });
+            });
+          });
+          if (Object.keys(mergedBase).length > 0) {
+            currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(mergedBase, cfg, preferNivel) || mergedBase;
+            if(!currentPrivilegios.restringir) currentPrivilegios.restringir = true;
           }
         } catch(e1) {}
       } catch(e0) {}
@@ -23145,14 +23213,38 @@ async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
           const cfg = cfgCached || await getConfig();
           const preferNivel = _agendaInferNivelByGrado(String(currentTutorInfo?.tutorGrado || '').trim(), cfg);
           currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(currentPrivilegios.asignaciones || {}, cfg, preferNivel) || {};
-          // (mismo merge SIN guarda if(_isTutorUser) - ver explicación arriba)
+          // MISMO FIX (merge siempre) para rama db.get sin cache:
           try {
             const tutorAsig = _profesorTutorToAsignaciones();
-            if(tutorAsig && Object.keys(tutorAsig).length > 0) {
-              if(!currentPrivilegios.asignaciones || Object.keys(currentPrivilegios.asignaciones).length === 0) {
-                currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(tutorAsig, cfg, preferNivel) || tutorAsig;
-                if(!currentPrivilegios.restringir) currentPrivilegios.restringir = true;
-              }
+            const gradoAsigObj = {};
+            try {
+              const ga = Array.isArray(currentTutorInfo?.gradosAsignados) ? currentTutorInfo.gradosAsignados : [];
+              ga.forEach(a => {
+                if(!a || !a.grado || !a.seccion) return;
+                const g = String(a.grado||'').trim();
+                const s = String(a.seccion||'').trim().toUpperCase();
+                if(!g || !s || s === 'TODAS') return;
+                if(!(g in gradoAsigObj)) gradoAsigObj[g] = [];
+                if(!gradoAsigObj[g].includes(s)) gradoAsigObj[g].push(s);
+              });
+            } catch(_gaErr2) {}
+            const mergedBase = {};
+            [currentPrivilegios.asignaciones || {}, tutorAsig || {}, gradoAsigObj].forEach(src => {
+              Object.entries(src || {}).forEach(([g, secs]) => {
+                if(!g) return;
+                const list = Array.isArray(secs) ? secs : [];
+                if(!list.length) return;
+                if(!(g in mergedBase)) mergedBase[g] = [];
+                list.forEach(sRaw => {
+                  const s = String(sRaw||'').trim().toUpperCase();
+                  if(!s || s === 'TODAS') return;
+                  if(!mergedBase[g].includes(s)) mergedBase[g].push(s);
+                });
+              });
+            });
+            if (Object.keys(mergedBase).length > 0) {
+              currentPrivilegios.asignaciones = _normalizeAsignacionesWithCfg(mergedBase, cfg, preferNivel) || mergedBase;
+              if(!currentPrivilegios.restringir) currentPrivilegios.restringir = true;
             }
           } catch(e1) {}
         } catch(e0) {}
