@@ -39,6 +39,137 @@ const DB = {
     }
     if (!data || !data.length) { try { LSC.del(cacheKey); } catch(_) {} return []; }
 
+    // ============================================================
+    // REPARACIÓN AUTOMÁTICA TRANSPARENTE (el usuario NUNCA toca botón)
+    // Cada vez que se cargan alumnos desde Supabase:
+    //   (1) Normalizar ciclo CEBA 2 niveles: INICIAL/INTERMEDIO canon único
+    //   (2) Normalizar turno modalidad atención: PRESENCIAL / SEMIPRESENCIAL / VIRTUAL
+    //   (3) Normalizar grado (quitar sufijos (Inicial)/(Intermedio), solo dígito)
+    //   (4) Normalizar sección (solo letra mayúscula A-Z)
+    //   (5) Reclasificación ciclo CEBA segura:
+    //         • Presencial + grado 1..6  → ciclo = "INICIAL/INTERMEDIO" (1 valor, NO separa)
+    //         • Virtual / Semipresencial (cualquier grado) → ciclo = "AVANZADO"
+    // IDEMPOTENTE: Solo actualiza el alumno en Supabase SI hubo cambios.
+    // Así todo nuevo usuario que abre el sistema (admin, docente, apoderado)
+    // repara automáticamente los alumnos defectuosos 1 vez.
+    // ============================================================
+    (async () => {
+      try {
+        let fixes = 0;
+        const cicloCebas = new Set(['INICIAL','INTERMEDIO','AVANZADO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO']);
+        const _norms = (s) => { try { return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,''); } catch(_){ return String(s||''); } };
+        const _normModAtencionDB = (val) => {
+          let s = String(val || '').trim();
+          s = _norms(s).toUpperCase().replace(/[\s\-_\.·,;]/g, '');
+          if (!s) return '';
+          if (s.includes('PRESEN') || s === 'P' || s === 'PRE' || s.startsWith('PRES')) return 'PRESENCIAL';
+          if (s.includes('SEMI') || s === 'S' || s === 'SEM' || s.includes('MIXTO') || s.includes('HIBRIDO') || s.startsWith('SEM')) return 'SEMIPRESENCIAL';
+          if (s.includes('VIRT') || s === 'V' || s.includes('REMOTO') || s.includes('ONLINE') || s.startsWith('VIR')) return 'VIRTUAL';
+          if (s.includes('INICIAL') || s.includes('INTERMEDIO')) return 'PRESENCIAL';
+          return String(val || '').trim();
+        };
+        for (const rowRaw of data) {
+          const orig = JSON.stringify({
+            ciclo: String(rowRaw.ciclo||''),
+            grado: String(rowRaw.grado||''),
+            seccion: String(rowRaw.seccion||''),
+            turno: String(rowRaw.turno||'')
+          });
+          let row = Object.assign({}, rowRaw);
+          // 1) trim whitespaces
+          row.ciclo   = String(row.ciclo   || '').trim();
+          row.grado   = String(row.grado   || '').trim();
+          row.seccion = String(row.seccion || '').trim();
+          row.turno   = String(row.turno   || '').trim();
+          // 2) Grado: quitar (Inicial)/(Intermedio)/(Avanzado) -> solo dígito
+          if (row.grado) {
+            const m = String(row.grado).match(/(\d+)/);
+            if (m) row.grado = m[1];
+          }
+          // 3) Ciclo: INICIAL/INTERMEDIO canon único NO separa
+          const cicloUp = String(row.ciclo || '').toUpperCase();
+          if (
+            cicloUp === 'INICIAL/INTERMEDIO' || cicloUp === 'INICIAL / INTERMEDIO' ||
+            cicloUp === 'INICIAL' || cicloUp === 'INTERMEDIO' ||
+            cicloUp === 'INI/INT' || cicloUp === 'INICI/INTER'
+          ) {
+            row.ciclo = 'INICIAL/INTERMEDIO';
+          } else if (cicloUp && (cicloUp.includes('INICIAL') || cicloUp.includes('INTERMEDIO') || cicloUp.includes('INI') || cicloUp.includes('INTER'))) {
+            row.ciclo = 'INICIAL/INTERMEDIO';
+          }
+          if (cicloUp.includes('AVANZADO')) row.ciclo = 'AVANZADO';
+          // 4) Sección: letra mayúscula sola A-Z
+          if (row.seccion) {
+            const s = String(row.seccion).trim().toUpperCase().match(/[A-Z]/);
+            if (s) row.seccion = s[0];
+          }
+          // 5) Turno normalizado
+          if (row.turno) {
+            const nt = _normModAtencionDB(row.turno);
+            if (nt) row.turno = nt;
+          }
+          // 6) Reclasificación ciclo CEBA 2 niveles (no 3)
+          const cu = String(row.ciclo || '').toUpperCase();
+          const esCicloCEBA = cicloCebas.has(cu) || cu === 'INICIAL/INTERMEDIO';
+          const tn = _normModAtencionDB(row.turno || '');
+          const gn2 = parseInt(String(row.grado || '').match(/\d+/)?.[0] || '0', 10);
+          if (esCicloCEBA && tn) {
+            if (tn === 'PRESENCIAL' && gn2 >= 1 && gn2 <= 6) {
+              if (cu !== 'INICIAL/INTERMEDIO') row.ciclo = 'INICIAL/INTERMEDIO';
+            }
+            if ((tn === 'VIRTUAL' || tn === 'SEMIPRESENCIAL') && cu !== 'AVANZADO') {
+              row.ciclo = 'AVANZADO';
+            }
+          }
+          // Comparar vs original
+          const after = JSON.stringify({
+            ciclo: String(row.ciclo||''),
+            grado: String(row.grado||''),
+            seccion: String(row.seccion||''),
+            turno: String(row.turno||'')
+          });
+          if (orig !== after) {
+            // Guardar real en Supabase (upsert por id)
+            try {
+              const cleanId = String(row.id || '').trim().replace(/\s+/g, '');
+              if (cleanId) {
+                const { error } = await supabase
+                  .from('alumnos')
+                  .update({
+                    ciclo:   String(row.ciclo||'').trim(),
+                    grado:   row.grado || '',
+                    seccion: row.seccion || '',
+                    turno:   row.turno || '',
+                  })
+                  .eq('colegio_id', COLEGIO_ID)
+                  .eq('id', cleanId);
+                if (!error) fixes++;
+              }
+            } catch(_e) { console.warn('[DB autoFix] saveAlumno falló para:', row.id, _e?.message || _e); }
+          }
+        }
+        if (fixes > 0) {
+          console.info(`[DB autoFix] Alumnos reparados automáticamente: ${fixes}/${data.length}. Actualizando caché.`);
+          try {
+            // Invalidar cache LSC para que la próxima lectura use los datos nuevos
+            try { LSC.del(cacheKey); } catch(_) {}
+            try { LSC.del('alumnos'); } catch(_) {}
+            DB._alumnosCache = null;
+            DB._alumnosCacheKey = '';
+            DB._alumnosScopedCache = {};
+            if (typeof window._purgarCacheAlumnos === 'function') {
+              try { window._purgarCacheAlumnos('auto-fix'); } catch(_) {}
+            }
+            if (typeof window.toast === 'function') {
+              window.toast(`✅ Base actualizada: ${fixes} alumnos reparados automáticamente (nada que hacer)`, 'success', 4000);
+            }
+          } catch(_) {}
+        }
+      } catch(e) {
+        console.warn('[DB autoFix] Reparación automática falló (no crítico):', e?.message || e);
+      }
+    })();
+
     // Normalizar nombres de campos (snake_case → camelCase para compat. con código actual)
     this._alumnosCache = data.map(_normAlumno);
     this._alumnosCacheKey = cacheKey;

@@ -9346,10 +9346,15 @@ async function renderAlumnos() {
   // - EXCEPCIÓN SAFE: Si el profesor ya tiene SU FILTRO UI seleccionado por auto-select en carga
   //   anterior (fa-nivel/fa-grado/fa-seccion tienen valor real) → mostramos.
   const profTieneFiltroReal = isProf && (_vGrado || _vSeccion || _vNivel || _vMod || _vQ);
-  // Regla ADMIN/NO-PROF: Sólo activar si tiene NIVEL REAL (cascada) o BUSQUEDA directa.
-  //   - Modalidad / Grado / Seccion SOLOS no activan nada.
-  const adminTieneFiltroValido = !isProf && ( _vNivel || _vQ );
-  const filtroActivo = adminTieneFiltroValido || (_vNivel && (_vGrado || _vSeccion || _vMod)) || _vQ || (!isProf && aulasList.length > 0) || profTieneFiltroReal;
+  // Regla ADMIN/NO-PROF ESTRICTA 4-NIVEL CASCADA (Requisito user Moises):
+  //   - NECESITAS LOS 4: NIVEL + GRADO + SECCION + MODALIDAD (todos reales, no placeholders)
+  //   - O BIEN: Q búsqueda directa (por nombre o DNI)
+  // Cualquier combinación PARCIAL (solo Nivel; N+G; N+G+S sin Modalidad) = NO MUESTRA NADA
+  //   → evita que el usuario vea lista antes de haber completado todos los filtros.
+  const admin4FiltrosCompletos = !isProf && _vNivel && _vGrado && _vSeccion && _vMod;
+  const adminBusquedaDirecta = !isProf && _vQ;
+  const adminTieneFiltroValido = admin4FiltrosCompletos || adminBusquedaDirecta;
+  const filtroActivo = adminTieneFiltroValido || _vQ || profTieneFiltroReal || (!isProf && aulasList.length > 0) || (_vNivel && (_vGrado || _vSeccion || _vMod) && isProf);
   if(!filtroActivo) { mostrarEstadoInicial(); return; }
 
   const tbody = document.getElementById('alumnos-tbody');
@@ -9636,66 +9641,15 @@ async function renderAlumnos() {
         const btnSugerir = [];
 
         if (sugerenciasList.length > 0) {
-          // Caso B: solo NIVEL seleccionado, y se sugiere SOLO 1 NIVEL distinto
-          const casoB_unSoloNivel = (nivelesSugeridos.size === 1);
           txts = sugerenciasList.map(it => `${it.n} en ${it.nivel}${it.grado ? ' Grado ' + it.grado : ''}${it.sec ? ' ' + it.sec : ''}${it.mod ? ' · ' + (_MODALIDAD_ATENCION_LABEL[it.mod] || it.mod) : ''}`);
           txts = txts.slice(0, 6);
           let hint = txts.join(', ');
-          let btnHtml = '';
-          if (casoB_unSoloNivel && sugerenciasList.length <= 2) {
-            const nSel = sugerenciasList[0].nivel;
-            const gSel = sugerenciasList[0].grado || '';
-            const sSel = sugerenciasList[0].sec || '';
-            const mSel = sugerenciasList[0].mod || '';
-            // Único botón que cambia directamente a ese nivel/grado/sección
-            const lbl = gSel
-              ? `Usar ${nSel}${gSel ? ' / Grado ' + gSel : ''}${sSel ? ' ' + sSel : ''}${mSel ? ' · ' + (_MODALIDAD_ATENCION_LABEL[mSel] || mSel) : ''}`
-              : `Cambiar a Nivel ${nSel}`;
-            btnHtml = `<br><button id="btn-aula-sugerencia" data-niv="${nSel}" data-g="${gSel}" data-s="${sSel}" data-m="${mSel}" style="margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">✅ ${lbl}</button>`;
-          } else if (nivelesSugeridos.size > 0) {
-            // Multiples niveles: botón para el NIVEL que tenga MÁS alumnos
-            const porNivel = {};
-            sugerenciasList.forEach(it => { porNivel[it.nivel] = (porNivel[it.nivel]||0) + it.n; });
-            const topNivel = Object.entries(porNivel).sort((a,b)=>b[1]-a[1])[0];
-            if (topNivel) {
-              btnHtml = `<br><button id="btn-aula-sugerencia" data-niv="${topNivel[0]}" data-g="" data-s="" data-m="" style="margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">🔄 Probar con Nivel ${topNivel[0]} (${topNivel[1]} alumnos)</button>`;
-            }
-          }
           const cab = (grado && grado !== 'TODOS')
             ? `Grado ${grado} no tiene alumnos en el nivel actual. Se encontraron: `
             : (nivel && nivel !== 'TODOS')
               ? `Nivel ${nivel} no tiene alumnos para ti. Se encontraron: `
               : `No hay alumnos aquí. Se encontraron: `;
-          _msg = cab + hint + btnHtml;
-          setTimeout(() => {
-            const bb = document.getElementById('btn-aula-sugerencia');
-            if(!bb) return;
-            bb.addEventListener('click', async () => {
-              const nSel = bb.getAttribute('data-niv') || '';
-              const gSel = bb.getAttribute('data-g') || '';
-              const sSel = bb.getAttribute('data-s') || '';
-              const mSel = bb.getAttribute('data-m') || '';
-              const elNiv = document.getElementById('fa-nivel');
-              if(nSel && elNiv) {
-                if([...elNiv.options].some(o => o.value === nSel)) { elNiv.value = nSel; }
-                else { const opt = document.createElement('option'); opt.value = nSel; opt.textContent = nSel; elNiv.insertBefore(opt, elNiv.firstChild); elNiv.value = nSel; }
-              }
-              const elG = document.getElementById('fa-grado');
-              if(gSel && elG) {
-                if([...elG.options].some(o => o.value === gSel)) { elG.value = gSel; }
-              }
-              const elS = document.getElementById('fa-seccion');
-              if(sSel && elS) {
-                if([...elS.options].some(o => o.value === sSel)) { elS.value = sSel; }
-              }
-              const elM = document.getElementById('fa-modalidad');
-              if(mSel && elM) {
-                const mNorm = _normModAtencion(mSel) || mSel;
-                if([...elM.options].some(o => o.value === mNorm)) { elM.value = mNorm; }
-              }
-              renderAlumnos();
-            });
-          }, 0);
+          _msg = cab + hint;
         } else if(q && !seccion) {
           // Por si escribio una busqueda y luego no hay coincidencia
         }
