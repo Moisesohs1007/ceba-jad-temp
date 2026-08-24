@@ -9316,6 +9316,31 @@ async function renderAlumnos() {
   const isProf = (r === 'profesor' || r === 'psicologo');
   const aulasList = (isProf && typeof _profesorAsignacionesAulasList === 'function') ? (_profesorAsignacionesAulasList() || []) : [];
 
+  // ═══════════════════════════════════════════════════════════════
+  // DEBUG GLOBAL FILTROS (revisión completa Moises #29):
+  // Si hay inconsistencias abrir F12 Console y ver este grupo.
+  // Muestra valor REAL DOM vs valor parseado por _filtroValido.
+  // ═══════════════════════════════════════════════════════════════
+  try {
+    const _dbgFaMod = document.getElementById('fa-modalidad');
+    const _dbgFaModSel = (_dbgFaMod && _dbgFaMod.options) ? _dbgFaMod.options[_dbgFaMod.selectedIndex] : null;
+    const _dbgObj = {
+      'fa-nivel.value':        JSON.stringify(document.getElementById('fa-nivel').value),
+      'fa-grado.value':        JSON.stringify(document.getElementById('fa-grado').value),
+      'fa-seccion.value':      JSON.stringify(document.getElementById('fa-seccion').value),
+      'fa-modalidad.value':    JSON.stringify(modalidad),
+      'fa-modalidad.text':     JSON.stringify(_dbgFaModSel ? (_dbgFaModSel.textContent||'') : ''),
+      'search.value':          JSON.stringify(q),
+      'modalidad var raw':     JSON.stringify(modalidad),
+      'isProf':                !!isProf,
+      'rol':                   String(currentRol||''),
+      'aulasList.length':      (aulasList||[]).length,
+    };
+    console.groupCollapsed('%c[renderAlumnos DEBUG filtros]', 'color:#0ea5e9;font-weight:bold');
+    console.table(_dbgObj);
+    console.groupEnd();
+  } catch(_dbgErr) { /* ignore */ }
+
   // Helper filtro válido (ignora placeholders '-- Grado --', 'Seleccionar', etc.)
   const _filtroValido = (v, extraNo) => {
     v = String(v||'').trim();
@@ -9333,6 +9358,21 @@ async function renderAlumnos() {
   const _vNivel   = _filtroValido(nivel) ? String(nivel).trim() : '';
   const _vMod     = _filtroValido(modalidad) ? String(modalidad).trim() : '';
   const _vQ       = String(q||'').trim();
+
+  // DEBUG post-_filtroValido (ver si _vMod se pierde después del helper)
+  try {
+    const _dbg2 = {
+      '_vGrado (post helper)':   JSON.stringify(_vGrado),
+      '_vSeccion (post helper)': JSON.stringify(_vSeccion),
+      '_vNivel (post helper)':   JSON.stringify(_vNivel),
+      '_vMod (post helper)':     JSON.stringify(_vMod) + (_vMod ? '' : ' ⚠️ VACÍO = filtro Mod NO se aplicará'),
+      '_vQ (post helper)':       JSON.stringify(_vQ),
+    };
+    console.groupCollapsed('%c[renderAlumnos DEBUG _vValores (post _filtroValido)]', 'color:#8b5cf6;font-weight:bold');
+    console.table(_dbg2);
+    console.groupEnd();
+  } catch(_dbg2e) {}
+
 
   // ------------------------------------------------------------------
   // CONDICIÓN DE MOSTRAR (ESTRICTA, volviendo al comportamiento ORIGINAL):
@@ -9492,35 +9532,79 @@ async function renderAlumnos() {
           s = s.toUpperCase().replace(/[^A-Z0-9]/g, '');
           return s;
         }
+        let E1=false, E2=false, E3=false, E4=false;
         // Estrategia 1: normal oficial (si existe)
-        try { if (_normModAtencion) { const tC = _normModAtencion(t); const mC = _normModAtencion(modT); if (tC && mC && tC === mC) return true; } } catch(_) {}
+        try { if (_normModAtencion) { const tC = _normModAtencion(t); const mC = _normModAtencion(modT); if (tC && mC && tC === mC) E1=true; } } catch(_) {}
+        if (E1) return true;
         // Estrategia 2: ultraNorm (quita todo no letra)
         const tu = _ultraNorm(t), mu = _ultraNorm(modT);
-        if (tu && mu && (tu === mu || tu.startsWith(mu) || mu.startsWith(tu))) return true;
-        // Estrategia 3: contains semántico (si target canon es SEMI/PRES/VIRT, busca palabras clave en turno raw)
-        if (mu === 'SEMIPRESENCIAL' || modT.indexOf('SEMI') !== -1) {
-          if (/SEMI|MIXTO|HIBR|HÍBR|SEMI\s*PRESEN/i.test(t)) return true;
+        if (tu && mu && (tu === mu || tu.startsWith(mu) || mu.startsWith(tu))) { E2 = true; return true; }
+        // ═══════════════════════════════════════════════════════════
+        // Estrategia 3 FIX Moises #29: SOLO mu CANÓNICOS (NO modT.indexOf )
+        // ───────────────────────────────────────────────────────────
+        // ANTERIOR (BUG ROOT 39Pres en Semi):
+        //   if (mu === 'PRESENCIAL' || modT.indexOf('PRESEN') !== -1)
+        //   → "SEMIPRESENCIAL".indexOf('PRESEN') !== -1 → TRUE!
+        //   → Presencial pasaba por filtro Semi.
+        // AHORA (FIX):
+        //   SOLO evaluamos mu (mu  職 CANÓNICO EXACTO (3 únicos)
+        //   NO usamos modT. Nunca más substring falsos positivos.
+        // ═══════════════════════════════════════════════════════════
+        if (mu === 'SEMIPRESENCIAL') {
+          if (/SEMI|MIXTO|HIBR|HÍBR|SEMI\s*PRESEN/i.test(t)) { E3 = true; return true; }
         }
-        if (mu === 'PRESENCIAL' || modT.indexOf('PRESEN') !== -1) {
-          if (/PRESEN|^PRE$|^P$|PRES/i.test(t)) return true;
+        if (mu === 'PRESENCIAL') {
+          if (/PRESEN|^PRE$|^P$|PRES/i.test(t)) { E3 = true; return true; }
         }
-        if (mu === 'VIRTUAL' || modT.indexOf('VIRT') !== -1) {
-          if (/VIRT|REMOTO|ONLINE|VIRTU/i.test(t)) return true;
+        if (mu === 'VIRTUAL') {
+          if (/VIRT|REMOTO|ONLINE|VIRTU/i.test(t)) { E3 = true; return true; }
         }
         // Estrategia 4: después de todo, raw toUpperCase ===
-        if (String(t).toUpperCase().replace(/\s+/g,'') === String(modT).toUpperCase().replace(/\s+/g,'')) return true;
+        if (String(t).toUpperCase().replace(/\s+/g,'') === String(modT).toUpperCase().replace(/\s+/g,'')) { E4 = true; return true; }
+        // Guardar para debug: las vars E1/E2/E3/E4 por alumno: retornan false después del return false; no hay objeto match info
+        try { _matchMod._lastDebug = { t:t, modT:modT, tu:tu, mu:mu, E1:E1, E2:E2, E3:E3, E4:E4 }; } catch(_) {}
         return false;
       }
       const countAntes = alumnos.length;
+      // Debug array debugEstrats tabla console.groupCollapsed console.table
+      const _dbgMatchArr = [];
       alumnos = alumnos.filter(a => {
         const match = _matchMod(a.turno, modNorm);
-        // Debug 1·B siempre
+        const info = {
+          id: String(a?.id||''),
+        };
+        info.apellidos = String(a?.apellidos||'').slice(0,20);
+        info.nombres = String(a?.nombres||'').slice(0,15);
+        info.grado = String(a?.grado||'');
+        info.seccion = String(a?.seccion||'');
+        info.turnoRaw = JSON.stringify(a?.turno||'');
+        info.modTarget = JSON.stringify(modNorm);
+        info.E1 = !!(_matchMod._lastDebug||{}).E1 || false;
+        info.E2 = !!(_matchMod._lastDebug||{}).E2 || false;
+        info.E3 = !!(_matchMod._lastDebug||{}).E3 || false;
+        info.E4 = !!(_matchMod._lastDebug||{}).E4 || false;
+        info.match = !!match;
+        _dbgMatchArr.push(info);
+        // Debug 1·B siempre y cuando sea 1·B (debugger;
         if (a && (String(a.grado||'').trim() === '1') && (String(a.seccion||'').trim().toUpperCase() === 'B')) {
-          try { console.debug('[1·B debug] alumno=', a.apellidos, a.nombres, 'turnoRaw=', JSON.stringify(a.turno||''), 'modTarget=', JSON.stringify(modNorm), 'match=', match); } catch(_) {}
+          try { console.debug('[1·B debug] alumno=', a.apellidos, a.nombres, 'turnoRaw=', JSON.stringify(a.turno||''), 'modTarget=', JSON.stringify(modNorm), 'match=', match, 'E1=', info.E1, 'E2=', info.E2, 'E3=', info.E3, 'E4=', info.E4); } catch(_) {}
         }
         return match;
       });
-      try { console.groupCollapsed('%c[filterMod]', 'color:#f59e0b;font-weight:bold'); console.log('total antes filtro:', countAntes, 'después:', alumnos.length, 'modTarget=', modNorm); const t1bs = alumnos.length; console.groupEnd(); } catch(_) {}
+      try {
+        console.groupCollapsed('%c[filterMod estrategias match]', 'color:#f59e0b;font-weight:bold');
+        console.log('total antes filtro:', countAntes, 'después:', alumnos.length, 'modTarget=', JSON.stringify(modNorm));
+        if (_dbgMatchArr.length > 0) {
+          // Solo las filas RELEVANTES para no saturar:
+            //   a) los que MATCHEAN (si countAntes<=60 sino primeras 60.
+            //   b) los que NO match pero E1-E4 todos false pero son del grado+seccion del filtro.
+          const _dbgRelevantes = (countAntes <= 60)
+            ? _dbgMatchArr
+            : _dbgMatchArr.filter(x => !!x.match).concat(_dbgMatchArr.filter(x => !x.match).slice(0, 10));
+          console.table(_dbgRelevantes);
+        }
+        console.groupEnd();
+      } catch(_) {}
     }
     if (_vQ) {
       const qRaw = _vQ;
