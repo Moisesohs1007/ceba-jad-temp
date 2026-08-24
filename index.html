@@ -6123,8 +6123,42 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
   //      → Grado → Seccion → Seccion → Modalidad.
   // ═══════════════════════════════════════════════════════════════
   try {
+    // 0. DESACTIVAR ONCHANGE TEMPORALMENTE (poblarFiltroNivel/Grado reescribe innerHTML
+    //    y el navegador auto-dispara onchange = onNivelChangeAlumnos() →
+    //    que resetea fa-grado/fa-seccion/fa-modalidad y PUEDE llamar renderAlumnos().
+    //    Orlando: necesitamos que NUNCA se disparen estos onchange durante
+    //    el auto-select docente para evitar contaminación async).
+    const saveHandlers = {};
+    [
+      ['fa-nivel',      'onNivelChangeAlumnos()'],
+      ['fa-grado',      'onGradoChangeAlumnos()'],
+      ['fa-seccion',    'onSeccionChangeAlumnos()'],
+      ['fa-modalidad',  'onModalidadChangeAlumnos()']
+    ].forEach(([id, _attrVal]) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      saveHandlers[id] = el.onchange;
+      try { el.onchange = null; } catch(_) {}
+      try { el.removeAttribute('onchange'); } catch(_) {}
+      try { el.setAttribute('data-onchange-asmqr-temp', _attrVal); } catch(_) {}
+    });
+    const restOnChange = () => {
+      Object.keys(saveHandlers).forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        try { el.onchange = saveHandlers[id] || null; } catch(_) {}
+        const tmp = el.getAttribute && el.getAttribute('data-onchange-asmqr-temp');
+        if (tmp) {
+          try { el.setAttribute('onchange', tmp); } catch(_) {}
+          try { el.removeAttribute('data-onchange-asmqr-temp'); } catch(_) {}
+        }
+      });
+    };
+    // Flag global para que onNivelChangeAlumnos / onGradoChangeAlumnos
+    // NO hagan nada (si algún listener colateral se dispara pese a todo).
+    window._asmqrSinAutoTut = true;
+
     // 1. Poblar opciones de NIVEL (con "Todos" disponible para docentes)
-    //    (no seleccionar ninguna, dejar placeholder)
     await poblarFiltroNivel(nivelId, null, { cfg: options.cfg, alumnos: options.alumnos });
 
     // 2. Limpiar TODOS los values (incluyendo nivel)
@@ -6152,12 +6186,40 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
       if (sEl) { try { sEl.value = ''; } catch(_) {} }
     } catch(_) {}
 
-    // 5. NUNCA llamar renderAlumnos() → deja el placeholder
+    // 5. RESTAURAR ONCHANGE (antes de salir)
+    try { restOnChange(); } catch(_) {}
+    try { window._asmqrSinAutoTut = false; } catch(_) {}
+
+    // 5bis. NUNCA llamar renderAlumnos() → deja el placeholder
     //    "Usa los filtros de arriba para buscar alumnos".
+
+    // 6. LIMPIADORES DE SEGURIDAD ASÍNCRONOS (para cualquier race condition
+    //    de poblarFiltro/promises que se ejecutan después):
+    //    100ms, 300ms, 500ms y 1200ms → re-limpia values y re-aplica cascada disabled.
+    //    (Orlando no debe ver NADA seleccionado sin elegirlo manualmente).
+    [100, 300, 500, 1200].forEach(delayMs => {
+      setTimeout(() => {
+        try {
+          const nE = document.getElementById(nivelId);
+          const gE = document.getElementById(gradoId);
+          const sE = document.getElementById(seccionId);
+          const mE = document.getElementById('fa-modalidad');
+          if (nE && String(nE.value||'') === '' && [...(nE.options||[])].some(o => String(o.value||'') === '')) {
+            try { nE.value = ''; } catch(_) {}
+            try { nE.disabled = false; _enableSelect(nivelId); } catch(_) {}
+          }
+          if (gE) { try { gE.value = ''; gE.disabled = true; _disableSelect(gradoId); } catch(_) {} }
+          if (sE) { try { sE.value = ''; sE.disabled = true; _disableSelect(seccionId); } catch(_) {} }
+          if (mE) { try { mE.value = ''; mE.disabled = true; _disableSelect('fa-modalidad'); } catch(_) {} }
+        } catch(_cleanUpErr) {}
+      }, delayMs);
+    });
+
     _tutoriaLocked = false;
     return;
   } catch(_errTut) {
     console.warn('[autoSelectTutoria docente sin-auto] error:', _errTut);
+    try { window._asmqrSinAutoTut = false; } catch(_) {}
   }
 }
 
@@ -23584,6 +23646,9 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
 }
 
 async function onNivelChangeAlumnos() {
+  // SOFT EXIT durante _autoSelectTutoria docente sin-auto (Orlando):
+  // cualquier onchange residual por poblar innerHTML → NO hace NADA.
+  try { if (window._asmqrSinAutoTut === true) return; } catch(_) {}
   document.getElementById('fa-grado').value   = '';
   document.getElementById('fa-seccion').value = '';
   document.getElementById('fa-modalidad').value = '';
@@ -23606,6 +23671,7 @@ async function onNivelChangeAlumnos() {
 }
 
 async function onGradoChangeAlumnos() {
+  try { if (window._asmqrSinAutoTut === true) return; } catch(_) {}
   document.getElementById('fa-seccion').value = '';
   document.getElementById('search-alumnos').value = '';
   const grado = document.getElementById('fa-grado').value;
@@ -23704,6 +23770,7 @@ async function onGradoChangeAlumnos() {
 }
 
 function onSeccionChangeAlumnos() {
+  try { if (window._asmqrSinAutoTut === true) return; } catch(_) {}
   document.getElementById('search-alumnos').value = '';
   // Helper: selección UI válida (TODOS cuenta, placeholder no)
   const _selOk = v => { v = String(v||'').trim(); return !!v && v !== '--' && !v.startsWith('-- ') && !v.endsWith(' --') && !/Seleccionar/i.test(v); };
@@ -23719,6 +23786,7 @@ function onSeccionChangeAlumnos() {
 }
 
 function onModalidadChangeAlumnos() {
+  try { if (window._asmqrSinAutoTut === true) return; } catch(_) {}
   document.getElementById('search-alumnos').value = '';
   renderAlumnos();
 }
