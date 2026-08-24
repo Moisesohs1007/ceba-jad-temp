@@ -11914,6 +11914,21 @@ async function handleExcel(e) {
   function _normDni(raw) {
     return String(raw || '').replace(/[.,\s-]/g, '').replace(/[A-Za-z]$/,'').trim();
   }
+  // Helper: extraer Grado + Sección DIRECTAMENTE desde el NOMBRE DE LA HOJA (fuente de verdad definitiva)
+  // Ej: "4B SEMI" → {grado:'4', seccion:'B'}; "1A PRE" → {grado:'1', seccion:'A'}; "3C VIRT" → {grado:'3', seccion:'C'}
+  function _parseGradoSeccionDesdeSheetName(sheetName) {
+    const s = String(sheetName || '').trim();
+    if (!s) return { grado: '', seccion: '' };
+    const primeraParte = s.split(/\s+/)[0] || s; // "4B SEMI" → "4B"
+    const m = primeraParte.match(/^(\d+)([A-Za-zÁÉÍÓÚáéíóúÜüÑñ]?)/);
+    if (m) {
+      return {
+        grado: m[1] || '',
+        seccion: (m[2] || 'A').toUpperCase()
+      };
+    }
+    return { grado: '', seccion: '' };
+  }
 
   // Cargar SheetJS dinámicamente
   if(!window.XLSX) {
@@ -11970,8 +11985,9 @@ async function handleExcel(e) {
           const gradoRaw = _findKey(row, /^GRADO$/i) || _findKey(row, /grado/i);
           const seccionRaw = _findKey(row, /^(SECCION|SECCIÓN|SECC)$/i) || _findKey(row, /secc|secci/i);
           const gs = _splitGradoSeccion(gradoRaw);
-          let gradoFin = gs.grado || gradoRaw || '';
-          let seccionFin = seccionRaw ? String(seccionRaw).trim().toUpperCase() : gs.seccion || 'A';
+          const gsSheet = _parseGradoSeccionDesdeSheetName(sheetName);
+          let gradoFin = gs.grado || gradoRaw || gsSheet.grado || '';
+          let seccionFin = seccionRaw ? String(seccionRaw).trim().toUpperCase() : (gs.seccion || gsSheet.seccion || 'A');
 
           const nivelRaw = _findKey(row, /^(NIVEL|CICLO|MODALIDAD\s*CEBA|MODALIDAD\s*PEDAGOGICA)$/i) || _findKey(row, /nivel|ciclo/i);
           const modalidadRaw = _findKey(row, /^(MODALIDAD\s*ATENCIÓN|MODALIDAD\s*ATENCION|MODALIDAD|TURNO|JORNADA|TIPO\s*ATENCIÓN|TIPO\s*ATENCION|ATENCIÓN|ATENCION)$/i) || _findKey(row, /modalidad|turno|jornada|aten/i);
