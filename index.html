@@ -22950,20 +22950,42 @@ async function abrirModalPrivilegios() {
 }
 
 async function savePrivilegios() {
-  // FIX 2026-08-24: leemos DIRECTAMENTE TODAS las .chk-seccion:checked
-  // (sin depender de que el checkbox PADRE grado esté marcado) → evita
-  // bug "marqué B y C pero al guardar se perdieron" (si el usuario se
-  // olvidó de marcar el checkbox Grado 4 se guardaba vacío).
+  // ================================================================
+  // FIX 2026-08-24 (FINAL - sin doble marca, sin auto-marcar):
+  // AHORA guardamos ESTRUCTURA DETALLADA con ciclo+turno+grado+seccion
+  // extraídos de cada checkbox .chk-seccion:checked via data-ciclo y
+  // data-turno. Así al REABRIR no NECESITAMOS HEURÍSTICA NINGUNA:
+  //   ciclo=AVANZADO | turno=SEMIPRESENCIAL | grado=4 | seccion=B
+  //   → SÓLO se marca en AVANZADO·SEMI·4·B y NUNCA en PRESENCIAL o
+  //   VIRTUAL aunque tempAsignaciones plano tenga B.
+  // Backward compat: seguimos guardando tempAsignaciones plano y
+  // asignaciones{4:[B,C]} para helpers legacy.
+  // ================================================================
+  const _detalladas = []; // [{ciclo, turno, grado, seccion}] - FUENTE DE VERDAD PRINCIPAL
   tempAsignaciones = {};
   document.querySelectorAll('.chk-seccion:checked').forEach(c => {
     const g = String(c.dataset.grado || c.getAttribute('data-grado') || '').trim();
     const sRaw = String(c.value || '').trim();
     if (!g || !sRaw) return;
     const s = sRaw.toUpperCase();
+    // Estructura DETALLADA (prioridad máxima al reabrir)
+    let _ciclo = String(c.dataset.ciclo || c.getAttribute('data-ciclo') || '').trim().toUpperCase();
+    let _turno = String(c.dataset.turno || c.getAttribute('data-turno') || '').trim().toUpperCase();
+    if (typeof _normModAtencion === 'function') _turno = (_normModAtencion(_turno) || _turno || 'PRESENCIAL');
+    if (typeof _canonCicloJS === 'function' && _ciclo) _ciclo = (_canonCicloJS(_ciclo) || _ciclo);
+    if (!_ciclo) _ciclo = 'AVANZADO';
+    if (!_turno) _turno = 'PRESENCIAL';
+    _detalladas.push({
+      ciclo: _ciclo,
+      turno: _turno,
+      grado: g,
+      seccion: s
+    });
+    // Estructura PLANA (backward compat):
     if (!(g in tempAsignaciones)) tempAsignaciones[g] = [];
     if (!tempAsignaciones[g].includes(s)) tempAsignaciones[g].push(s);
   });
-  // Cleanup: eliminar grados vacíos y ordenar secciones
+  // Cleanup y ordenamiento (plano):
   Object.keys(tempAsignaciones).forEach(g => {
     if (!Array.isArray(tempAsignaciones[g]) || !tempAsignaciones[g].length) {
       delete tempAsignaciones[g];
@@ -22971,17 +22993,32 @@ async function savePrivilegios() {
       tempAsignaciones[g] = tempAsignaciones[g].slice().sort();
     }
   });
-  // Sincronizar DOM: marcar checkboxes GRADO PADRE si tienen secciones marcadas
+  // Cleanup detalladas: quitar duplicados exactos
+  const _dedup = new Map();
+  _detalladas.forEach(d => {
+    const _k = `${d.ciclo}|${d.turno}|${d.grado}|${d.seccion}`;
+    if (!_dedup.has(_k)) _dedup.set(_k, d);
+  });
+  const _detalladasFinal = Array.from(_dedup.values());
+  window.__asignacionesDetalladasUsuario = _detalladasFinal.slice();
+  // Sincronizar DOM checkboxes grado padre:
   try {
     document.querySelectorAll('.chk-grado').forEach(cG => {
       const g = String(cG.dataset.grado || '').trim();
+      const cicloG = String(cG.dataset.ciclo || '').trim().toUpperCase();
+      const turnoG = String(cG.dataset.turno || '').trim().toUpperCase();
       if (!g) return;
-      const secMarc = Array.isArray(tempAsignaciones[g]) && tempAsignaciones[g].length > 0;
-      cG.checked = !!secMarc;
+      // Marcar grado padre si TIENE ALGUNA sección hija marcada en LA MISMA subtarjeta:
+      const secMarcEnTarjeta = _detalladasFinal.some(d =>
+        d.grado === g &&
+        (!cicloG || !d.ciclo || d.ciclo === cicloG) &&
+        (!turnoG || !d.turno || d.turno === turnoG)
+      );
+      cG.checked = !!secMarcEnTarjeta;
       const key = cG.dataset.key;
       if (key) {
         const div = document.getElementById('secc-' + key);
-        if (div) div.style.display = secMarc ? 'flex' : 'none';
+        if (div) div.style.display = secMarcEnTarjeta ? 'flex' : 'none';
       }
     });
   } catch(_syncDom){}
@@ -22991,44 +23028,25 @@ async function savePrivilegios() {
     try { document.getElementById('u-restringir').checked = true; } catch(_e){}
     try { toggleBtnConfigurar(); } catch(_e){}
   }
-  // ---------------------------------------------------------------
-  // FIX 2026-08-24 (AHORRA 2 PASOS AL ADMIN): AUTO-GUARDADO PERMANENTE
-  // Si estamos EDITANDO un usuario existente (editingUsuarioId definido
-  // y válido) → GUARDAMOS INMEDIATAMENTE `asignaciones` y `restringir`
-  // en Firestore. Así no hay necesidad de hacer clic en "Guardar" del
-  // modal grande después. Evita el bug "marqué pero no se guardó".
-  // ---------------------------------------------------------------
+  // Auto-save Firestore inmediato:
   let _escritoOK = false;
   if (typeof editingUsuarioId !== 'undefined' && editingUsuarioId && typeof db !== 'undefined' && db?.collection) {
     try {
       const _restrFinal = !!document.getElementById('u-restringir')?.checked || Object.keys(tempAsignaciones).length > 0;
       const _payload = {
         restringir: _restrFinal,
-        asignaciones: tempAsignaciones || {}
+        asignaciones: tempAsignaciones || {},
+        // ✅ ESTRUCTURA DETALLADA: ciclo|turno|grado|seccion (no heurística al reabrir)
+        grados_asignados_json: _detalladasFinal.length ? _detalladasFinal : []
       };
-      // También actualizamos grados_asignados_json (lista flat) para los
-      // helpers runtime (_profesorAsignacionesAulasList merge de 3 fuentes):
-      try {
-        const list = [];
-        Object.entries(tempAsignaciones || {}).forEach(([g, secs]) => {
-          if (!g) return;
-          (Array.isArray(secs) ? secs : []).forEach(s => {
-            if (!s) return;
-            list.push({ ciclo: 'AVANZADO', grado: String(g).trim(), seccion: String(s).trim().toUpperCase() });
-          });
-        });
-        if (list.length) _payload.grados_asignados_json = list;
-      } catch(_e1) {}
       await db.collection('usuarios').doc(String(editingUsuarioId)).update(_payload);
       _escritoOK = true;
-      // Invalidar cache de usuarios (para que la tabla muestre actualizado)
       try { _invalidarUsuarios(); } catch(_e2){}
     } catch(_errDB) {
       try { console.error('[savePrivilegios] Firestore update falló', _errDB); } catch(_){}
     }
   }
   closeModal('modal-privilegios');
-  // Toast final (informativo):
   const _asigs = Object.keys(tempAsignaciones || {});
   if (!_asigs.length) {
     toast('⚠ Sin aulas asignadas', 'warning');
@@ -23269,6 +23287,55 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
       modaFallbackPorGs[`${gK}|${sK}`] = turno;
     });
   } catch(eFb) {}
+  // Construir SET de matches EXACTOS para el helper granular (FUENTE DE VERDAD N°1):
+  // Si grados_asignados_json[] trae ciclo+turno+grado+seccion (guardados por savePrivilegios
+  // de este deploy o posteriores), usamos MATCH EXACTO y NO heurística → sin doble marca.
+  const _asigDetalladasSet = new Set();
+  const _asigDetalladasHave = (() => {
+    try {
+      const d = (uid && uDataOverride && typeof uDataOverride === 'object')
+        ? uDataOverride
+        : (uid ? (typeof d2 !== 'undefined' ? d2 : null) : null);
+      const arr = Array.isArray(d?.grados_asignados_json) ? d.grados_asignados_json : (Array.isArray(window.__asignacionesDetalladasUsuario) ? window.__asignacionesDetalladasUsuario : []);
+      const arr2 = Array.isArray(d?.tutor_aulas_json) ? d.tutor_aulas_json : [];
+      const arr3 = Array.isArray(d?.tutorAulas) ? d.tutorAulas : [];
+      const all = arr.concat(arr2).concat(arr3);
+      let _hayDetallada = false;
+      all.forEach(entry => {
+        if (!entry || typeof entry !== 'object') return;
+        let _c = String(entry.ciclo || entry.nivel || '').trim().toUpperCase();
+        let _t = String(entry.turno || entry.modalidad || entry.atencion || '').trim().toUpperCase();
+        let _g = String(entry.grado || entry.grado_num || '').trim();
+        let _s = String(entry.seccion || entry.seccion_letra || '').trim().toUpperCase();
+        if (typeof _canonCicloJS === 'function' && _c) _c = (_canonCicloJS(_c) || _c);
+        if (typeof _normModAtencion === 'function' && _t) _t = (_normModAtencion(_t) || _t);
+        const numG = _g.match(/(\d+)/); if (numG) _g = numG[1];
+        if (!_g || !_s) return;
+        // Guardar 3 variantes para match tolerante (INI, INTERMEDIO, INI/INT):
+        const _push = (cc, tt) => {
+          const keys = [
+            `${cc}|${tt}|${_g}|${_s}`,
+            `${cc}|${tt}|G${_g}|${_s}`,
+            `${cc}|${tt}|${_g}°|${_s}`
+          ];
+          keys.forEach(k => { _asigDetalladasSet.add(k); });
+          _hayDetallada = true;
+        };
+        if (!_c) _c = 'AVANZADO';
+        if (!_t) _t = 'PRESENCIAL';
+        const esIniInt = (_c === 'INICIAL' || _c === 'INTERMEDIO' || _c === 'INICIAL/INTERMEDIO');
+        if (esIniInt) {
+          ['INICIAL','INTERMEDIO','INICIAL/INTERMEDIO'].forEach(cc => _push(cc, _t));
+        } else {
+          _push(_c, _t);
+        }
+      });
+      return _hayDetallada;
+    } catch(_) { return false; }
+  })();
+  window.__asigDetalladasSetGlobal = _asigDetalladasSet;
+  window.__asigDetalladasHave = _asigDetalladasHave;
+
   // Helper de chequeo por TARJETA (turnoTarjeta + cicloTarjeta x grado x seccion)
   // Usado dentro del render para decidir si marcar cada checkbox individual
   window.__checkAsigGranularPorModTarjeta = function(turnoTarjetaRaw, cicloTarjetaRaw, gradoRaw, seccionRaw) {
@@ -23289,21 +23356,39 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     if (!hasGlobal) return false;
     const esIniInt = (cicloT === 'INICIAL' || cicloT === 'INTERMEDIO' || cicloT === 'INICIAL/INTERMEDIO');
     // ===================================================================
-    // FIX 2026-08-24 (BUG CRÍTICO: marcas INI/INT AUTO-MARCADAS sin que
-    // el usuario lo marque): tempAsignaciones es PLANO {4:[B,C]} y NO
-    // distingue entre niveles. El PASO0 anterior retorna true si el
-    // ciclo=INI/INT y turno=PRESENCIAL aunque hasGlobal=AVANZADO →
-    // marcaba mal en AMBOS bloques.
-    // SOLUCIÓN:
-    // · Para BLOQUE 1 (INI/INTERMEDIO): solo marcar SI HAY PISTA EXPLÍCITA
-    //   de que la asignación ES PARA INI/INTERMEDIO (no por heurística
-    //   canónica que por defecto = AVANZADO según Excel actual GOLD RULE).
-    //   Pistas válidas:
-    //     a) BD exacta INI/INT: byCicloTurnoGradoSec['INICIAL|PRES|4|B']
-    //        o similar (alumnos reales en ese ciclo/nivel).
-    //     b) Legacy string tutorAulas menciona INICIAL/INTERMEDIO (fb).
-    //     c) byCicloTurno['INICIAL|PRESENCIAL'] > 0 o INTERMEDIO > 0.
-    //   SI NO HAY PISTAS → tempAsignaciones plano {4:[B,C]} = AVANZADO.
+    // ✅ PRIORIDAD N°1 (NUEVA): MATCH EXACTO estructura detallada con
+    // ciclo+turno+grado+seccion. Si existe (savePrivilegios lo guardó en
+    // grados_asignados_json[]), devolvemos TRUE si la tarjeta es la
+    // exacta, FALSE en cualquier otra. SIN HEURÍSTICA → SIN DOBLE MARCA.
+    // ===================================================================
+    if (window.__asigDetalladasHave && window.__asigDetalladasSetGlobal && window.__asigDetalladasSetGlobal.size > 0) {
+      const keysProbar = [];
+      if (esIniInt) {
+        ['INICIAL','INTERMEDIO','INICIAL/INTERMEDIO'].forEach(cc => {
+          keysProbar.push(`${cc}|${turnoTarjeta}|${gK}|${sK}`);
+        });
+      } else {
+        keysProbar.push(`${cicloT}|${turnoTarjeta}|${gK}|${sK}`);
+        if (cicloT !== 'AVANZADO') keysProbar.push(`AVANZADO|${turnoTarjeta}|${gK}|${sK}`);
+      }
+      const matchExacto = keysProbar.some(k => window.__asigDetalladasSetGlobal.has(k));
+      if (matchExacto) return true;
+      // IMPORTANTE: si HAY data detallada para este (gK, sK) PERO en
+      // OTRA modalidad distinta → retornamos FALSE inmediatamente, sin
+      // pasar por heurística canónica. Así B marcado en SEMI nunca se
+      // marca en PRESENCIAL aunque tempAsignaciones plano tenga B.
+      const otrasModalidades = ['PRESENCIAL','SEMIPRESENCIAL','VIRTUAL'];
+      const hayEnOtra = otrasModalidades.some(otraT => {
+        if (otraT === turnoTarjeta) return false;
+        return keysProbar.some(kPrueba => {
+          // reemplazar turnoTarjeta por otraT en la key
+          return !!window.__asigDetalladasSetGlobal.has(kPrueba.replace(`|${turnoTarjeta}|`,`|${otraT}|`));
+        });
+      });
+      if (hayEnOtra) return false;
+    }
+    // ===================================================================
+    // RESTO (solo si NO hay data detallada o la sección no se encontró):
     // ===================================================================
     if (esIniInt) {
       const pistaBD1 = (
@@ -23322,37 +23407,23 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
       if (!_validaIniInt) return false;
       return true;
     }
-    // 1) BD match exacto en ESTA modalidad (AVANZADO, no INI/INT filtro anterior)
+    // 1) BD match exacto en ESTA modalidad
     if (byTurnoGradoSec[`${turnoTarjeta}|${gK}|${sK}`]) return true;
     // 2) Legacy fallback match exacto (tutorAulas string dijo: SEMI/VIRT para este grado/sección)
     const fbGlobal = modaFallbackPorGs[`${gK}|${sK}`];
     if (fbGlobal && fbGlobal === turnoTarjeta) return true;
     // ================================================================
-    // 3) HEURÍSTICA CANÓNICA CEBA (paso fuerte): si tempAsignaciones
-    //    plano {4:[B,C]} SIN BD ni legacy (paso1/2 vacíos): marcar por
-    //    NOMENCLATURA de Excel LISTA GENERAL.xlsx (CANÓN):
-    //      · Nro + Sección A = Presencial (4A PRE, 1A PRE, etc.)
-    //      · Nro + Sección B = Semipresencial (4B SEMI, 1B SEMI)
-    //      · Nro + Sección C = Virtual (4C VIRT, 1C VIRT)
-    //    Así, aunque no haya BD ni legacy deducida de strings tutorAulas, las
-    //    marcas persisten al reabrir el modal.
+    // 3) HEURÍSTICA CANÓNICA CEBA (solo cuando NO hay data detallada):
+    //    A→PRES, B→SEMI, C→VIRT.
     // ================================================================
     if (hasGlobal) {
       if (turnoTarjeta === 'PRESENCIAL' && sK === 'A') return true;
       if (turnoTarjeta === 'SEMIPRESENCIAL' && sK === 'B') return true;
       if (turnoTarjeta === 'VIRTUAL' && sK === 'C') return true;
     }
-    // 4) FALLBACK DE ÚLTIMA RATIO: si el tempAsignaciones tiene la sección
-    //    pero NO hay ninguna otra pista (sección D o grado especial):
-    //    marcarla TODAS las modalidades (evitar perder la marca del usuario).
-    //    (solo para secciones distintas A/B/C; D = Presencial también)
+    // 4) Fallback seccion D = Presencial:
     if (hasGlobal && sK === 'D' && turnoTarjeta === 'PRESENCIAL') return true;
-    // 5) PASO 5: GARANTÍA TOTAL DE PERSISTENCIA (solo AVANZADO).
-    //    Si llegamos hasta aquí y hasGlobal=true (la data SÍ está en BD),
-    //    marcamos por: (a) A,PRE; (b) B,SEMI; (c) C,VIRT; D,PRE
-    //    Ciclo no INI/INT = AVANZADO y 3 subtarjetas presentes.
-    //    Evita que cualquier desfase de byTurnoGradoSec (alumnosCache vacío)
-    //    deje sin marcar un checkbox que SÍ existe en asignaciones persistido.
+    // 5) Garantía persistencia (data detallada no encontrada):
     if (hasGlobal && !esIniInt) {
       if (turnoTarjeta === 'PRESENCIAL' && (sK === 'A' || sK === 'D')) return true;
       if (turnoTarjeta === 'SEMIPRESENCIAL' && sK === 'B') return true;
@@ -23496,7 +23567,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
               <div id="secc-${gradoKey}" style="display:${hasGrado?'flex':'none'};flex-wrap:wrap;gap:8px;padding-left:22px;margin-top:4px;">
                 ${(seccionesCfg || []).map(s => `
                   <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.82rem;">
-                    <input type="checkbox" class="chk-seccion" data-grado="${g}" data-key="${gradoKey}" value="${s}"
+                    <input type="checkbox" class="chk-seccion" data-grado="${g}" data-key="${gradoKey}" data-ciclo="AVANZADO" data-turno="PRESENCIAL" value="${s}"
                       ${seccsSet.has(String(s || '').trim().toUpperCase())?'checked':''}
                       style="accent-color:var(--accent);width:14px;height:14px;">
                     Sección ${s}
@@ -23529,6 +23600,10 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
   const todosLosGrados = ['1','2','3','4','5','6'];
   const seccionesHard = seccionesCfg && seccionesCfg.length ? seccionesCfg.slice() : ['A','B','C','D'];
   const _subTarjetaRender = (labelTarjeta, cicloTarjeta, turnoTarjeta, gradosArray) => {
+    const cicloData = String(cicloTarjeta || 'AVANZADO').trim().toUpperCase();
+    const turnoData = (typeof _normModAtencion === 'function')
+      ? (_normModAtencion(turnoTarjeta) || 'PRESENCIAL')
+      : (String(turnoTarjeta||'').trim().toUpperCase() || 'PRESENCIAL');
     const nivelKeyRand = (cicloTarjeta||'GEN') + '_' + (turnoTarjeta||'TUR') + '_' + Math.floor(Math.random()*9999);
     return `
       <div style="margin-bottom:14px;padding:11px 14px;background:var(--surface2);border-radius:10px;">
@@ -23548,7 +23623,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
           return `
             <div style="margin-bottom:10px;">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.86rem;font-weight:700;margin-bottom:6px;">
-                <input type="checkbox" class="chk-grado" data-grado="${g}" data-key="${gradoKey}"
+                <input type="checkbox" class="chk-grado" data-grado="${g}" data-key="${gradoKey}" data-ciclo="${cicloData}" data-turno="${turnoData}"
                   onchange="toggleGradoSecciones(this)"
                   ${hasGrado?'checked':''}
                   style="accent-color:var(--accent);width:17px;height:17px;">
@@ -23560,7 +23635,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
                   const marcada = !!secMarcadasLocal[sUp];
                   return `
                   <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.84rem;font-weight:600;background:var(--surface);border:1px solid var(--border);padding:6px 10px;border-radius:8px;">
-                    <input type="checkbox" class="chk-seccion" data-grado="${g}" data-key="${gradoKey}" value="${s}"
+                    <input type="checkbox" class="chk-seccion" data-grado="${g}" data-key="${gradoKey}" data-ciclo="${cicloData}" data-turno="${turnoData}" value="${s}"
                       ${marcada?'checked':''}
                       style="accent-color:var(--accent);width:15px;height:15px;">
                     Sección ${s}
