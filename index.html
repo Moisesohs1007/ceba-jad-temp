@@ -23291,6 +23291,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
   // Si grados_asignados_json[] trae ciclo+turno+grado+seccion (guardados por savePrivilegios
   // de este deploy o posteriores), usamos MATCH EXACTO y NO heurística → sin doble marca.
   const _asigDetalladasSet = new Set();
+  const _asigDetalladasGsSet = new Set(); // keys: "gK|sK" → si esta gs tiene data detallada CUALQUIER modalidad
   const _asigDetalladasHave = (() => {
     try {
       const d = (uid && uDataOverride && typeof uDataOverride === 'object')
@@ -23325,6 +23326,8 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
         // metemos al Set. Evita default PRES = contaminar keys con asignaciones que en
         // verdad eran SEMI/VIRT (legacy sin info completa → heurística posterior decide).
         if (!_t) return;
+        const _pushGs = `${_g}|${_s}`;
+        if (!_asigDetalladasGsSet.has(_pushGs)) _asigDetalladasGsSet.add(_pushGs);
         const _push = (cc, tt) => {
           const keys = [
             `${cc}|${tt}|${_g}|${_s}`,
@@ -23346,6 +23349,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     } catch(_) { return false; }
   })();
   window.__asigDetalladasSetGlobal = _asigDetalladasSet;
+  window.__asigDetalladasGsSetGlobal = _asigDetalladasGsSet;
   window.__asigDetalladasHave = _asigDetalladasHave;
 
   // Helper de chequeo por TARJETA (turnoTarjeta + cicloTarjeta x grado x seccion)
@@ -23367,56 +23371,54 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     const hasGlobal = secsArr.some(x => String(x||'').trim().toUpperCase() === sK);
     if (!hasGlobal) return false;
     const esIniInt = (cicloT === 'INICIAL' || cicloT === 'INTERMEDIO' || cicloT === 'INICIAL/INTERMEDIO');
+    const gsKey = `${gK}|${sK}`;
+    const gsDetallada = (window.__asigDetalladasGsSetGlobal && window.__asigDetalladasGsSetGlobal.has(gsKey));
     // ===================================================================
-    // ✅ PRIORIDAD N°1 (NUEVA): MATCH EXACTO estructura detallada con
-    // ciclo+turno+grado+seccion. Si existe (savePrivilegios lo guardó en
-    // grados_asignados_json[]), devolvemos TRUE si la tarjeta es la
-    // exacta, FALSE en cualquier otra. SIN HEURÍSTICA → SIN DOBLE MARCA.
+    // ✅ PRIORIDAD N°1 (2026-08-24 — FINAL): SI LA (GRADO,SECCION) FUE
+    // GUARDADA CON ESTRUCTURA DETALLADA (ciclo+turno+grado+seccion), el
+    // RESULTADO DEPENDE EXCLUSIVAMENTE DEL MATCH CICLO+TURNO+GRADO+SECCION.
+    // NO SE USA PASO1-5, NO HEURÍSTICA, NO BD ALUMNOS MATCH (byTurnoGradoSec)
+    // — evita que alumnos PRESENCIAL desfasados de importaciones antiguos
+    // marquen B en PRESENCIAL cuando la asignación real es SEMI.
     // ===================================================================
-    if (window.__asigDetalladasHave && window.__asigDetalladasSetGlobal && window.__asigDetalladasSetGlobal.size > 0) {
-      const keysProbar = [];
+    if (gsDetallada && window.__asigDetalladasSetGlobal) {
       const ciclosParaMatch = [];
       if (esIniInt) {
-        ['INICIAL','INTERMEDIO','INICIAL/INTERMEDIO'].forEach(cc => {
-          ciclosParaMatch.push(cc);
-          keysProbar.push(`${cc}|${turnoTarjeta}|${gK}|${sK}`);
-        });
+        ['INICIAL','INTERMEDIO','INICIAL/INTERMEDIO'].forEach(cc => ciclosParaMatch.push(cc));
       } else {
         ciclosParaMatch.push(cicloT);
-        keysProbar.push(`${cicloT}|${turnoTarjeta}|${gK}|${sK}`);
-        if (cicloT !== 'AVANZADO') {
-          ciclosParaMatch.push('AVANZADO');
-          keysProbar.push(`AVANZADO|${turnoTarjeta}|${gK}|${sK}`);
-        }
+        if (cicloT !== 'AVANZADO') ciclosParaMatch.push('AVANZADO');
       }
+      const keysProbar = [];
+      ciclosParaMatch.forEach(cc => {
+        keysProbar.push(`${cc}|${turnoTarjeta}|${gK}|${sK}`);
+        keysProbar.push(`${cc}|${turnoTarjeta}|G${gK}|${sK}`);
+        keysProbar.push(`${cc}|${turnoTarjeta}|${gK}°|${sK}`);
+      });
       const matchExacto = keysProbar.some(k => window.__asigDetalladasSetGlobal.has(k));
+      // Ya NO usamos byTurnoGradoSec. Si está en el gsSet PERO NO en esta modalidad
+      // → significa que está en OTRA → retorna false (bloqueado).
       if (matchExacto) return true;
-      // ✅ FIX 2026-08-24: BUSQUEDA EN OTRA MODALIDAD ROBUSTA.
-      // Si (gK, sK) existe en el Set PERO en PRES / SEMI / VIRT distinto al turnoTarjeta
-      // actual → FALSE inmediatamente (no pasar por heurística). No usa .replace frágil,
-      // construye todas las keys posibles con las 3 modalidades × los ciclos de arriba.
-      const otrasModalidades = ['PRESENCIAL','SEMIPRESENCIAL','VIRTUAL'].filter(t => t !== turnoTarjeta);
-      let hayEnOtraModalidad = false;
-      for (let i = 0; i < otrasModalidades.length; i++) {
-        const otraT = otrasModalidades[i];
-        for (let j = 0; j < ciclosParaMatch.length; j++) {
-          const cc = ciclosParaMatch[j];
-          const _keys = [
-            `${cc}|${otraT}|${gK}|${sK}`,
-            `${cc}|${otraT}|G${gK}|${sK}`,
-            `${cc}|${otraT}|${gK}°|${sK}`
-          ];
-          if (_keys.some(k => window.__asigDetalladasSetGlobal.has(k))) {
-            hayEnOtraModalidad = true;
-            break;
-          }
-        }
-        if (hayEnOtraModalidad) break;
-      }
-      if (hayEnOtraModalidad) return false;
+      return false;
     }
     // ===================================================================
-    // RESTO (solo si NO hay data detallada o la sección no se encontró):
+    // RESTO (legacy: sin data detallada gs → merge visual tempAsignaciones
+    // plano + tutorAulas strings + heurística).
+    // ===================================================================
+    // ===================================================================
+    // ✅ PRIORIDAD LEGACY N°1: HEURÍSTICA CANÓNICA CEBA (antes de BD alumnos).
+    //    Si tempAsignaciones plano {4:[B,C]} tiene la sección → marcar según
+    //    nomenclatura canon: A=PRE, B=SEMI, C=VIRT. ESTO GANA sobre BD
+    //    alumnos byTurnoGradoSec que pueda estar desfasada por importaciones
+    //    antiguas (antes fix handleExcel, 4B SEMI importado como PRES).
+    // ===================================================================
+    if (hasGlobal) {
+      if (turnoTarjeta === 'PRESENCIAL' && sK === 'A') return true;
+      if (turnoTarjeta === 'SEMIPRESENCIAL' && sK === 'B') return true;
+      if (turnoTarjeta === 'VIRTUAL' && sK === 'C') return true;
+    }
+    // ===================================================================
+    // BLOQUE 1 LEGACY: INICIAL / INTERMEDIO (solo válido Presencial, pistas explícitas)
     // ===================================================================
     if (esIniInt) {
       const pistaBD1 = (
@@ -23435,20 +23437,11 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
       if (!_validaIniInt) return false;
       return true;
     }
-    // 1) BD match exacto en ESTA modalidad
-    if (byTurnoGradoSec[`${turnoTarjeta}|${gK}|${sK}`]) return true;
     // 2) Legacy fallback match exacto (tutorAulas string dijo: SEMI/VIRT para este grado/sección)
     const fbGlobal = modaFallbackPorGs[`${gK}|${sK}`];
     if (fbGlobal && fbGlobal === turnoTarjeta) return true;
-    // ================================================================
-    // 3) HEURÍSTICA CANÓNICA CEBA (solo cuando NO hay data detallada):
-    //    A→PRES, B→SEMI, C→VIRT.
-    // ================================================================
-    if (hasGlobal) {
-      if (turnoTarjeta === 'PRESENCIAL' && sK === 'A') return true;
-      if (turnoTarjeta === 'SEMIPRESENCIAL' && sK === 'B') return true;
-      if (turnoTarjeta === 'VIRTUAL' && sK === 'C') return true;
-    }
+    // 3) BD alumnos match exacto en ESTA modalidad (último, después de canon para no desfasar)
+    if (byTurnoGradoSec[`${turnoTarjeta}|${gK}|${sK}`]) return true;
     // 4) Fallback seccion D = Presencial:
     if (hasGlobal && sK === 'D' && turnoTarjeta === 'PRESENCIAL') return true;
     // 5) Garantía persistencia (data detallada no encontrada):
