@@ -9483,17 +9483,49 @@ async function renderAlumnos() {
       alumnos = alumnos.filter(a => _matchNivel(a, _vNivel, _cfg));
     }
     if (_vMod) {
-      const modNorm = _normModAtencion(_vMod) || _vMod;
-      alumnos = alumnos.filter(a => {
-        const t = String(a.turno || '').trim();
-        const tNorm = _normModAtencion(t);
-        const eq = (tNorm === modNorm);
-        // Debug edge case 1·B Semipresencial
-        if (!eq && (a.grado === '1' || a.grado === 1) && String(a.seccion||'').trim().toUpperCase() === 'B') {
-          console.debug('[filterMod] mismatch 1·B: turno raw=', JSON.stringify(t), 'turnoNorm=', tNorm, 'vMod raw=', JSON.stringify(_vMod), 'modNorm=', modNorm, 'alumno=', a.nombres, a.apellidos);
+      const modNorm = (_normModAtencion ? _normModAtencion(_vMod) : String(_vMod||'').trim().toUpperCase().replace(/[\s\-_]/g,'')) || String(_vMod||'').trim();
+      // 4 estrategias de match por si la normalización falla por UTF-8 raro o variantes.
+      function _matchMod(aTurnoRaw, modTarget) {
+        const t = String(aTurnoRaw || '').trim();
+        const modT = String(modTarget || '').trim().toUpperCase();
+        if (!t && !modT) return true;
+        if (!t || !modT) return false;
+        // Helper: normalización ULTRA agresiva (NFD + quita TODO no A-Z 0-9)
+        function _ultraNorm(x) {
+          let s = String(x || '').trim();
+          try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch(_) {}
+          s = s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+          return s;
         }
-        return eq;
+        // Estrategia 1: normal oficial (si existe)
+        try { if (_normModAtencion) { const tC = _normModAtencion(t); const mC = _normModAtencion(modT); if (tC && mC && tC === mC) return true; } } catch(_) {}
+        // Estrategia 2: ultraNorm (quita todo no letra)
+        const tu = _ultraNorm(t), mu = _ultraNorm(modT);
+        if (tu && mu && (tu === mu || tu.startsWith(mu) || mu.startsWith(tu))) return true;
+        // Estrategia 3: contains semántico (si target canon es SEMI/PRES/VIRT, busca palabras clave en turno raw)
+        if (mu === 'SEMIPRESENCIAL' || modT.indexOf('SEMI') !== -1) {
+          if (/SEMI|MIXTO|HIBR|HÍBR|SEMI\s*PRESEN/i.test(t)) return true;
+        }
+        if (mu === 'PRESENCIAL' || modT.indexOf('PRESEN') !== -1) {
+          if (/PRESEN|^PRE$|^P$|PRES/i.test(t)) return true;
+        }
+        if (mu === 'VIRTUAL' || modT.indexOf('VIRT') !== -1) {
+          if (/VIRT|REMOTO|ONLINE|VIRTU/i.test(t)) return true;
+        }
+        // Estrategia 4: después de todo, raw toUpperCase ===
+        if (String(t).toUpperCase().replace(/\s+/g,'') === String(modT).toUpperCase().replace(/\s+/g,'')) return true;
+        return false;
+      }
+      const countAntes = alumnos.length;
+      alumnos = alumnos.filter(a => {
+        const match = _matchMod(a.turno, modNorm);
+        // Debug 1·B siempre
+        if (a && (String(a.grado||'').trim() === '1') && (String(a.seccion||'').trim().toUpperCase() === 'B')) {
+          try { console.debug('[1·B debug] alumno=', a.apellidos, a.nombres, 'turnoRaw=', JSON.stringify(a.turno||''), 'modTarget=', JSON.stringify(modNorm), 'match=', match); } catch(_) {}
+        }
+        return match;
       });
+      try { console.groupCollapsed('%c[filterMod]', 'color:#f59e0b;font-weight:bold'); console.log('total antes filtro:', countAntes, 'después:', alumnos.length, 'modTarget=', modNorm); const t1bs = alumnos.length; console.groupEnd(); } catch(_) {}
     }
     if (_vQ) {
       const qRaw = _vQ;
@@ -27080,7 +27112,7 @@ async function repararRapidoAlumnos() {
   const statusEl = document.getElementById('diag-status');
   if (_normRol(currentRol) !== 'admin') { toast('Solo administrador puede reparar datos', 'error'); return; }
   try {
-    if (!confirm('🛠 Reparación RÁPIDA (segura CEBA):\n\nPASOS:\n1) Quitamos espacios en blanco al inicio/final en ciclo/grado/seccion/turno.\n2) Quitamos "(Inicial)"/"(Intermedio)" del campo GRADO (solo lo dejamos como número: "1 (Inicial)" → "1").\n3) Si ciclo = INICIAL/INTERMEDIO agrupado → lo deducimos por grado (1-3=INICIAL, 4-6=INTERMEDIO).\n4) Sección → letra mayúscula sola.\n5) Turno → normalizado a Presencial / Semipresencial / Virtual.\n6) [RECLASIFICACIÓN CICLO SEGURA]:\n   • Presencial + Grado 1-3 → ciclo = INICIAL\n   • Presencial + Grado 4-6 → ciclo = INTERMEDIO\n   • Virtual / Semipresencial (cualquier grado) → ciclo = AVANZADO\n\nCiclo/turno/seccion VACÍOS los DEJAMOS vacíos (NO inventamos datos).\n\n¿Continuar?')) return;
+    if (!confirm('🛠 Reparación RÁPIDA (segura CEBA):\n\nPASOS:\n1) Quitamos espacios en blanco al inicio/final en ciclo/grado/seccion/turno.\n2) Quitamos "(Inicial)"/"(Intermedio)"/"(Avanzado)" del campo GRADO (solo lo dejamos como número: "1 (Inicial)" → "1").\n3) Si ciclo = INICIAL/INTERMEDIO agrupado, INICIAL solo o INTERMEDIO solo → TODO lo normalizamos al VALOR CANON ÚNICO "INICIAL/INTERMEDIO" (NO SEPARAMOS Inicial/Intermedio - CEBA son 2 niveles TOTALES: 1° INICIAL/INTERMEDIO, 2° AVANZADO).\n4) Sección → letra mayúscula sola.\n5) Turno → normalizado a Presencial / Semipresencial / Virtual (acentos/espacios unificados).\n6) [RECLASIFICACIÓN CICLO SEGURA]:\n   • Presencial (cualquier grado 1,2,3,4,5,6) → ciclo = "INICIAL/INTERMEDIO" (UN VALOR, NO SEPARA).\n   • Virtual / Semipresencial (cualquier grado) → ciclo = AVANZADO.\n\nCiclo/turno/seccion VACÍOS los DEJAMOS vacíos (NO inventamos datos).\n\n¿Continuar?')) return;
     statusEl.style.display = 'block';
     statusEl.style.background = 'rgba(96,165,250,0.08)';
     statusEl.style.color = '#93c5fd';
