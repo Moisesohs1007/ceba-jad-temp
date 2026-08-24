@@ -23406,11 +23406,37 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     // plano + tutorAulas strings + heurística).
     // ===================================================================
     // ===================================================================
-    // ✅ PRIORIDAD LEGACY N°1: HEURÍSTICA CANÓNICA CEBA (antes de BD alumnos).
-    //    Si tempAsignaciones plano {4:[B,C]} tiene la sección → marcar según
-    //    nomenclatura canon: A=PRE, B=SEMI, C=VIRT. ESTO GANA sobre BD
-    //    alumnos byTurnoGradoSec que pueda estar desfasada por importaciones
-    //    antiguas (antes fix handleExcel, 4B SEMI importado como PRES).
+    // ✅ PRIORIDAD LEGACY N°0 (MÁXIMA, SIN PENSAR): SI LA SECCIÓN PERTENECE
+    // AL CANON A/B/C Y hasGlobal=true, APLICAR BLOQUEO ESTRICTO POR MODALIDAD.
+    // ESTE PASO GANA POR ENCIMA DE TODO LO DEMÁS (byTurnoGradoSec BD alumnos,
+    // modaFallback, PASO5 Garantía). NUNCA MÁS SE MARCA B EN PRESENCIAL POR
+    // DATA ANTIGUA DESFASADA DE ALUMNOS (antes fix handleExcel).
+    //   · A → SÓLO PRESENCIAL (SEMI/VIRT = FALSE INMEDIATO)
+    //   · B → SÓLO SEMIPRESENCIAL (PRES/VIRT = FALSE INMEDIATO)
+    //   · C → SÓLO VIRTUAL (PRES/SEMI = FALSE INMEDIATO)
+    // ===================================================================
+    if (hasGlobal && (sK === 'A' || sK === 'B' || sK === 'C')) {
+      const _canon = { A: 'PRESENCIAL', B: 'SEMIPRESENCIAL', C: 'VIRTUAL' }[sK];
+      if (turnoTarjeta === _canon) return true;
+      // ✅ CUALQUIER OTRA MODALIDAD PARA A/B/C = FALSE INMEDIATO (bloqueo).
+      // Esto impide que byTurnoGradoSec["PRESENCIAL|4|B"] = true o cualquier
+      // otro paso residual marque B en PRESENCIAL o C en SEMI etc.
+      return false;
+    }
+    // ===================================================================
+    // ✅ PRIORIDAD LEGACY N°1: modaFallbackPorGs (deducción desde strings
+    //    tutorAulas legacy "4°B SEMI"). SI está definida para esta (g,s),
+    //    SOLAMENTE puede marcarse en ESA modalidad (nada más).
+    // ===================================================================
+    const fbGlobal0 = modaFallbackPorGs[`${gK}|${sK}`];
+    if (hasGlobal && fbGlobal0) {
+      if (turnoTarjeta === fbGlobal0) return true;
+      return false;
+    }
+    // ===================================================================
+    // ✅ PRIORIDAD LEGACY N°2: HEURÍSTICA CANÓNICA CEBA (redundante ya que
+    //    el bloqueo N°0 lo cubre, pero lo dejamos por seguridad para secciones
+    //    sin gsDetallada). No hace else return false (el bloqueo 0 lo hace).
     // ===================================================================
     if (hasGlobal) {
       if (turnoTarjeta === 'PRESENCIAL' && sK === 'A') return true;
@@ -23427,9 +23453,9 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
         !!byCicloTurnoGradoSec[`INICIAL/INTERMEDIO|${turnoTarjeta}|${gK}|${sK}`]
       );
       const hayAlumnosIniInt = ((byCicloTurno['INICIAL|PRESENCIAL'] || 0) + (byCicloTurno['INTERMEDIO|PRESENCIAL'] || 0) + (byCicloTurno['INICIAL/INTERMEDIO|PRESENCIAL'] || 0)) > 0;
-      const fb = modaFallbackPorGs[`${gK}|${sK}`];
-      const fbIniIntStr = (typeof fb === 'string' && (
-        fb.includes('INICIAL') || fb.includes('INTERMEDIO') || fb.includes('INI')
+      const fbIni = modaFallbackPorGs[`${gK}|${sK}`];
+      const fbIniIntStr = (typeof fbIni === 'string' && (
+        fbIni.includes('INICIAL') || fbIni.includes('INTERMEDIO') || fbIni.includes('INI')
       ));
       const pistaFB = (fbIniIntStr && turnoTarjeta === 'PRESENCIAL');
       const pistaBD2 = (hayAlumnosIniInt && turnoTarjeta === 'PRESENCIAL' && byTurnoGradoSec[`PRESENCIAL|${gK}|${sK}`]);
@@ -23437,18 +23463,20 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
       if (!_validaIniInt) return false;
       return true;
     }
-    // 2) Legacy fallback match exacto (tutorAulas string dijo: SEMI/VIRT para este grado/sección)
-    const fbGlobal = modaFallbackPorGs[`${gK}|${sK}`];
-    if (fbGlobal && fbGlobal === turnoTarjeta) return true;
-    // 3) BD alumnos match exacto en ESTA modalidad (último, después de canon para no desfasar)
+    // 2) Legacy fallback match exacto (tutorAulas string dijo: SEMI/VIRT para este grado/sección) — redundante, cubierto por fbGlobal0 arriba.
+    // (eliminado para no repetir).
+    // ===================================================================
+    // 3) BD alumnos match exacto en ESTA modalidad — SÓLO PERMITIDO para
+    //    SECCIONES FUERA DEL CANON (D u otras) O CUANDO hasGlobal=false.
+    //    NUNCA MÁS para A/B/C con hasGlobal (bloqueo N°0 lo evita).
+    // ===================================================================
     if (byTurnoGradoSec[`${turnoTarjeta}|${gK}|${sK}`]) return true;
-    // 4) Fallback seccion D = Presencial:
+    // 4) Fallback seccion D = Presencial (solo fuera de canon):
     if (hasGlobal && sK === 'D' && turnoTarjeta === 'PRESENCIAL') return true;
-    // 5) Garantía persistencia (data detallada no encontrada):
-    if (hasGlobal && !esIniInt) {
-      if (turnoTarjeta === 'PRESENCIAL' && (sK === 'A' || sK === 'D')) return true;
-      if (turnoTarjeta === 'SEMIPRESENCIAL' && sK === 'B') return true;
-      if (turnoTarjeta === 'VIRTUAL' && sK === 'C') return true;
+    // 5) Garantía persistencia — SÓLO para secciones NO canon (D).
+    //    (para A/B/C el bloqueo N°0 ya decidió true/false y no llega aquí).
+    if (hasGlobal && !esIniInt && sK !== 'A' && sK !== 'B' && sK !== 'C') {
+      if (turnoTarjeta === 'PRESENCIAL') return true;
     }
     return false;
   };
