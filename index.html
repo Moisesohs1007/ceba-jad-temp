@@ -23940,7 +23940,14 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
   const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
   const alumnos = Array.isArray(options.alumnos) ? options.alumnos : (isProf ? await getAlumnosFiltrados() : await DB.getAlumnos());
   const alumnosFiltrados = alumnos.filter(a => !grado || grado === 'TODOS' || a.grado === grado);
-  const seccionesDeAlumnos = [...new Set(alumnosFiltrados.map(a => a.seccion || 'A').filter(Boolean))].sort();
+  const seccionesDeAlumnosRaw = [...new Set(alumnosFiltrados.map(a => a.seccion || 'A').filter(Boolean))].sort();
+
+  // ================================================================
+  // FIX 2026-08-24 (v2): UNION Set FINAL (no array) para no perder
+  //   las secciones ASIGNADAS al docente cuando la BD aún no tiene
+  //   alumnos en esa seccion (ej: 4B SEMI fue no importado → 0 rows).
+  // ================================================================
+  const seccionesSet = new Set(seccionesDeAlumnosRaw.map(s => String(s||'').trim().toUpperCase()).filter(Boolean));
 
   // ================================================================
   // FIX 2026-08-24: SI ES DOCENTE INCLUIMOS SUS SECCIONES ASIGNADAS
@@ -23955,7 +23962,7 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
         if (grado && grado !== 'TODOS' && String(g||'').trim() !== String(grado||'').trim()) return;
         (Array.isArray(secs) ? secs : []).forEach(sRaw => {
           const s = String(sRaw||'').trim().toUpperCase();
-          if (s && s !== 'TODAS') seccionesDeAlumnos.push(s);
+          if (s && s !== 'TODAS') seccionesSet.add(s);
         });
       });
     } catch(_) {}
@@ -23965,7 +23972,7 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
         const gC = String(a?.grado||'').trim();
         if (grado && grado !== 'TODOS' && gC !== String(grado||'').trim()) return;
         const sC = String(a?.seccion||'').trim().toUpperCase();
-        if (sC && sC !== 'TODAS') seccionesDeAlumnos.push(sC);
+        if (sC && sC !== 'TODAS') seccionesSet.add(sC);
       });
     } catch(_) {}
     try {
@@ -23974,7 +23981,7 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
         const gC = String(a?.grado||'').trim();
         if (grado && grado !== 'TODOS' && gC !== String(grado||'').trim()) return;
         const sC = String(a?.seccion||'').trim().toUpperCase();
-        if (sC && sC !== 'TODAS') seccionesDeAlumnos.push(sC);
+        if (sC && sC !== 'TODAS') seccionesSet.add(sC);
       });
     } catch(_) {}
     try {
@@ -23984,24 +23991,26 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
         const gC = String(a?.grado||'').trim();
         if (grado && grado !== 'TODOS' && gC !== String(grado||'').trim()) return;
         const sC = String(a?.seccion||'').trim().toUpperCase();
-        if (sC && sC !== 'TODAS') seccionesDeAlumnos.push(sC);
+        if (sC && sC !== 'TODAS') seccionesSet.add(sC);
       });
     } catch(_) {}
   }
 
+  // Convertir Set → array ordenado (fuente definitiva)
+  const seccionesDeAlumnos = [...seccionesSet].sort();
+
   // Usar config como orden preferido; si no hay coincidencias, usar secciones de alumnos directamente
   const seccCfg = (cfg.secciones || []).filter(Boolean);
   let secciones = seccCfg.length > 0
-    ? seccCfg.filter(s => (new Set(seccionesDeAlumnos)).has(s))
+    ? seccCfg.filter(s => seccionesSet.has(String(s||'').trim().toUpperCase()))
     : seccionesDeAlumnos.slice();
   // Seguridad: si las de configuracion no matchearon ninguna (p. ej: secciones son lowercase docente uppercase B, o config solo tiene A/B y docente asignó C/D)
-  //   → usamos el set completo (con dedupe).
+  //   → usamos el set completo.
   if(secciones.length === 0) {
-    const setAll = new Set(seccionesDeAlumnos.map(s => String(s||'').trim().toUpperCase()).filter(Boolean));
-    secciones = [...setAll].sort();
+    secciones = [...seccionesSet].sort();
   }
   // Si la config no cubrió ninguna sección real, mostrar las de alumnos (pero nunca "inventar" secciones para profesor)
-  if(secciones.length === 0) secciones = seccionesDeAlumnos.length > 0 ? [...new Set(seccionesDeAlumnos.map(s => String(s||'').trim().toUpperCase()).filter(Boolean))].sort() : (isProf ? [] : seccCfg);
+  if(secciones.length === 0) secciones = (seccionesSet.size > 0 ? [...seccionesSet].sort() : (isProf ? [] : seccCfg));
 
   el.innerHTML = `<option value="" disabled selected>-- Sección --</option><option value="TODOS">Todas</option>`;
   secciones.forEach(s => { el.innerHTML += `<option value="${s}">${s}</option>`; });
