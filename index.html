@@ -5579,16 +5579,6 @@ const _MODALIDAD_CEBA_LABEL = { 'INICIAL/INTERMEDIO': 'Inicial / Intermedio', 'A
 // ============================================================
 const _MODALIDADES_ATENCION = ['PRESENCIAL', 'SEMIPRESENCIAL', 'VIRTUAL'];
 const _MODALIDAD_ATENCION_LABEL = { 'PRESENCIAL': 'Presencial', 'SEMIPRESENCIAL': 'Semipresencial', 'VIRTUAL': 'Virtual' };
-function _normModAtencion(val) {
-  const s = String(val || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
-  if (!s) return '';
-  if (s.includes('PRESEN') || s === 'P' || s === 'PRE') return 'PRESENCIAL';
-  if (s.includes('SEMI') || s === 'S' || s.includes('MIXTO') || s.includes('HIBRIDO') || s.includes('HÍBRIDO')) return 'SEMIPRESENCIAL';
-  if (s.includes('VIRT') || s === 'V' || s.includes('REMOTO') || s.includes('ONLINE')) return 'VIRTUAL';
-  // Legacy: si llegara INICIAL/INTERMEDIO desde la reestructura, forzar PRESENCIAL
-  if (s.includes('INICIAL') || s.includes('INTERMEDIO')) return 'PRESENCIAL';
-  return String(val || '').trim().toUpperCase();
-}
 // Dado un CICLO pedagógico CEBA, devuelve la lista de modalidades de atención permitidas
 function _modalidadesAtencionPermitidasParaCiclo(ciclo) {
   const c = _canonCicloJS(String(ciclo || ''));
@@ -23368,6 +23358,7 @@ async function onNivelChangeAlumnos() {
   document.getElementById('fa-seccion').value = '';
   document.getElementById('fa-modalidad').value = '';
   document.getElementById('search-alumnos').value = '';
+  // CASCADA 4 niveles: NIVEL → solo habilita GRADO. Seccion y Modalidad siguen DISABLED hasta sus pasos.
   _disableSelect('fa-seccion');
   _disableSelect('fa-modalidad');
   const nivel = document.getElementById('fa-nivel').value;
@@ -23381,11 +23372,6 @@ async function onNivelChangeAlumnos() {
     _disableSelect('fa-grado');
   }
   await poblarFiltroSeccion('fa-seccion', null);
-  if(nivel) _enableSelect('fa-seccion');
-  else _disableSelect('fa-seccion');
-  // Modalidad: habilitada solo si hay Nivel seleccionado
-  if(nivel) _enableSelect('fa-modalidad');
-  else _disableSelect('fa-modalidad');
   renderAlumnos();
 }
 
@@ -23411,8 +23397,6 @@ async function onGradoChangeAlumnos() {
         if(match) nivelAuto = String(match[campo]||'').trim();
       } catch(_) {}
     }
-    // Si el usuario ya habia elegido un nivel explicitamente distinto al detectado,
-    // validar alumnos coincidentes en el nivel elegido. Si existen: NO pisar.
     if(nivelElegidoPorUsuario && nivelElegidoPorUsuario !== nivelAuto) {
       try {
         const todos = await DB.getAlumnos();
@@ -23431,6 +23415,9 @@ async function onGradoChangeAlumnos() {
       document.getElementById('fa-nivel').value = nivelAuto;
     }
     await poblarFiltroSeccion('fa-seccion', grado);
+    // CASCADA: Grado → solo habilita SECCION. Modalidad sigue DISABLED hasta que elijan Sección.
+    document.getElementById('fa-modalidad').value = '';
+    _disableSelect('fa-modalidad');
     _enableSelect('fa-seccion');
   } else {
     const nivel = document.getElementById('fa-nivel').value;
@@ -23457,6 +23444,14 @@ async function onGradoChangeAlumnos() {
 
 function onSeccionChangeAlumnos() {
   document.getElementById('search-alumnos').value = '';
+  // CASCADA: Sección → FINALMENTE habilita Modalidad.
+  const seccion = document.getElementById('fa-seccion').value;
+  if (seccion && seccion !== 'TODOS') {
+    _enableSelect('fa-modalidad');
+  } else {
+    document.getElementById('fa-modalidad').value = '';
+    _disableSelect('fa-modalidad');
+  }
   renderAlumnos();
 }
 
@@ -23476,19 +23471,34 @@ function onSearchAlumnos() {
     _disableSelect('fa-seccion');
     _disableSelect('fa-modalidad');
   } else {
+    // CASCADA: re-evaluar según lo que tenga seleccionado de NIVEL → GRADO → SECCIÓN → MODALIDAD
     const n = document.getElementById('fa-nivel').value;
-    if (n && n !== 'TODOS') {
-      _enableSelect('fa-grado');
-      _enableSelect('fa-seccion');
-      _enableSelect('fa-modalidad');
-    } else if (n === 'TODOS') {
-      _enableSelect('fa-grado');
-      _enableSelect('fa-seccion');
-      _enableSelect('fa-modalidad');
-    } else {
+    const g = document.getElementById('fa-grado').value;
+    const s = document.getElementById('fa-seccion').value;
+    // Siempre parte desde NIVEL:
+    if (!n) {
       _disableSelect('fa-grado');
       _disableSelect('fa-seccion');
       _disableSelect('fa-modalidad');
+      document.getElementById('fa-grado').value   = '';
+      document.getElementById('fa-seccion').value = '';
+      document.getElementById('fa-modalidad').value = '';
+    } else {
+      _enableSelect('fa-grado');
+      if (!g || g === 'TODOS') {
+        _disableSelect('fa-seccion');
+        _disableSelect('fa-modalidad');
+        document.getElementById('fa-seccion').value = '';
+        document.getElementById('fa-modalidad').value = '';
+      } else {
+        _enableSelect('fa-seccion');
+        if (!s || s === 'TODOS') {
+          _disableSelect('fa-modalidad');
+          document.getElementById('fa-modalidad').value = '';
+        } else {
+          _enableSelect('fa-modalidad');
+        }
+      }
     }
   }
   clearTimeout(_searchAlumnosTimer);
@@ -27012,7 +27022,10 @@ async function runDiagnosticoAlumnos() {
 
       if (/^[A-Z]$/.test(seccionRaw)) stats.seccionValida++;
 
-      const key = [cicloRaw || '(SIN CICLO)', gradoRaw || '(SIN GRADO)', seccionRaw || '(SIN SECCION)', turnoRaw || '(SIN TURNO)'].join(' ⋅ ');
+      const cicloKeyNorm = _modalidadDesdeCiclo(cicloRaw || '') || cicloRaw || '(SIN CICLO)';
+      const turnoNorm = (typeof _normModAtencion === 'function') ? _normModAtencion(turnoRaw) : (turnoRaw || '');
+      const turnoLabel = (turnoNorm && _MODALIDAD_ATENCION_LABEL ? (_MODALIDAD_ATENCION_LABEL[turnoNorm] || turnoNorm) : (turnoNorm || '(SIN TURNO)'));
+      const key = [cicloKeyNorm, gradoRaw || '(SIN GRADO)', seccionRaw || '(SIN SECCION)', turnoLabel].join(' ⋅ ');
       grupos.set(key, (grupos.get(key) || 0) + 1);
 
       if (!gradoRaw || !seccionRaw || !cicloRaw || (seccionRaw && !/^[A-Z]$/.test(seccionRaw)) || (gradoRaw && !g1)) {
@@ -27117,9 +27130,9 @@ async function repararRapidoAlumnos() {
     statusEl.style.background = 'rgba(96,165,250,0.08)';
     statusEl.style.color = '#93c5fd';
     statusEl.textContent = 'Reparando... no cierres esta pestaña.';
-    showLoader('Reparando datos alumnos...');
+    toast('Iniciando reparación rápida (204 alumnos)...', 'info');
     const all = await DB.getAlumnos();
-    let upd = 0, fixes = { cicloDeducido: 0, sufijoLimpio: 0, espacios: 0, cicloReclasificado: 0 };
+    let upd = 0, fixes = { cicloDeducido: 0, sufijoLimpio: 0, espacios: 0, cicloReclasificado: 0, turnoNorm: 0 };
     const cicloCebas = new Set(['INICIAL','INTERMEDIO','AVANZADO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO']);
     for (const a of all) {
       let changed = false;
@@ -27141,34 +27154,37 @@ async function repararRapidoAlumnos() {
           }
         }
       }
-      // 3) ciclo INICIAL/INTERMEDIO agrupado → lo NORMALIZAMOS a "INICIAL/INTERMEDIO" (NO separar, CEBA tiene 2 niveles).
-      // Antes (mal): 1-3=INICIAL / 4-6=INTERMEDIO (3 niveles). Ahora (correcto): TODO Presencial 1-6 = INICIAL/INTERMEDIO (1 nivel no 2).
+      // 3) ciclo INICIAL/INTERMEDIO agrupado / INICIAL solo / INTERMEDIO solo → TODO a "INICIAL/INTERMEDIO" (CEBA 2 niveles NO 3).
+      // NO requiere grado (es normalización etiqueta ciclo). Antes: 1-3=INI 4-6=INT (3 niveles mal); Ahora: TODO lo anterior = 1 canon.
       let cicloUp = String(a.ciclo || '').toUpperCase();
-      if ((cicloUp === 'INICIAL/INTERMEDIO' || cicloUp === 'INICIAL / INTERMEDIO') && a.grado) {
-        a.ciclo = 'INICIAL/INTERMEDIO';
-        changed = true;
-        fixes.cicloDeducido++;
-        cicloUp = String(a.ciclo || '').toUpperCase();
-      }
-      if ((cicloUp === 'INICIAL' || cicloUp === 'INTERMEDIO') && a.grado) {
-        // Normalizar también valores antiguos separados INICIAL / INTERMEDIO → a INICIAL/INTERMEDIO (CEBA 2 niveles no 3)
-        const gnum = parseInt(String(a.grado).match(/\d+/)?.[0] || '0', 10);
-        if (gnum >= 1 && gnum <= 6) {
-          a.ciclo = 'INICIAL/INTERMEDIO';
+      const _oldCiclo = String(a.ciclo || '');
+      const _esIniInt = (
+        cicloUp === 'INICIAL/INTERMEDIO' ||
+        cicloUp === 'INICIAL / INTERMEDIO' ||
+        cicloUp === 'INICIAL' ||
+        cicloUp === 'INTERMEDIO' ||
+        cicloUp === 'INI/INT' ||
+        cicloUp === 'INICI/INTER'
+      );
+      if (_esIniInt) {
+        const _newCiclo = 'INICIAL/INTERMEDIO';
+        if (_oldCiclo !== _newCiclo) {
+          a.ciclo = _newCiclo;
           changed = true;
           fixes.cicloDeducido++;
-          cicloUp = String(a.ciclo || '').toUpperCase();
         }
+        cicloUp = String(a.ciclo || '').toUpperCase();
       }
       // 4) seccion mayúscula y solo letra
       if (a.seccion) {
         const s = String(a.seccion).trim().toUpperCase().match(/[A-Z]/)?.[0] || '';
         if (s && s !== String(a.seccion)) { a.seccion = s; changed = true; fixes.espacios++; }
       }
-      // 5) turno normalizado (ANTES de reclasificar ciclo para leer la modalidad correcta)
+      // 5) turno normalizado (Paso 5 ANTES de reclasificar ciclo para leer modalidad correcta)
       if (a.turno) {
-        const nt = (typeof _normModAtencion === 'function') ? _normModAtencion(a.turno) : a.turno;
-        if (nt && nt !== String(a.turno)) { a.turno = nt; changed = true; }
+        const _ot = String(a.turno || '');
+        const nt = (typeof _normModAtencion === 'function') ? _normModAtencion(a.turno) : _ot;
+        if (nt && nt !== _ot) { a.turno = nt; changed = true; fixes.turnoNorm++; }
       }
       // 6) RECLASIFICACIÓN CICLO SEGURA (solo CEBA, no toca EBR).
       // MODELO FINAL 2 NIVELES CEBA: (1) INICIAL/INTERMEDIO (Presencial 1-6), (2) AVANZADO (Pres/Semi/Virtual cualquier grado).
@@ -27198,7 +27214,7 @@ async function repararRapidoAlumnos() {
     statusEl.style.background = 'rgba(16,185,129,0.08)';
     statusEl.style.color = '#86efac';
     statusEl.style.border = '1px solid rgba(16,185,129,0.3)';
-    statusEl.textContent = `✅ Reparación completada · ${upd}/${all.length} alumnos actualizados · cicloDeducido=${fixes.cicloDeducido} · sufijosLimpios=${fixes.sufijoLimpio} · espaciosNormalizados=${fixes.espacios} · cicloReclasificado=${fixes.cicloReclasificado}.`;
+    statusEl.textContent = `✅ Reparación completada · ${upd}/${all.length} alumnos actualizados · cicloDeducido=${fixes.cicloDeducido} · sufijosLimpios=${fixes.sufijoLimpio} · espaciosNormalizados=${fixes.espacios} · turnoNormalizado=${fixes.turnoNorm} · cicloReclasificado=${fixes.cicloReclasificado}.`;
     toast(`Reparado: ${upd} alumnos (${fixes.cicloReclasificado} reclasificados ciclo)`, 'success');
     setTimeout(() => runDiagnosticoAlumnos(), 500);
   } catch (e) {
@@ -27210,7 +27226,7 @@ async function repararRapidoAlumnos() {
     statusEl.textContent = '❌ Error reparando: ' + (e?.message || String(e));
     toast('Error reparación', 'error');
   } finally {
-    try { hideLoader(); } catch(_) {}
+    // (no hay showLoader/hideLoader global; usado statusEl + toast que sí existen)
   }
 }
 
