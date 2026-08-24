@@ -21581,8 +21581,8 @@ async function renderUsuarios() {
       const rol = _normRol(u.rol);
       const esYo = u.uid === currentUser.uid ? ' (tú)' : '';
       const rolProfLike = (rol==='profesor'||rol==='psicologo');
-      const asigTxt = (rolProfLike&&u.restringir)
-        ? `<br><span style="font-size:0.72rem;color:var(--accent);">${Object.keys(u.asignaciones||{}).length?'Restringido: '+Object.keys(u.asignaciones||{}).map(g=>g+((u.asignaciones[g]||[]).length?(' ('+(u.asignaciones[g]||[]).join(',')+')'):'')).join(', '):'⚠ Sin asignaciones (editar)'}</span>`
+      const asigTxt = (rolProfLike&&(u.restringir||(u.asignaciones&&Object.keys(u.asignaciones).length>0)))
+        ? `<br><span style="font-size:0.72rem;color:var(--accent);">${Object.keys(u.asignaciones||{}).length?'🎓 Aulas asignadas: '+Object.keys(u.asignaciones||{}).map(g=>g+((u.asignaciones[g]||[]).length?(' ('+(u.asignaciones[g]||[]).join(',')+')'):'')).join(', '):'⚠ Sin aulas (editar → Aulas)'}</span>`
         : (rolProfLike ? `<br><span style="font-size:0.72rem;color:#f59e0b;">Sin restricción (ver todas las aulas)</span>` : '');
       const tutTxt = (u.esTutor&&(u.tutorGrado||(u.tutor_aulas_json&&u.tutor_aulas_json[0]?.grado)))
         ? `<br><span style="font-size:0.72rem;color:#60a5fa;">Tutor: ${u.tutorGrado||u.tutor_aulas_json[0].grado} ${u.tutorSeccion||u.tutor_aulas_json[0].seccion||''}</span>`
@@ -22942,20 +22942,50 @@ async function abrirModalPrivilegios() {
 }
 
 async function savePrivilegios() {
-  // Leer checks del modal privilegios
+  // FIX 2026-08-24: leemos DIRECTAMENTE TODAS las .chk-seccion:checked
+  // (sin depender de que el checkbox PADRE grado esté marcado) → evita
+  // bug "marqué B y C pero al guardar se perdieron" (si el usuario se
+  // olvidó de marcar el checkbox Grado 4 se guardaba vacío).
   tempAsignaciones = {};
-  document.querySelectorAll('.chk-grado:checked').forEach(chk => {
-    const g = chk.dataset.grado;
-    const seccs = Array.from(
-      document.querySelectorAll(`.chk-seccion[data-grado="${g}"]:checked`)
-    ).map(c => c.value);
-    tempAsignaciones[g] = seccs;
+  document.querySelectorAll('.chk-seccion:checked').forEach(c => {
+    const g = String(c.dataset.grado || c.getAttribute('data-grado') || '').trim();
+    const sRaw = String(c.value || '').trim();
+    if (!g || !sRaw) return;
+    const s = sRaw.toUpperCase();
+    if (!(g in tempAsignaciones)) tempAsignaciones[g] = [];
+    if (!tempAsignaciones[g].includes(s)) tempAsignaciones[g].push(s);
   });
+  // Cleanup: eliminar grados vacíos
+  Object.keys(tempAsignaciones).forEach(g => {
+    if (!Array.isArray(tempAsignaciones[g]) || !tempAsignaciones[g].length) {
+      delete tempAsignaciones[g];
+    } else {
+      // Ordenar secciones A,B,C,D por orden alfabético (visual estable)
+      tempAsignaciones[g] = tempAsignaciones[g].slice().sort();
+    }
+  });
+  // Asegurar que también marquen los checkboxes de GRADO PADRE en el DOM
+  // (por si el usuario reabre el modal sin cerrar: ahora debe mostrarse marcado)
+  try {
+    document.querySelectorAll('.chk-grado').forEach(cG => {
+      const g = String(cG.dataset.grado || '').trim();
+      if (!g) return;
+      const secMarc = Array.isArray(tempAsignaciones[g]) && tempAsignaciones[g].length > 0;
+      cG.checked = !!secMarc;
+      // toggle display sección div (como hace toggleGradoSecciones)
+      const key = cG.dataset.key;
+      if (key) {
+        const div = document.getElementById('secc-' + key);
+        if (div) div.style.display = secMarc ? 'flex' : 'none';
+      }
+    });
+  } catch(_syncDom){}
   actualizarResumenPrivilegios();
   closeModal('modal-privilegios');
   // Auto-check restringir si hay asignaciones
   if(Object.keys(tempAsignaciones).length) {
-    document.getElementById('u-restringir').checked = true;
+    try { document.getElementById('u-restringir').checked = true; } catch(_e){}
+    try { toggleBtnConfigurar(); } catch(_e){}
   }
 }
 
@@ -23398,21 +23428,13 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
           let hasGrado = false;
           const secMarcadasLocal = {};
           seccionesHard.forEach(sTmp => {
+            const sUp = String(sTmp||'').trim().toUpperCase();
             const ok = typeof window.__checkAsigGranularPorModTarjeta === 'function'
               ? window.__checkAsigGranularPorModTarjeta(turnoTarjeta, cicloTarjeta, g, sTmp)
-              : (Object.prototype.hasOwnProperty.call((asignaciones || {}), g) && new Set(((asignaciones || {})[g]||[]).map(x=>String(x||'').trim().toUpperCase()).filter(Boolean)).has(String(sTmp||'').trim().toUpperCase()));
-            secMarcadasLocal[String(sTmp||'').trim().toUpperCase()] = !!ok;
+              : (Object.prototype.hasOwnProperty.call((asignaciones || {}), g) && new Set(((asignaciones || {})[g]||[]).map(x=>String(x||'').trim().toUpperCase()).filter(Boolean)).has(sUp));
+            secMarcadasLocal[sUp] = !!ok;
             if (ok) hasGrado = true;
           });
-          // Fallback lógica antigua (sin granular) si aún no hay data
-          if (!hasGrado && Object.prototype.hasOwnProperty.call((window.tempAsignaciones||{}), g)) {
-            hasGrado = Array.isArray(window.tempAsignaciones[g]) && window.tempAsignaciones[g].length > 0;
-            if (hasGrado) {
-              window.tempAsignaciones[g].forEach(sOld => {
-                secMarcadasLocal[String(sOld||'').trim().toUpperCase()] = true;
-              });
-            }
-          }
           const gradoKey = nivelKeyRand + '_' + String(g).replace(/[^a-z0-9]/gi,'_');
           return `
             <div style="margin-bottom:10px;">
