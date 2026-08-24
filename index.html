@@ -23276,17 +23276,27 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     return { ciclo, turno };
   };
   if (!modoFlat && Object.keys(byCicloTurno).length > 0) {
-    const newList = [];
-    nivelesList.forEach(n => {
-      const { ciclo, turno } = _extraerCicloTurnoTarjeta(n);
-      if (ciclo && turno) {
-        const count = byCicloTurno[`${ciclo}|${turno}`] || 0;
-        if (count <= 0) return; // OMITIR tarjeta legacy sin alumnos
-      }
-      // Si no se pudo deducir, mantener (seguridad)
-      newList.push(n);
-    });
-    if (newList.length > 0) nivelesList = newList;
+    // ================================================================
+    // FIX 2026-08-24 #2 (Rediseño NO LIMITAR): NO ELIMINAR tarjetas aunque
+    // tengan 0 alumnos HOY. Las tarjetas son ESTRUCTURA DEL SISTEMA
+    // (INICIAL/INTERMEDIO × Presencial; AVANZADO × 3 atenciones) para
+    // que Admin asigne docentes FUTUROS sin importar si ya importó
+    // los alumnos en ese nivel/modalidad o no.
+    // (Solo eliminamos tarjetas que ni siquiera están en cfg.grados.)
+    // ================================================================
+    // (sin lógica de omitir por 0 alumnos - código comentado legacy)
+    // Si deseas filtrar de nuevo: descomenta el bloque siguiente:
+    //
+    // const newList = [];
+    // nivelesList.forEach(n => {
+    //   const { ciclo, turno } = _extraerCicloTurnoTarjeta(n);
+    //   if (ciclo && turno) {
+    //     const count = byCicloTurno[`${ciclo}|${turno}`] || 0;
+    //     if (count <= 0) return;
+    //   }
+    //   newList.push(n);
+    // });
+    // if (newList.length > 0) nivelesList = newList;
   }
 
   const nivelesEl = document.getElementById('u-niveles-checks');
@@ -23330,31 +23340,38 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     return;
   }
 
-  // Render por nivel (estándar)
-  nivelesEl.innerHTML = nivelesList.map(n => {
-    const grados = getGradosForNivel(n.keys);
-    if(!grados.length) return ''; // saltar niveles sin grados
-    const nKey = n.keys[0] || n.label;
-    const nivelKey = String(n.label || '').replace(/[^a-z0-9]/gi,'_') + '_' + Math.floor(Math.random()*1000);
-    // FIX 2026-08-24: Extraer ciclo/turno de ESTA tarjeta para pasar al granular checker
-    const ct = _extraerCicloTurnoTarjeta(n);
-    const turnoTarjeta = ct.turno || '';
-    const cicloTarjeta = ct.ciclo || '';
+  // ================================================================
+  // FIX 2026-08-24 #3 (ESTRUCTURA FIJA 2 BLOQUES): Admin pide NO se
+  // limite a cfg.grados keys legacy ni a "tener alumnos hoy".
+  // Estructura DEFINITIVA del modal:
+  //   📦 BLOQUE 1: INICIAL / INTERMEDIO (1 subtarjeta PRESENCIAL)
+  //         Grados disponibles: 1..6 (no dependen de BD ni Excel)
+  //         Atención: SOLO Presencial (regla CEBA: Ini/Int NO Semi/Virt)
+  //   📦 BLOQUE 2: AVANZADO (3 subtarjetas: PRES / SEMI / VIRT)
+  //         Grados: 1..6
+  //         Atención: las 3 modalidades
+  // Cada subtarjeta (PRES/SEMI/VIRT) renderiza 6 grados × 4 secciones.
+  // El helper __checkAsigGranularPorModTarjeta decide qué marcar, evitando
+  // el bug "B y C marcadas en todas las modalidades".
+  // ================================================================
+  const todosLosGrados = ['1','2','3','4','5','6'];
+  const seccionesHard = seccionesCfg && seccionesCfg.length ? seccionesCfg.slice() : ['A','B','C','D'];
+  const _subTarjetaRender = (labelTarjeta, cicloTarjeta, turnoTarjeta, gradosArray) => {
+    const nivelKeyRand = (cicloTarjeta||'GEN') + '_' + (turnoTarjeta||'TUR') + '_' + Math.floor(Math.random()*9999);
     return `
-      <div style="margin-bottom:16px;padding:12px;background:var(--surface2);border-radius:10px;">
-        <div style="font-size:0.88rem;font-weight:800;color:var(--accent);margin-bottom:10px;letter-spacing:0.2px;">📘 ${n.label}</div>
-        ${grados.map(g => {
-          // FIX 2026-08-24: hasGrado = AL MENOS 1 sección (A/B/C/D) marcada GRANULARMENTE en esta tarjeta
+      <div style="margin-bottom:14px;padding:11px 14px;background:var(--surface2);border-radius:10px;">
+        <div style="font-size:0.87rem;font-weight:800;color:var(--accent);margin-bottom:8px;letter-spacing:0.2px;">📘 ${labelTarjeta}</div>
+        ${gradosArray.map(g => {
           let hasGrado = false;
           const secMarcadasLocal = {};
-          (seccionesCfg||[]).forEach(sTmp => {
+          seccionesHard.forEach(sTmp => {
             const ok = typeof window.__checkAsigGranularPorModTarjeta === 'function'
               ? window.__checkAsigGranularPorModTarjeta(turnoTarjeta, cicloTarjeta, g, sTmp)
               : (Object.prototype.hasOwnProperty.call((asignaciones || {}), g) && new Set(((asignaciones || {})[g]||[]).map(x=>String(x||'').trim().toUpperCase()).filter(Boolean)).has(String(sTmp||'').trim().toUpperCase()));
             secMarcadasLocal[String(sTmp||'').trim().toUpperCase()] = !!ok;
             if (ok) hasGrado = true;
           });
-          // Fallback: si al menos 1 sección en tempAsignaciones[g] y ninguna sec marcó granular, marcar grado con lógica antigua para no romper
+          // Fallback lógica antigua (sin granular) si aún no hay data
           if (!hasGrado && Object.prototype.hasOwnProperty.call((window.tempAsignaciones||{}), g)) {
             hasGrado = Array.isArray(window.tempAsignaciones[g]) && window.tempAsignaciones[g].length > 0;
             if (hasGrado) {
@@ -23363,8 +23380,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
               });
             }
           }
-          const gradoKey = nivelKey + '_' + String(g).replace(/[^a-z0-9]/gi,'_');
-          const secciones = seccionesCfg;
+          const gradoKey = nivelKeyRand + '_' + String(g).replace(/[^a-z0-9]/gi,'_');
           return `
             <div style="margin-bottom:10px;">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.86rem;font-weight:700;margin-bottom:6px;">
@@ -23375,7 +23391,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
                 <span>Grado ${g}</span>
               </label>
               <div id="secc-${gradoKey}" style="display:${hasGrado?'flex':'none'};flex-wrap:wrap;gap:10px;padding-left:28px;margin-top:4px;">
-                ${(secciones || []).map(s => {
+                ${seccionesHard.map(s => {
                   const sUp = String(s||'').trim().toUpperCase();
                   const marcada = !!secMarcadasLocal[sUp];
                   return `
@@ -23392,7 +23408,21 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
         }).join('')}
       </div>
     `;
-  }).join('');
+  };
+
+  nivelesEl.innerHTML = `
+    <div style="margin-bottom:18px;padding:14px 16px;background:linear-gradient(180deg, rgba(59,130,246,0.08), transparent);border:1px solid rgba(59,130,246,0.2);border-radius:12px;">
+      <div style="font-size:0.95rem;font-weight:900;color:#3b82f6;margin-bottom:10px;letter-spacing:0.3px;">🧊 BLOQUE 1 · INICIAL / INTERMEDIO</div>
+      ${_subTarjetaRender('INICIAL/INTERMEDIO · Presencial', 'INICIAL/INTERMEDIO', 'PRESENCIAL', todosLosGrados)}
+    </div>
+
+    <div style="padding:14px 16px;background:linear-gradient(180deg, rgba(16,185,129,0.08), transparent);border:1px solid rgba(16,185,129,0.2);border-radius:12px;">
+      <div style="font-size:0.95rem;font-weight:900;color:#10b981;margin-bottom:10px;letter-spacing:0.3px;">🔥 BLOQUE 2 · AVANZADO</div>
+      ${_subTarjetaRender('AVANZADO · Presencial', 'AVANZADO', 'PRESENCIAL', todosLosGrados)}
+      ${_subTarjetaRender('AVANZADO · Semipresencial', 'AVANZADO', 'SEMIPRESENCIAL', todosLosGrados)}
+      ${_subTarjetaRender('AVANZADO · Virtual', 'AVANZADO', 'VIRTUAL', todosLosGrados)}
+    </div>
+  `;
   actualizarResumenPrivilegios();
 }
 
