@@ -9801,6 +9801,28 @@ async function renderAlumnos() {
           if (el0PorModOQuery) {
             // Mostrar empty y sugerencias (abajo), NO limpiar filtros
           } else {
+            // ════════════════════════════════════════════════════════
+            // FIX CICLO ORLANDO: NO resetear selects a '' aquí.
+            //
+            // Si el profesor seleccionó manualmente Nivel=Avanzado y
+            // sus alumnos están en INI/INT, el comportamiento correcto
+            // es:
+            //   1) Mantener sus selects (él eligió eso).
+            //   2) Mostrar 0 + sugerencia de dónde SÍ hay alumnos
+            //      (el panel naranja + los hints de abajo).
+            //   3) Mostrar toast informativo UNA sola vez por
+            //      combinación, sin tocar el DOM.
+            //
+            // El código ANTERIOR (limpiar a '' + onNivelChange +
+            // setTimeout renderAlumnos) causaba CICLO:
+            //   user sel. Avanzado →  FIX0 limpia a ''  →
+            //   autoSelectTutoria llena a INI/INT otra vez →
+            //   toast 39 alumnos.
+            //
+            // Orlando reportó VERBATIM: "selecciono nivel avanzado
+            // sale ese mensaje abajo a la derchja y se regresa a nivel
+            // en la casilla". El return de aquí es el que regresaba.
+            // ════════════════════════════════════════════════════════
             const aulasNoTienenTurno = aulasList.length > 0 && aulasList.every(a => !(a && String(a.turno||'').trim()));
             const _sigKey = [
               nEl ? nEl.value : '',
@@ -9813,17 +9835,10 @@ async function renderAlumnos() {
             if ((!window._fix0Run || window._fix0Run !== _sigKey) && _sigKey !== (window._fixLastKey || '')) {
               window._fix0Run = _sigKey;
               window._fixLastKey = _sigKey;
-              if (nEl && [...(nEl.options||[])].some(o => String(o.value||'') === '')) { try { nEl.value = ''; } catch(_) {} }
-              if (gEl) try { gEl.value = ''; } catch(_) {}
-              if (sEl) try { sEl.value = ''; } catch(_) {}
-              // mEl NUNCA se limpia (si user seleccionó Virtual → Virtual se mantiene)
-              try { if (typeof onNivelChangeAlumnos === 'function') onNivelChangeAlumnos(); } catch(_) {}
-              // FIX: toast "mostrando asignados" SOLO para docentes/profesores
+              // SOLO toast informativo. NO tocar selects, NO onNivelChange.
               if (isProf) {
-                try { toast(`✅ Se encontraron ${totalDB} alumnos para ti - mostrando todos tus asignados`, 'success', 4000); } catch(_) {}
+                try { toast(`ℹ️ No hay alumnos aquí. Tus asignados (${totalDB}) están en tus aulas - selecciona "Todos" en Nivel/Grado para verlos.`, 'info', 4500); } catch(_) {}
               }
-              setTimeout(() => renderAlumnos(), 50);
-              return;
             }
           }
         } catch(_) {}
@@ -23764,7 +23779,26 @@ async function onGradoChangeAlumnos() {
   const nivelElegidoPorUsuario = document.getElementById('fa-nivel').value;
   // Helper: selección UI válida (TODOS cuenta, placeholder no)
   const _selOk = v => { v = String(v||'').trim(); return !!v && v !== '--' && !v.startsWith('-- ') && !v.endsWith(' --') && !/Seleccionar/i.test(v); };
-  if(_selOk(grado) && String(grado).trim() !== 'TODOS') {
+  // ═══════════════════════════════════════════════════════════════
+  // FIX ORLANDO: DOCENTES/PROFESORES manejan NIVEL manualmente.
+  // onGradoChange NUNCA auto-cambia el nivel fa-nivel para un docente
+  // (porque FIX0 posterior detecta 0 → resetea a '' → autoSelect lo
+  //  vuelve a INI/INT → CICLO INFINITO. Orlando no puede explorar
+  //  Avanzado). Para superAdmin/admin/director/coord sí funciona la
+  //  inferencia (ellos no tienen FIX0 Orlando).
+  // ═══════════════════════════════════════════════════════════════
+  const _esRolDocenteAqui = (() => {
+    try {
+      if (typeof _isSuperAdmin === 'function' && _isSuperAdmin()) return false;
+      if (typeof _isAdminDirector === 'function' && _isAdminDirector()) return false;
+      if (typeof _isCoord === 'function' && _isCoord()) return false;
+      const r = typeof _normRol === 'function' ? _normRol(currentRol) : String(currentRol||'');
+      if (r === 'profesor' || r === 'psicologo') return true;
+      const c = String(currentCargo||'').toLowerCase();
+      return c.includes('docente') || c.includes('tutor de aula') || c.includes('profesor de aula');
+    } catch(_) { return false; }
+  })();
+  if(_selOk(grado) && String(grado).trim() !== 'TODOS' && !_esRolDocenteAqui) {
     // Auto-detectar nivel
     const cfg = await getConfig();
     let nivelAuto = '';
