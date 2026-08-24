@@ -9344,7 +9344,8 @@ async function renderAlumnos() {
     console.groupEnd();
   } catch(_dbgErr) { /* ignore */ }
 
-  // Helper filtro válido (ignora placeholders '-- Grado --', 'Seleccionar', etc.)
+  // Helper 1: filtro válido para FILTRAR el array de alumnos.
+  // - "TODOS" = NO filtrar (mostrar todos) → retorna false para que _vX sea vacío.
   const _filtroValido = (v, extraNo) => {
     v = String(v||'').trim();
     if (!v) return false;
@@ -9355,12 +9356,29 @@ async function renderAlumnos() {
     if (Array.isArray(extraNo) && extraNo.some(x => String(x||'').trim() === v)) return false;
     return true;
   };
-  // Valores reales de filtros (sin placeholders)
+  // Helper 2: selección UI VÁLIDA (para mostrar lista / habilitar cascada selects).
+  // - "TODOS" SÍ cuenta como selección del usuario (el usuario decidió ver Todos).
+  // - Solo placeholders vacíos / '-- Seccion --' NO son selección válida.
+  const _selUI = (v, extraNo) => {
+    v = String(v||'').trim();
+    if (!v) return false;
+    if (v === '--') return false;
+    if (v.startsWith('-- ') || v.endsWith(' --')) return false;
+    if (/Seleccionar/i.test(v)) return false;
+    if (Array.isArray(extraNo) && extraNo.some(x => String(x||'').trim() === v)) return false;
+    return true;
+  };
+  // Valores reales de filtros (sin placeholders) para filtrar array alumnos
   const _vGrado   = _filtroValido(grado) ? String(grado).trim() : '';
   const _vSeccion = _filtroValido(seccion) ? String(seccion).trim() : '';
   const _vNivel   = _filtroValido(nivel) ? String(nivel).trim() : '';
   const _vMod     = _filtroValido(modalidad) ? String(modalidad).trim() : '';
   const _vQ       = String(q||'').trim();
+  // Valores de SELECCIÓN UI (TODOS cuenta) para condiciones render/cascada
+  const _sGrado   = _selUI(grado);
+  const _sSeccion = _selUI(seccion);
+  const _sNivel   = _selUI(nivel);
+  const _sMod     = _selUI(modalidad);
 
   // DEBUG post-_filtroValido (ver si _vMod se pierde después del helper)
   try {
@@ -9378,26 +9396,26 @@ async function renderAlumnos() {
 
 
   // ------------------------------------------------------------------
-  // CONDICIÓN DE MOSTRAR (ESTRICTA, volviendo al comportamiento ORIGINAL):
+  // CONDICIÓN DE MOSTRAR LISTA (actualizado petición user Moises #33):
   // ------------------------------------------------------------------
-  // - Admin/Director/etc: necesitan NIVEL SELECCIONADO o BUSQUEDA (q).
-  //   * Modalidad sola (sin Nivel) o Grado/Seccion solos → NO activan nada (estado inicial Req4).
-  //   * Esto evita el bug "solo toco Modalidad y me aparecieron 119 alumnos" sin elegir Nivel.
-  // - Profesor: si ALGÚN FILTRO está seleccionado (grado/seccion/nivel/modalidad/o q) → mostramos
-  // - Profesor SIN FILTROS → NO mostramos listado automáticamente (se queda en mostrarEstadoInicial)
-  //   * Se espera a que el auto-select de tutoria le seleccione sus aulas (o lo haga manual)
-  // - EXCEPCIÓN SAFE: Si el profesor ya tiene SU FILTRO UI seleccionado por auto-select en carga
-  //   anterior (fa-nivel/fa-grado/fa-seccion tienen valor real) → mostramos.
-  const profTieneFiltroReal = isProf && (_vGrado || _vSeccion || _vNivel || _vMod || _vQ);
-  // Regla ADMIN/NO-PROF ESTRICTA 4-NIVEL CASCADA (Requisito user Moises):
-  //   - NECESITAS LOS 4: NIVEL + GRADO + SECCION + MODALIDAD (todos reales, no placeholders)
-  //   - O BIEN: Q búsqueda directa (por nombre o DNI)
-  // Cualquier combinación PARCIAL (solo Nivel; N+G; N+G+S sin Modalidad) = NO MUESTRA NADA
-  //   → evita que el usuario vea lista antes de haber completado todos los filtros.
-  const admin4FiltrosCompletos = !isProf && _vNivel && _vGrado && _vSeccion && _vMod;
+  // - ADMIN/DIRECTOR/etc:
+  //   ✅ NIVEL seleccionado (TODOS o específico) → MUESTRA LISTA (ya no se necesitan LOS 4).
+  //   ✅ Si el usuario elige Nivel = Todos → se ve la lista COMPLETA (204/210/etc) sin filtrar nada.
+  //   ✅ El usuario puede seguir eligiendo Grado → Sección → Modalidad para ir filtrando.
+  //   ✅ O BIEN: búsqueda directa Q (DNI/nombre) sin filtros.
+  // - PROFESOR: (igual que antes)
+  //   ✅ Si ALGÚN FILTRO seleccionado (nivel/grado/sección/mod) o Q → muestra lista.
+  //   ✅ Filtrado de scope por su aula se aplica en memoria.
+  // - CASCADA HABILITAR SELECTS (regla user):
+  //   NIVEL siempre habilitado
+  //   GRADO habilitado ⇨ si NIVEL tiene selección (TODOS o específico) ✅
+  //   SECCIÓN habilitada ⇨ si GRADO tiene selección (TODOS o específico) ✅
+  //   MODALIDAD habilitada ⇨ si SECCIÓN tiene selección (TODOS o específico) ✅
+  const profTieneFiltroReal = isProf && (_sGrado || _sSeccion || _sNivel || _sMod || _vQ);
+  const adminNivelSeleccionado = !isProf && _sNivel; // ⭐ NUEVA regla: solo NIVEL basta
   const adminBusquedaDirecta = !isProf && _vQ;
-  const adminTieneFiltroValido = admin4FiltrosCompletos || adminBusquedaDirecta;
-  const filtroActivo = adminTieneFiltroValido || _vQ || profTieneFiltroReal || (!isProf && aulasList.length > 0) || (_vNivel && (_vGrado || _vSeccion || _vMod) && isProf);
+  const adminTieneFiltroValido = adminNivelSeleccionado || adminBusquedaDirecta;
+  const filtroActivo = adminTieneFiltroValido || _vQ || profTieneFiltroReal || (!isProf && aulasList.length > 0) || (_sNivel && (_sGrado || _sSeccion || _sMod) && isProf);
   if(!filtroActivo) { mostrarEstadoInicial(); return; }
 
   const tbody = document.getElementById('alumnos-tbody');
@@ -23654,7 +23672,9 @@ async function onGradoChangeAlumnos() {
   const grado = document.getElementById('fa-grado').value;
   const seccionPrevia = document.getElementById('fa-seccion').value;
   const nivelElegidoPorUsuario = document.getElementById('fa-nivel').value;
-  if(grado && grado !== 'TODOS') {
+  // Helper: selección UI válida (TODOS cuenta, placeholder no)
+  const _selOk = v => { v = String(v||'').trim(); return !!v && v !== '--' && !v.startsWith('-- ') && !v.endsWith(' --') && !/Seleccionar/i.test(v); };
+  if(_selOk(grado) && String(grado).trim() !== 'TODOS') {
     // Auto-detectar nivel
     const cfg = await getConfig();
     let nivelAuto = '';
@@ -23688,11 +23708,12 @@ async function onGradoChangeAlumnos() {
       document.getElementById('fa-nivel').value = nivelAuto;
     }
     await poblarFiltroSeccion('fa-seccion', grado);
-    // CASCADA: Grado → solo habilita SECCION. Modalidad sigue DISABLED hasta que elijan Sección.
+    // CASCADA: Grado (incluso TODOS) habilita SECCION. Modalidad sigue DISABLED hasta que elijan Sección.
     document.getElementById('fa-modalidad').value = '';
     _disableSelect('fa-modalidad');
     _enableSelect('fa-seccion');
   } else {
+    // Si Grado = TODOS: igual generamos opciones de secciones con todas las disponibles y HABILITAMOS Sección
     const nivel = document.getElementById('fa-nivel').value;
     const alumnos = await DB.getAlumnos();
     const cfg = typeof configCache !== 'undefined' ? configCache : await getConfig();
@@ -23703,7 +23724,15 @@ async function onGradoChangeAlumnos() {
     const el = document.getElementById('fa-seccion');
     el.innerHTML = '<option value="" disabled selected>-- Sección --</option><option value="TODOS">Todas</option>';
     secs.forEach(s => { el.innerHTML += `<option value="${s}">${s}</option>`; });
-    _disableSelect('fa-seccion');
+    // CASCADA: Grado = TODOS → usuario ya eligió Grado → HABILITAR SECCIÓN (antes se deshabilitaba, bug user petición #33)
+    if(_selOk(grado)) {
+      document.getElementById('fa-modalidad').value = '';
+      _disableSelect('fa-modalidad');
+      _enableSelect('fa-seccion');
+    } else {
+      _disableSelect('fa-seccion');
+      _disableSelect('fa-modalidad');
+    }
   }
   // Restaurar sección previa si sigue válida
   if(seccionPrevia) {
@@ -23711,15 +23740,18 @@ async function onGradoChangeAlumnos() {
     const existe = [...elSec.options].some(o => o.value === seccionPrevia);
     if(existe) { elSec.value = seccionPrevia; }
   }
-  if(grado && grado !== 'TODOS') _enableSelect('fa-seccion');
+  // CASCADA: SIEMPRE habilita Sección si Grado tiene selección válida (TODOS o específico)
+  if(_selOk(grado)) _enableSelect('fa-seccion');
   renderAlumnos();
 }
 
 function onSeccionChangeAlumnos() {
   document.getElementById('search-alumnos').value = '';
-  // CASCADA: Sección → FINALMENTE habilita Modalidad.
+  // Helper: selección UI válida (TODOS cuenta, placeholder no)
+  const _selOk = v => { v = String(v||'').trim(); return !!v && v !== '--' && !v.startsWith('-- ') && !v.endsWith(' --') && !/Seleccionar/i.test(v); };
+  // CASCADA: Sección (incluso TODOS) habilita Modalidad.
   const seccion = document.getElementById('fa-seccion').value;
-  if (seccion && seccion !== 'TODOS') {
+  if (_selOk(seccion)) {
     _enableSelect('fa-modalidad');
   } else {
     document.getElementById('fa-modalidad').value = '';
@@ -23735,6 +23767,8 @@ function onModalidadChangeAlumnos() {
 
 function onSearchAlumnos() {
   const q = document.getElementById('search-alumnos').value;
+  // Helper: selección UI válida (TODOS cuenta, placeholder no)
+  const _selOk = v => { v = String(v||'').trim(); return !!v && v !== '--' && !v.startsWith('-- ') && !v.endsWith(' --') && !/Seleccionar/i.test(v); };
   if(q.trim()) {
     document.getElementById('fa-nivel').value   = '';
     document.getElementById('fa-grado').value   = '';
@@ -23745,11 +23779,12 @@ function onSearchAlumnos() {
     _disableSelect('fa-modalidad');
   } else {
     // CASCADA: re-evaluar según lo que tenga seleccionado de NIVEL → GRADO → SECCIÓN → MODALIDAD
+    // TODOS cuenta como selección (requiere valor seleccionado.
     const n = document.getElementById('fa-nivel').value;
     const g = document.getElementById('fa-grado').value;
     const s = document.getElementById('fa-seccion').value;
     // Siempre parte desde NIVEL:
-    if (!n) {
+    if (!_selOk(n)) {
       _disableSelect('fa-grado');
       _disableSelect('fa-seccion');
       _disableSelect('fa-modalidad');
@@ -23758,17 +23793,20 @@ function onSearchAlumnos() {
       document.getElementById('fa-modalidad').value = '';
     } else {
       _enableSelect('fa-grado');
-      if (!g || g === 'TODOS') {
+      if (!_selOk(g)) {
+        // Grado NO seleccionado (placeholder o vacío)
         _disableSelect('fa-seccion');
         _disableSelect('fa-modalidad');
         document.getElementById('fa-seccion').value = '';
         document.getElementById('fa-modalidad').value = '';
       } else {
+        // Grado SÍ seleccionado (TODOS o específico) → habilitar Sección
         _enableSelect('fa-seccion');
-        if (!s || s === 'TODOS') {
+        if (!_selOk(s)) {
           _disableSelect('fa-modalidad');
           document.getElementById('fa-modalidad').value = '';
         } else {
+          // Sección SÍ seleccionada (TODOS o específico) → habilitar Modalidad
           _enableSelect('fa-modalidad');
         }
       }
