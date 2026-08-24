@@ -23280,20 +23280,30 @@ function _profesorTutorToAsignaciones() {
 // Compatible con formato legacy asignaciones: { grado: ['A','B'] }
 function _profesorAsignacionesAulasList() {
   const asigObj = (currentPrivilegios && typeof currentPrivilegios.asignaciones === 'object') ? currentPrivilegios.asignaciones : {};
-  let list = Array.isArray(currentTutorInfo?.gradosAsignados) ? currentTutorInfo.gradosAsignados.slice() :
-             _asignacionesObjToAulasList(asigObj);
-  // Añadir aulas del tutor CEBA (multiples) desde tutorAulas[] la LISTA parseada.
-  // IMPORTANTE: NO encerramos en if(_isTutorUser()) porque docente NO tutor puede tener
-  // tutor_aulas_json / tutor_raw con aulas cargadas (asignaciones manuales sin checkbox tutor →
-  // si no mergeamos aqui las aulas → 0 alumnos.
+  // FIX MERGE 2026-08-24 (igual que _buildAulasFromUserData):
+  // ANTES: || (uno o el otro) → si currentTutorInfo.gradosAsignados tenia length (aunque fuese [4C] viejo),
+  //        NUNCA se convertía asigObj (que tiene 4B+4C nuevos) → perdía 4B.
+  // AHORA: MERGE las 3 fuentes SIN PERDER NINGUNA AULA + dedupe key ciclo|grado|seccion.
+  const src1 = Array.isArray(currentTutorInfo?.gradosAsignados) ? currentTutorInfo.gradosAsignados.slice() : [];
+  const src2 = (asigObj && Object.keys(asigObj).length) ? (_asignacionesObjToAulasList(asigObj) || []) : [];
   const tutorList = Array.isArray(currentTutorInfo?.tutorAulas) && currentTutorInfo.tutorAulas.length
     ? currentTutorInfo.tutorAulas.slice()
     : [];
-  tutorList.forEach(a => {
-    if(!a || !a.grado || !a.seccion) return;
-    const k = [_canonCicloJS(a.ciclo||''), String(a.grado||'').trim(), String(a.seccion||'').trim().toUpperCase()].join('|');
-    if(!list.some(x => [_canonCicloJS(x.ciclo||''), String(x.grado||'').trim(), String(x.seccion||'').trim().toUpperCase()].join('|') === k)) list.push(a);
+  const merged = [];
+  const seen = new Set();
+  [src1, src2, tutorList].forEach(listSrc => {
+    (listSrc || []).forEach(a => {
+      if(!a || !a.grado || !a.seccion) return;
+      const aGrado = String(a.grado||'').trim();
+      const aSecc = String(a.seccion||'').trim().toUpperCase();
+      const aCiclo = _canonCicloJS(a.ciclo||'');
+      const k = [aCiclo, aGrado, aSecc].join('|');
+      if(seen.has(k)) return;
+      seen.add(k);
+      merged.push({ ciclo: aCiclo, grado: aGrado, seccion: aSecc });
+    });
   });
+  let list = merged;
   // ULTIMO FALLBACK (red contra 0): si las rama else):
   // Si aún así y solo tenemos legacy strings tutorGrado/tutorSeccion PERO son no hay nada cargadas como aulas → agregarla como ultima ratio final.
   if (!list.length) {
@@ -23301,14 +23311,6 @@ function _profesorAsignacionesAulasList() {
       const g = String(currentTutorInfo?.tutorGrado || '').trim();
       const s = String(currentTutorInfo?.tutorSeccion || '').trim().toUpperCase();
       if (g && s) {
-        // CANON EXCEL 2026-08-24: NUNCA inferir ciclo por grado/turno.
-        //   Si el Excel dice AVANZADO → es AVANZADO.
-        //   Dejamos ciclo VACÍO para que:
-        //     (a) aplicarFiltroProfesor matchee por G+S+T (flexible, sin ciclo),
-        //         así el docente NUNCA pierde a sus alumnos (aunque ciclo en
-        //         aula y alumnos no coincidan).
-        //     (b) poblarFiltroNivel NO muestre INICIAL/INTERMEDIO si no hay
-        //         alumnos REALES con ese valor (respetar 100% lo del Excel).
         list.push({ ciclo: '', grado: g, seccion: s });
       }
     } catch(_) {}
@@ -23680,6 +23682,47 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
   const alumnosFiltrados = _filtrarPorNivel(alumnos, nivel, cfg);
   const gradosConAlumnos = new Set(alumnosFiltrados.map(a => a.grado).filter(Boolean));
 
+  // ================================================================
+  // FIX 2026-08-24: SI ES DOCENTE INCLUIMOS SUS GRADOS ASIGNADOS
+  // (currentPrivilegios.asignaciones / gradosAsignados) SIN IMPORTAR
+  // si getAlumnosFiltrados retorna 0 HOY (por BD vacía / race condition).
+  // Antes: solo mostraba grados si aparecían en scope alumnos →
+  //   bug captura usuario: dropdown Grado = [--Grado--, Todos] sin nums.
+  // Ahora: union (gradosConAlumnos ∪ gradosAsignadosDocente).
+  // ================================================================
+  if (isProf) {
+    try {
+      const asig = (currentPrivilegios && currentPrivilegios.asignaciones && typeof currentPrivilegios.asignaciones === 'object')
+        ? currentPrivilegios.asignaciones : {};
+      Object.keys(asig || {}).forEach(g => {
+        const gClean = String(g||'').trim();
+        if (gClean) gradosConAlumnos.add(gClean);
+      });
+    } catch(_) {}
+    try {
+      const ga = Array.isArray(currentTutorInfo?.gradosAsignados) ? currentTutorInfo.gradosAsignados : [];
+      ga.forEach(a => {
+        const gClean = String(a?.grado||'').trim();
+        if (gClean) gradosConAlumnos.add(gClean);
+      });
+    } catch(_) {}
+    try {
+      const ta = Array.isArray(currentTutorInfo?.tutorAulas) ? currentTutorInfo.tutorAulas : [];
+      ta.forEach(a => {
+        const gClean = String(a?.grado||'').trim();
+        if (gClean) gradosConAlumnos.add(gClean);
+      });
+    } catch(_) {}
+    try {
+      const profList = (typeof _profesorAsignacionesAulasList === 'function')
+        ? (_profesorAsignacionesAulasList() || []) : [];
+      profList.forEach(a => {
+        const gClean = String(a?.grado||'').trim();
+        if (gClean) gradosConAlumnos.add(gClean);
+      });
+    } catch(_) {}
+  }
+
   // Intentar obtener grados ordenados desde config; si no hay, usar los de alumnos directamente
   let gradosCfg = [];
   if (nivel && nivel !== 'TODOS') {
@@ -23723,14 +23766,25 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
 
   // Si config no tiene grados para este nivel, caer al set de alumnos
   // (siempre: si los grados de config no coinciden con alumnos, usar los del set)
+  // FIX: ahora gradosConAlumnos incluye los asigando al docente → nunca vacío si el docente tiene aulas.
   const desdeCfg = gradosCfg.filter(g => gradosConAlumnos.has(g));
-  const grados = desdeCfg.length > 0
+  let grados = desdeCfg.length > 0
     ? desdeCfg
     : [...gradosConAlumnos].sort((a,b) => {
         const na = Number(a), nb = Number(b);
         if (!isNaN(na) && !isNaN(nb)) return na - nb;
         return String(a).localeCompare(String(b));
       });
+  // FIX FINAL seguridad: si grados sigue vacío PERO hay alumnosConAlumnos Set size>0 (grados numeros no
+  // encontrados en cfg.grados por algun bug de keys), AGREGAR los grados tal cual (numeros).
+  if ((!grados || !grados.length) && gradosConAlumnos.size > 0) {
+    grados = [...gradosConAlumnos].sort((a,b) => {
+      const na = Number(String(a).replace(/\D/g,'')) || 0;
+      const nb = Number(String(b).replace(/\D/g,'')) || 0;
+      if (na && nb) return na - nb;
+      return String(a).localeCompare(String(b));
+    });
+  }
 
   el.innerHTML = `<option value="" disabled selected>-- Grado --</option><option value="TODOS">Todos</option>`;
   grados.forEach(g => { el.innerHTML += `<option value="${g}">${g}</option>`; });
@@ -23751,13 +23805,66 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
   const alumnosFiltrados = alumnos.filter(a => !grado || grado === 'TODOS' || a.grado === grado);
   const seccionesDeAlumnos = [...new Set(alumnosFiltrados.map(a => a.seccion || 'A').filter(Boolean))].sort();
 
+  // ================================================================
+  // FIX 2026-08-24: SI ES DOCENTE INCLUIMOS SUS SECCIONES ASIGNADAS
+  // union (seccionesDeAlumnos ∪ seccionesAsignadasDocente). Nunca vacio
+  // si el docente tiene B+C aunque scope alumnos 0.
+  // ================================================================
+  if (isProf) {
+    try {
+      const asig = (currentPrivilegios && currentPrivilegios.asignaciones && typeof currentPrivilegios.asignaciones === 'object')
+        ? currentPrivilegios.asignaciones : {};
+      Object.entries(asig || {}).forEach(([g, secs]) => {
+        if (grado && grado !== 'TODOS' && String(g||'').trim() !== String(grado||'').trim()) return;
+        (Array.isArray(secs) ? secs : []).forEach(sRaw => {
+          const s = String(sRaw||'').trim().toUpperCase();
+          if (s && s !== 'TODAS') seccionesDeAlumnos.push(s);
+        });
+      });
+    } catch(_) {}
+    try {
+      const ga = Array.isArray(currentTutorInfo?.gradosAsignados) ? currentTutorInfo.gradosAsignados : [];
+      ga.forEach(a => {
+        const gC = String(a?.grado||'').trim();
+        if (grado && grado !== 'TODOS' && gC !== String(grado||'').trim()) return;
+        const sC = String(a?.seccion||'').trim().toUpperCase();
+        if (sC && sC !== 'TODAS') seccionesDeAlumnos.push(sC);
+      });
+    } catch(_) {}
+    try {
+      const ta = Array.isArray(currentTutorInfo?.tutorAulas) ? currentTutorInfo.tutorAulas : [];
+      ta.forEach(a => {
+        const gC = String(a?.grado||'').trim();
+        if (grado && grado !== 'TODOS' && gC !== String(grado||'').trim()) return;
+        const sC = String(a?.seccion||'').trim().toUpperCase();
+        if (sC && sC !== 'TODAS') seccionesDeAlumnos.push(sC);
+      });
+    } catch(_) {}
+    try {
+      const profList = (typeof _profesorAsignacionesAulasList === 'function')
+        ? (_profesorAsignacionesAulasList() || []) : [];
+      profList.forEach(a => {
+        const gC = String(a?.grado||'').trim();
+        if (grado && grado !== 'TODOS' && gC !== String(grado||'').trim()) return;
+        const sC = String(a?.seccion||'').trim().toUpperCase();
+        if (sC && sC !== 'TODAS') seccionesDeAlumnos.push(sC);
+      });
+    } catch(_) {}
+  }
+
   // Usar config como orden preferido; si no hay coincidencias, usar secciones de alumnos directamente
   const seccCfg = (cfg.secciones || []).filter(Boolean);
   let secciones = seccCfg.length > 0
-    ? seccCfg.filter(s => seccionesDeAlumnos.includes(s))
-    : seccionesDeAlumnos;
+    ? seccCfg.filter(s => (new Set(seccionesDeAlumnos)).has(s))
+    : seccionesDeAlumnos.slice();
+  // Seguridad: si las de configuracion no matchearon ninguna (p. ej: secciones son lowercase docente uppercase B, o config solo tiene A/B y docente asignó C/D)
+  //   → usamos el set completo (con dedupe).
+  if(secciones.length === 0) {
+    const setAll = new Set(seccionesDeAlumnos.map(s => String(s||'').trim().toUpperCase()).filter(Boolean));
+    secciones = [...setAll].sort();
+  }
   // Si la config no cubrió ninguna sección real, mostrar las de alumnos (pero nunca "inventar" secciones para profesor)
-  if(secciones.length === 0) secciones = seccionesDeAlumnos.length > 0 ? seccionesDeAlumnos : (isProf ? [] : seccCfg);
+  if(secciones.length === 0) secciones = seccionesDeAlumnos.length > 0 ? [...new Set(seccionesDeAlumnos.map(s => String(s||'').trim().toUpperCase()).filter(Boolean))].sort() : (isProf ? [] : seccCfg);
 
   el.innerHTML = `<option value="" disabled selected>-- Sección --</option><option value="TODOS">Todas</option>`;
   secciones.forEach(s => { el.innerHTML += `<option value="${s}">${s}</option>`; });
@@ -23868,6 +23975,37 @@ async function renderDebugOrlando(force = false) {
     (aulasFusionadas.length ? aulasFusionadas : [{ciclo:'(sin aulas)', grado:'', seccion:'', turno:''}]).forEach((au, idx) => {
       lines.push(`    AulaF #${idx+1}: ciclo="${au.ciclo||''}", grado="${au.grado||''}", seccion="${au.seccion||''}", turno="${au.turno||''}"`);
     });
+    lines.push('');
+    // ================================================================
+    // DIAGNÓSTICO ASIGNACIONES Y FILTROS (2026-08-24 bugs Orlando):
+    //   - currentPrivilegios.asignaciones (obj {grado: [secciones]})
+    //   - _profesorAsignacionesAulasList (la lista mergeada)
+    //   - options en fa-grado / fa-seccion (para confirmar bug "no puedo seleccionar grado 4")
+    // ================================================================
+    let privAsigStr = '{}';
+    try {
+      privAsigStr = JSON.stringify((currentPrivilegios && currentPrivilegios.asignaciones) || {}, null, 0);
+    } catch(_) { privAsigStr = '[error serializar]'; }
+    let profAsigListStr = '[]';
+    try {
+      profAsigListStr = JSON.stringify((typeof _profesorAsignacionesAulasList === 'function' ? (_profesorAsignacionesAulasList()||[]) : []), null, 0);
+    } catch(_) { profAsigListStr = '[error]'; }
+    let faGradoOpts = [];
+    let faSeccOpts = [];
+    try { faGradoOpts = Array.from(document.getElementById('fa-grado')?.options || []).map(o => `[${o.value}] ${o.text}`).slice(0, 20); } catch(_) {}
+    try { faSeccOpts = Array.from(document.getElementById('fa-seccion')?.options || []).map(o => `[${o.value}] ${o.text}`).slice(0, 20); } catch(_) {}
+    lines.push('🔧 DIAGNÓSTICO ASIGNACIONES (sistema interno)');
+    lines.push(`  currentPrivilegios.asignaciones (OBJ): ${privAsigStr}`);
+    lines.push(`  currentPrivilegios.restringir: ${(currentPrivilegios && currentPrivilegios.restringir) ? 'SÍ' : 'NO'}`);
+    lines.push(`  _profesorAsignacionesAulasList (LISTA merge): ${profAsigListStr}`);
+    lines.push('');
+    lines.push('🧩 FILTROS UI (para confirmar por q no aparece grado 4)');
+    lines.push(`  fa-nivel.value    = [${document.getElementById('fa-nivel')?.value || ''}]`);
+    lines.push(`  fa-grado.value    = [${document.getElementById('fa-grado')?.value || ''}] (total options: ${faGradoOpts.length})`);
+    faGradoOpts.forEach(o => lines.push(`    ${o}`));
+    lines.push(`  fa-seccion.value  = [${document.getElementById('fa-seccion')?.value || ''}] (total options: ${faSeccOpts.length})`);
+    faSeccOpts.forEach(o => lines.push(`    ${o}`));
+    lines.push(`  fa-modalidad.value= [${document.getElementById('fa-modalidad')?.value || ''}]`);
     lines.push('');
     lines.push('📚 ALUMNOS EN TU SCOPE (getAlumnosFiltrados)');
     lines.push(`  Total alumnos que TE CORRESPONDEN VER: ${totalAlumnosScope === -1 ? '[ERROR al cargar, mira consola]' : totalAlumnosScope}`);
