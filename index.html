@@ -9398,9 +9398,17 @@ async function renderAlumnos() {
   } catch(_dbg2e) {}
   try {
     const sKcanon = String(_vSeccion || '').toUpperCase();
-    if (_vMod && (sKcanon === 'A' || sKcanon === 'B' || sKcanon === 'C')) {
-      const modNorm = (typeof _normModAtencion === 'function') ? (_normModAtencion(_vMod) || String(_vMod).trim().toUpperCase()) : String(_vMod).trim().toUpperCase();
+    if (sKcanon === 'A' || sKcanon === 'B' || sKcanon === 'C') {
       const _canonMod = { A: 'PRESENCIAL', B: 'SEMIPRESENCIAL', C: 'VIRTUAL' }[sKcanon];
+      // ✅ FIX 2026-08-24 SOLEDAD B=PRES FANTASMA: Si Modalidad está placeholder
+      // (-- Modalidad -- → _vMod vacío) + Sección ∈ {A,B,C} → AUTO-APLICAR
+      // CANÓNICO CEBA (igual que el fix de Orlando fb2c8d6, pero sin necesidad de
+      // que el usuario seleccione Modalidad explícitamente). De esta forma los
+      // alumnos 1B PRESENCIAL desfasados de importación vieja NUNCA pasan.
+      if (!_vMod) {
+        _vMod = _canonMod;
+      }
+      const modNorm = (typeof _normModAtencion === 'function') ? (_normModAtencion(_vMod) || String(_vMod).trim().toUpperCase()) : String(_vMod).trim().toUpperCase();
       if (modNorm !== _canonMod) {
         const btnLimpiar = document.getElementById('limpiar-filtros-alumnos');
         let hint = '';
@@ -24540,6 +24548,9 @@ function aplicarFiltroProfesor(alumnos) {
     return { x, xCiclo, xGradoRaw, xGradoNum, xSec, xTurno };
   });
   // PASO 1 (el actual): GradoNumMatch + Seccion (con ciclo lax fallback turno igual)
+  // ✅ FIX 2026-08-24 SOLEDAD B=PRES FANTASMA (igual fix Orlando): Si xSec/aSec ∈ {A,B,C}
+  // APLICAR CANON A=PRES, B=SEMI, C=VIRT INCONDICIONALMENTE ANTES DE return true.
+  // También obligar turnoMatch cuando xTurno/aTurno tengan valor (no omitir por ciclo ok).
   const out1 = alumnos.filter(a => {
     const aCiclo = String(a.ciclo || '').trim().toUpperCase();
     const aGradoRaw = String(a.grado || '').trim();
@@ -24550,13 +24561,35 @@ function aplicarFiltroProfesor(alumnos) {
       const { xCiclo, xGradoRaw, xGradoNum, xSec, xTurno } = ap;
       const gradoNumMatch = (xGradoNum && aGradoNum && xGradoNum === aGradoNum) || (xGradoRaw && xGradoRaw === aGradoRaw);
       const seccionMatch = !xSec || !aSec || xSec === aSec;
-      const turnoMatch = !xTurno || !aTurno || xTurno === aTurno;
+      let turnoMatch = !xTurno || !aTurno || xTurno === aTurno;
+      // ================================================================
+      // ✅ PRIORIDAD 0 CANON CEBA A/B/C (igual helper granular modal 23755):
+      // Para Soledad y TODOS docentes: A=PRES; B=SEMIPRESENCIAL; C=VIRTUAL.
+      // Bloquea alumnos con combinación inválida incluso aunque la asignación
+      // no traiga turno explícito (xTurno='') y la importación vieja tenga
+      // turno erróneo (ej: 1B PRESENCIAL fantasma en la imagen).
+      // ================================================================
+      const sKC = (xSec || aSec || '').trim().toUpperCase();
+      if (sKC === 'A' || sKC === 'B' || sKC === 'C') {
+        const canonMod = { A:'PRESENCIAL', B:'SEMIPRESENCIAL', C:'VIRTUAL' }[sKC];
+        // Si el alumno trae turno distinto del canon → BLOQUEAR DIRECTAMENTE.
+        if (aTurno && aTurno !== canonMod) return false;
+        // Si la asignación trae turno distinto del canon → BLOQUEAR (no debería
+        // pasar porque savePrivilegios + canonical infieren bien, pero safety).
+        if (xTurno && xTurno !== canonMod) return false;
+        // Sobreescribir turnoMatch para que coincida con canon (incluso si vacíos):
+        turnoMatch = true;
+      }
       // Capa 1: Grado + Seccion son los campos más importantes (no tiene por qué fallar por ciclo)
       if(gradoNumMatch && seccionMatch) {
-        if(!xCiclo || !aCiclo) return true;
-        if(xCiclo === aCiclo) return true;
+        // ✅ FIX SOLEDAD: SIEMPRE requerir turnoMatch (no omitir aunque ciclo OK).
+        // (Para A/B/C ya quedó en true arriba canon; para D u otros se usa normal).
+        if (sKC === 'D') { /* D = PRESENCIAL por canon si infiere, mantener lax */ }
+        if (xTurno && aTurno && xTurno !== aTurno && sKC !== 'D') return false;
+        if(!xCiclo || !aCiclo) return turnoMatch;
+        if(xCiclo === aCiclo) return turnoMatch;
         const xEsAgrupIniInt = (xCiclo === 'INICIAL/INTERMEDIO' || xCiclo === 'INICIAL / INTERMEDIO');
-        if(xEsAgrupIniInt && (aCiclo === 'INICIAL' || aCiclo === 'INTERMEDIO')) return true;
+        if(xEsAgrupIniInt && (aCiclo === 'INICIAL' || aCiclo === 'INTERMEDIO')) return turnoMatch;
         if(xTurno && aTurno && xTurno === aTurno) return true;
         return false;
       }
