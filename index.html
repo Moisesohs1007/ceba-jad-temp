@@ -21630,77 +21630,14 @@ async function saveUsuario() {
                         ..._camposDet9
       };
       // =================================================================
-      // ✅ FIX 2026-08-25 ERROR Could not find 'asig_detail' column al
-      // Guardar Editar Usuario: ANTES usaba FieldValue.delete() en 30
-      // aliases legacy y Supabase/Firestore lanzaba SCHEMA ERROR cuando
-      // alguna columna no existía en el documento o el schema cache no
-      // la tenía. Como consecuencia el update1 fallaba COMPLETO → no se
-      // guardaba NADA y label seguía AVZ.
-      //
-      // SOLUCIÓN 100% segura: NO borrar, ASIGNAR VALOR VACÍO a cada
-      // alias legacy. Es compatible con SUPABASE schema cache, nunca
-      // falla por columna inexistente y deja los campos legados en
-      // blanco para que pickArrAll/merge legacy NO los lea (no crean
-      // entries por sí mismos si no hay data).
+      // ✅ FIX 2026-08-25 FINAL j1/j2: ELIMINADO bloque 40 aliases legacy
+      // _DELS con valores VACIOS (arr/obj/str). Ahora compat.js WHITELIST
+      // _USUARIOS_FIELDS_WHITELIST filtra en DocumentRef.set/update() y
+      // _docToRow SOLO los 25 fields confirmados. Resultado:
+      //  - SCHEMA ERROR "Could not find asig_detail column" = IMPOSIBLE
+      //  - Payload Firestore = SOLO data REAL (9 alias + fields base)
+      //  - Cero typos 40 keys manuales (eliminado riesgo L is not defined)
       // =================================================================
-      if (rolScope && _camposDet9 && Array.isArray(_camposDet9.grados_asignaciones_json) && _camposDet9.grados_asignaciones_json.length) {
-        try {
-          const _emptyArr = [];
-          const _emptyStr = '';
-          const _emptyObj = {};
-          const _DELS = {
-            // Tutor arrays legacy alias:
-            tutor_aulas_objects:  _emptyArr,
-            tutorAulasObjects:    _emptyArr,
-            tutAulasJson:         _emptyArr,
-            tutorAulasJson2:      _emptyArr,
-            tutor_grados_asignados: _emptyArr,
-            tutorGradosAsignadosArray: _emptyArr,
-            tutGradosAsig:        _emptyArr,
-            gradosAsignados:      _emptyArr,
-            gradosAsignadosArr:   _emptyArr,
-            tutor_aulas:          _emptyArr,
-            tutor_aulas_arr:      _emptyArr,
-            tutorAulasArray:      _emptyArr,
-            tutAulas:             _emptyArr,
-            tutor_aulas_str:      _emptyStr,
-            aulasTutor:           _emptyStr,
-            tutAulasLista:        _emptyStr,
-            tutorGrado:           _emptyStr,
-            tutorSeccion:         _emptyStr,
-            tutor_grado:          _emptyStr,
-            tutor_seccion:        _emptyStr,
-            // Strings single ciclo/turno legacy:
-            ciclo_nivel:          _emptyStr,
-            nivelCiclo:           _emptyStr,
-            cicloAcademico:       _emptyStr,
-            mod_atencion:         _emptyStr,
-            modalidadAtencion:    _emptyStr,
-            numGrado:             _emptyStr,
-            numeroGrado:          _emptyStr,
-            gr:                   _emptyStr,
-            sec:                  _emptyStr,
-            secTut:               _emptyStr,
-            seccionTutoria:       _emptyStr,
-            secc:                 _emptyStr,
-            // Objetos plano legacy:
-            asignacionesLegacy:   _emptyObj,
-            asignacionesPlano:    _emptyObj,
-            asigPlano:            _emptyObj,
-            asignaciones_obj:     _emptyObj,
-            asigLegacy:           _emptyObj,
-            aulasPlano:           _emptyObj,
-            gradosAsignadosPlano: _emptyObj,
-            asignaciones2:        _emptyObj,
-            asigPlanoObj:         _emptyObj,
-            // Posibles typos que generan SCHEMA ERROR (incluido asig_detail tu error):
-            asig_detail:          _emptyArr,
-            asigDetail:           _emptyArr,
-            asig_detall:          _emptyArr
-          };
-          Object.assign(update1, _DELS);
-        } catch(_eDel){}
-      }
       // Solo actualizar campos de tutor si el usuario es profesor.
       // Cambio clave: SI esProfesor=true Y existen asignaciones (restringido),
       // MANTENER tutorGrado/tutorSeccion aunque esTutor=false → FIX A runtime legacy strings.

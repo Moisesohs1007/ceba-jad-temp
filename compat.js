@@ -240,15 +240,54 @@ function _rowToDoc(row) {
   if (row.id !== undefined && !out.id) out.id = row.id;
   return out;
 }
-function _docToRow(data, colegioId) {
+// ============================================================
+// WHITELIST CAMPOS TABLA "usuarios" SUPABASE CONFIRMADOS.
+// ✅ FIX 2026-08-25 j1: saveUsuario enviaba 40 aliases legacy
+// (asig_detail, asig_detall, tutor_aulas_objects etc.) a la
+// tabla usuarios, PERO esas columnas NO EXISTEN en Postgres.
+// Consecuencia: Supabase lanzaba SCHEMA ERROR
+//   "Could not find the 'asig_detail' column of 'usuarios'"
+// → el update1 FALLABA COMPLETO (no se guardaba NADA).
+//
+// Solución: SOLO permitir estos 25 fields camelCase confirmados.
+// Cualquier otro key del payload se OMITE en _docToRow y update()
+// de la colección "usuarios" UNICAMENTE (no afecta otras tablas).
+// Los 9 alias detalladas se incluyen para compatibilidad label.
+// ============================================================
+const _USUARIOS_FIELDS_WHITELIST = new Set([
+  'id', 'colegioId', 'nombre', 'nombres', 'apellidos', 'email',
+  'rol', 'cargo', 'telefono',
+  'restringir', 'asignaciones',
+  // 9 alias detalladas (S y D) confirmados:
+  'gradosAsignadosJson', 'grados_asignados_json',
+  'gradosAsignacionesJson', 'grados_asignaciones_json',
+  'asignacionesDetalladasJson', 'asignacionesDetalladas',
+  'gradosAsignacionesJSON', 'detalladas',
+  'asigDetall', 'asignacionesGradosJson',
+  // Tutor legacy SI existen en la tabla:
+  'tutorAulasJson', 'tutor_aulas_json',
+  'tutorAulasJson2',
+  'tutorGradosAsignados', 'tutor_grados_asignados',
+  'esTutor', 'es_tutor',
+  'tutorGrado', 'tutor_grado',
+  'tutorSeccion', 'tutor_seccion',
+  'tutorAulas', 'tutorAulasArr',
+  // Permisos:
+  'incidentesDiaLectura', 'incidentes_dia_lectura',
+  'permisosExtra', 'permisos_extra',
+  'createdAt', 'updatedAt'
+]);
+function _docToRow(data, colegioId, colName) {
   const out = { colegio_id: colegioId || COLEGIO_ID };
+  const isUsuarios = (String(colName||'') === 'usuarios');
   for (const [k, v] of Object.entries(data)) {
     if (k === 'id') { out.id = v; continue; }
-    if (k === 'timestamp') continue; // created_at tiene DEFAULT NOW() en Supabase
-    if (v === null || v === undefined) continue; // dejar que Supabase use DEFAULT
-    // Ignorar FieldValues especiales — se manejan abajo
+    if (k === 'timestamp') continue;
+    if (v === null || v === undefined) continue;
+    // ✅ FIX j1: usuarios collection → solo whitelist
+    if (isUsuarios && !_USUARIOS_FIELDS_WHITELIST.has(String(k))) continue;
     if (v && v.__type === 'serverTimestamp') { out[_toSnake(k)] = new Date().toISOString(); continue; }
-    if (v && v.__type === 'increment')       { /* manejar con RPC */ continue; }
+    if (v && v.__type === 'increment')       { continue; }
     out[_toSnake(k)] = v;
   }
   return out;
@@ -415,7 +454,7 @@ class _DocRef {
 
   async set(data, options = {}) {
     if (this._col === 'config') return _setConfig(this._id, data, options);
-    const row = _docToRow(data);
+    const row = _docToRow(data, null, this._col);
     row.id = this._id;
     // apoderados usa alumno_id como FK histórica — siempre incluirlo
     if (this._col === 'apoderados') row.alumno_id = this._id;
@@ -431,9 +470,14 @@ class _DocRef {
 
   async update(data) {
     if (this._col === 'config') return _setConfig(this._id, data, { merge: true });
+    const isUsuarios = (this._col === 'usuarios');
     const update = {};
     for (const [k, v] of Object.entries(data)) {
+      // ✅ FIX j1: whitelist usuarios
+      if (isUsuarios && !_USUARIOS_FIELDS_WHITELIST.has(String(k))) continue;
+      if (v === undefined || v === null) continue;
       if (v && v.__type === 'serverTimestamp') { update[_toSnake(k)] = new Date().toISOString(); continue; }
+      if (v && v.__type === 'increment')       { continue; }
       update[_toSnake(k)] = v;
     }
     const { data: out, error } = await _sb.from(this._col)
