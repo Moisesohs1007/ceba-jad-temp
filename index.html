@@ -25149,32 +25149,24 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
   const seccionesDeAlumnos = [...seccionesSet].sort();
 
   // ======================================================================
-  // ✅ FIX 2026-08-24 SOLEDAD 1B/1C NO APARECEN en dropdown Admin Moises:
+  // ✅ FIX 2026-08-24 SOLEDAD DOCENTE 1B/1C NO APARECEN en dropdown (NO ADMIN).
   //
-  // Si el usuario ES ADMIN/DIRECTOR/COORDINADOR (isProf=false):
-  //   MOSTRAR cfg.secciones COMPLETAS (A/B/C/D/...) sin filtrar por alumnos.
-  //   Incluso si Firestore alumnos NO tiene ninguna fila con sección B/C hoy
-  //   (por importación vieja o fila fantasma anterior eliminada), el Admin
-  //   debe poder seleccionar B/C para filtrar (aunque la tabla quede vacía,
-  //   la consistencia con el Excel es prioritaria).
+  // TANTO Admin COMO Docente: USAR cfg.secciones COMPLETAS (A/B/C/D/...) y
+  // NO filtrar por "alumnos que existen HOY en Firestore". El docente Soledad
+  // tiene 1B SEMI asignado en Configurar aulas, pero si la BD no tiene rows
+  // de 1B (importación vieja mala), el dropdown se quedaba SIN B.
   //
-  // Si el usuario ES DOCENTE:
-  //   Mantener la lógica antigua (intersección cfg ∩ seccionesSet ∪ asignadas).
+  // Soledad y todos los docentes deben ver A B C D siempre (lo del config),
+  // aunque en la BD no haya alumnos en esa sección (la tabla queda vacía o
+  // muestra 0 según corresponda; la consistencia Excel > BD temporal).
+  //
+  // ÚNICO caso en que se usa el set filtrado (alumnos ∪ asignadas) = docente
+  // sin config secciones.
   // ======================================================================
   const seccCfg = (cfg.secciones || []).filter(Boolean);
-  let secciones = [];
-  if (!isProf) {
-    secciones = (seccCfg.length > 0) ? seccCfg.slice() : seccionesDeAlumnos.slice();
-    // Extra safety: agregar secciones que existen en alumnos aunque cfg no las tenga
-    seccionesDeAlumnos.forEach(s => { if (secciones.indexOf(s) === -1) secciones.push(s); });
-  } else {
-    secciones = seccCfg.length > 0
-      ? seccCfg.filter(s => seccionesSet.has(String(s||'').trim().toUpperCase()))
-      : seccionesDeAlumnos.slice();
-    // Seguridad docente: si cfg no matcheó ninguna, usar set completo
-    if(secciones.length === 0) secciones = [...seccionesSet].sort();
-    if(secciones.length === 0) secciones = (seccionesSet.size > 0 ? [...seccionesSet].sort() : []);
-  }
+  let secciones = (seccCfg.length > 0) ? seccCfg.slice() : seccionesDeAlumnos.slice();
+  // Safety: agregar secciones que existan en alumnos (o asignadas docente) y cfg no tenga (ej: E, F...)
+  seccionesDeAlumnos.forEach(s => { if (secciones.indexOf(s) === -1) secciones.push(s); });
 
   el.innerHTML = `<option value="" disabled selected>-- Sección --</option><option value="TODOS">Todas</option>`;
   secciones.forEach(s => { el.innerHTML += `<option value="${s}">${s}</option>`; });
