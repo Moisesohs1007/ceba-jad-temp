@@ -21277,8 +21277,32 @@ function _getPermisosEspecialesFromForm() {
   };
 }
 
-function _applyPermisosEspecialesToForm(perms, { alsoUpdateBackup=true, overwriteBackupEmpty=true } = {}) {
-  const px = _cleanPx(perms);
+const _PERMISOS_EMPTY_KEY = '__EMPTY_PX__';
+function _pxScore(px) {
+  const d = px || {};
+  const secLen = Object.keys(d.sections || {}).filter(k => !!d.sections[k]).length;
+  return (d.verTodasAulas?1:0)+(d.incidentesDiaLectura?1:0)+(d.incidentesVerTodo?1:0)+(d.modoCarnets?1:0)+(d.alumnosFotosMasivo?1:0)+secLen;
+}
+
+function _applyPermisosEspecialesToForm(perms, { alsoUpdateBackup=true, overwriteBackupEmpty=true, preferBackupIfMoreData=null, preferBackupIfNewerThanMs=0 } = {}) {
+  let px = _cleanPx(perms);
+  if (editingUsuarioId && (preferBackupIfMoreData || preferBackupIfNewerThanMs > 0)) {
+    const bk = _getPxBackup(editingUsuarioId);
+    if (bk) {
+      const sIncoming = _pxScore(px);
+      const sBk = _pxScore(bk);
+      const newerOk = (preferBackupIfNewerThanMs > 0 && bk.__t && (Date.now() - Number(bk.__t) < preferBackupIfNewerThanMs));
+      const moreOk = (preferBackupIfMoreData && sBk > sIncoming);
+      const incomingEmpty = (sIncoming === 0);
+      if (incomingEmpty && sBk > 0) {
+        px = _cleanPx(bk);
+      } else if (newerOk && sBk >= sIncoming && sBk > 0) {
+        px = _cleanPx(bk);
+      } else if (moreOk && !(bk.__t && (Date.now() - bk.__t > 1000*60*60*24))) {
+        px = _cleanPx(bk);
+      }
+    }
+  }
   const jsonEl = document.getElementById('u-permisos-extra-json');
   if(jsonEl) jsonEl.value = JSON.stringify(px);
   const inc = document.getElementById('u-incidentes-dia-lectura');
@@ -21369,7 +21393,10 @@ async function openModalUsuario(uid, nombre, rol, email) {
   if(extraWrap) extraWrap.style.display = canSetExtras ? '' : 'none';
   try {
     const bkPx = uid ? _getPxBackup(uid) : null;
-    if (bkPx) _applyPermisosEspecialesToForm(bkPx);
+    if (bkPx) {
+      const bkScore = _pxScore(bkPx);
+      if (bkScore > 0) _applyPermisosEspecialesToForm(bkPx, { overwriteBackupEmpty: false });
+    }
   } catch(_bk0){}
 
   const mUsr = document.getElementById('modal-usuario');
@@ -21445,10 +21472,11 @@ async function openModalUsuario(uid, nombre, rol, email) {
     }
     toggleTutorFields({ grado: initU.tutorGrado || null, seccion: initU.tutorSeccion || null });
     const px0Base = (initU.permisosExtra && typeof initU.permisosExtra === 'object') ? initU.permisosExtra : {};
+    const dbInc = (px0Base.incidentesDiaLectura !== undefined) ? !!px0Base.incidentesDiaLectura : !!initU.incidentesDiaLectura;
     _applyPermisosEspecialesToForm({
       ...px0Base,
-      incidentesDiaLectura: (px0Base.incidentesDiaLectura !== undefined) ? !!px0Base.incidentesDiaLectura : !!initU.incidentesDiaLectura
-    });
+      incidentesDiaLectura: dbInc
+    }, { preferBackupIfMoreData: !!px0Base, preferBackupIfNewerThanMs: 1000*60*10 });
     actualizarResumenPermisosEspeciales();
     _setCargoUI(initU.cargo || '');
     try {
@@ -21473,16 +21501,18 @@ async function openModalUsuario(uid, nombre, rol, email) {
         } catch(e0) {}
         if(canSetExtras) {
           const px = (uData.permisosExtra && typeof uData.permisosExtra === 'object') ? uData.permisosExtra : {};
+          const dbIncV = (px.incidentesDiaLectura !== undefined) ? !!px.incidentesDiaLectura : !!uData.incidentesDiaLectura;
           _applyPermisosEspecialesToForm({
             ...px,
-            incidentesDiaLectura: (px.incidentesDiaLectura !== undefined) ? !!px.incidentesDiaLectura : !!uData.incidentesDiaLectura
-          });
+            incidentesDiaLectura: dbIncV
+          }, { preferBackupIfNewerThanMs: 1000*60*5, overwriteBackupEmpty: false });
         } else {
           const pxBase = (uData.permisosExtra && typeof uData.permisosExtra === 'object') ? uData.permisosExtra : {};
+          const dbIncV2 = (pxBase.incidentesDiaLectura !== undefined) ? !!pxBase.incidentesDiaLectura : !!uData.incidentesDiaLectura;
           _applyPermisosEspecialesToForm({
             ...pxBase,
-            incidentesDiaLectura: (pxBase.incidentesDiaLectura !== undefined) ? !!pxBase.incidentesDiaLectura : !!uData.incidentesDiaLectura
-          });
+            incidentesDiaLectura: dbIncV2
+          }, { preferBackupIfNewerThanMs: 1000*60*5, overwriteBackupEmpty: false });
         }
         actualizarResumenPermisosEspeciales();
         document.getElementById('u-telefono').value = uData.telefono || '';
