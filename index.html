@@ -25148,18 +25148,33 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
   // Convertir Set → array ordenado (fuente definitiva)
   const seccionesDeAlumnos = [...seccionesSet].sort();
 
-  // Usar config como orden preferido; si no hay coincidencias, usar secciones de alumnos directamente
+  // ======================================================================
+  // ✅ FIX 2026-08-24 SOLEDAD 1B/1C NO APARECEN en dropdown Admin Moises:
+  //
+  // Si el usuario ES ADMIN/DIRECTOR/COORDINADOR (isProf=false):
+  //   MOSTRAR cfg.secciones COMPLETAS (A/B/C/D/...) sin filtrar por alumnos.
+  //   Incluso si Firestore alumnos NO tiene ninguna fila con sección B/C hoy
+  //   (por importación vieja o fila fantasma anterior eliminada), el Admin
+  //   debe poder seleccionar B/C para filtrar (aunque la tabla quede vacía,
+  //   la consistencia con el Excel es prioritaria).
+  //
+  // Si el usuario ES DOCENTE:
+  //   Mantener la lógica antigua (intersección cfg ∩ seccionesSet ∪ asignadas).
+  // ======================================================================
   const seccCfg = (cfg.secciones || []).filter(Boolean);
-  let secciones = seccCfg.length > 0
-    ? seccCfg.filter(s => seccionesSet.has(String(s||'').trim().toUpperCase()))
-    : seccionesDeAlumnos.slice();
-  // Seguridad: si las de configuracion no matchearon ninguna (p. ej: secciones son lowercase docente uppercase B, o config solo tiene A/B y docente asignó C/D)
-  //   → usamos el set completo.
-  if(secciones.length === 0) {
-    secciones = [...seccionesSet].sort();
+  let secciones = [];
+  if (!isProf) {
+    secciones = (seccCfg.length > 0) ? seccCfg.slice() : seccionesDeAlumnos.slice();
+    // Extra safety: agregar secciones que existen en alumnos aunque cfg no las tenga
+    seccionesDeAlumnos.forEach(s => { if (secciones.indexOf(s) === -1) secciones.push(s); });
+  } else {
+    secciones = seccCfg.length > 0
+      ? seccCfg.filter(s => seccionesSet.has(String(s||'').trim().toUpperCase()))
+      : seccionesDeAlumnos.slice();
+    // Seguridad docente: si cfg no matcheó ninguna, usar set completo
+    if(secciones.length === 0) secciones = [...seccionesSet].sort();
+    if(secciones.length === 0) secciones = (seccionesSet.size > 0 ? [...seccionesSet].sort() : []);
   }
-  // Si la config no cubrió ninguna sección real, mostrar las de alumnos (pero nunca "inventar" secciones para profesor)
-  if(secciones.length === 0) secciones = (seccionesSet.size > 0 ? [...seccionesSet].sort() : (isProf ? [] : seccCfg));
 
   el.innerHTML = `<option value="" disabled selected>-- Sección --</option><option value="TODOS">Todas</option>`;
   secciones.forEach(s => { el.innerHTML += `<option value="${s}">${s}</option>`; });
