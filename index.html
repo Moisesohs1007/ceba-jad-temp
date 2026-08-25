@@ -21630,64 +21630,73 @@ async function saveUsuario() {
                         ..._camposDet9
       };
       // =================================================================
-      // ✅ FIX 2026-08-25 FINAL LABEL SIEMPRE AVZ → BORRAR 30 ALIASES LEGACY
-      // Si _camposDet9 tiene entries length>0, el Admin YA grabó la asignación
-      // usando la estructura detallada (Bloque1 INI/INT o Bloque2 AVZ checkbox).
-      // Por lo tanto los 30 aliases legacy strings/objects/plano (tutorAulas,
-      // tutorAulasObjects, ciclo_nivel, mod_atencion, numGrado, asignaciones2,
-      // etc.) son DATA BASURA MIGRADA de hace deployments pasados Y NO deben
-      // ser leídos por pickArrAll → addEntry default AVZ Gold Rule.
+      // ✅ FIX 2026-08-25 ERROR Could not find 'asig_detail' column al
+      // Guardar Editar Usuario: ANTES usaba FieldValue.delete() en 30
+      // aliases legacy y Supabase/Firestore lanzaba SCHEMA ERROR cuando
+      // alguna columna no existía en el documento o el schema cache no
+      // la tenía. Como consecuencia el update1 fallaba COMPLETO → no se
+      // guardaba NADA y label seguía AVZ.
       //
-      // Solución: firebase.firestore.FieldValue.delete() en cada alias.
+      // SOLUCIÓN 100% segura: NO borrar, ASIGNAR VALOR VACÍO a cada
+      // alias legacy. Es compatible con SUPABASE schema cache, nunca
+      // falla por columna inexistente y deja los campos legados en
+      // blanco para que pickArrAll/merge legacy NO los lea (no crean
+      // entries por sí mismos si no hay data).
       // =================================================================
       if (rolScope && _camposDet9 && Array.isArray(_camposDet9.grados_asignaciones_json) && _camposDet9.grados_asignaciones_json.length) {
         try {
-          const _DEL = firebase.firestore.FieldValue.delete();
+          const _emptyArr = [];
+          const _emptyStr = '';
+          const _emptyObj = {};
           const _DELS = {
-            // Tutor arrays legacy alias (no confundir con tutor_aulas_json / tutorAulasJson guardado arriba):
-            tutor_aulas_objects:  _DEL,
-            tutorAulasObjects:    _DEL,
-            tutAulasJson:         _DEL,
-            tutorAulasJson2:      _DEL,
-            tutor_grados_asignados: _DEL,
-            tutorGradosAsignadosArray: _DEL,
-            tutGradosAsig:        _DEL,
-            gradosAsignados:      _DEL,
-            gradosAsignadosArr:   _DEL,
-            tutor_aulas:          _DEL,
-            tutor_aulas_arr:      _DEL,
-            tutorAulasArray:      _DEL,
-            tutAulas:             _DEL,
-            tutor_aulas_str:      _DEL,
-            aulasTutor:           _DEL,
-            tutAulasLista:        _DEL,
-            tutorGrado:           _DEL,
-            tutorSeccion:         _DEL,
-            tutor_grado:          _DEL,
-            tutor_seccion:        _DEL,
+            // Tutor arrays legacy alias:
+            tutor_aulas_objects:  _emptyArr,
+            tutorAulasObjects:    _emptyArr,
+            tutAulasJson:         _emptyArr,
+            tutorAulasJson2:      _emptyArr,
+            tutor_grados_asignados: _emptyArr,
+            tutorGradosAsignadosArray: _emptyArr,
+            tutGradosAsig:        _emptyArr,
+            gradosAsignados:      _emptyArr,
+            gradosAsignadosArr:   _emptyArr,
+            tutor_aulas:          _emptyArr,
+            tutor_aulas_arr:      _emptyArr,
+            tutorAulasArray:      _emptyArr,
+            tutAulas:             _emptyArr,
+            tutor_aulas_str:      _emptyStr,
+            aulasTutor:           _emptyStr,
+            tutAulasLista:        _emptyStr,
+            tutorGrado:           _emptyStr,
+            tutorSeccion:         _emptyStr,
+            tutor_grado:          _emptyStr,
+            tutor_seccion:        _emptyStr,
             // Strings single ciclo/turno legacy:
-            ciclo_nivel:          _DEL,
-            nivelCiclo:           _DEL,
-            cicloAcademico:       _DEL,
-            mod_atencion:         _DEL,
-            modalidadAtencion:    _DEL,
-            numGrado:             _DEL,
-            numeroGrado:          _DEL,
-            gr:                   _DEL,
-            sec:                  _DEL,
-            secTut:               _DEL,
-            seccionTutoria:       _DEL,
-            secc:                 _DEL,
+            ciclo_nivel:          _emptyStr,
+            nivelCiclo:           _emptyStr,
+            cicloAcademico:       _emptyStr,
+            mod_atencion:         _emptyStr,
+            modalidadAtencion:    _emptyStr,
+            numGrado:             _emptyStr,
+            numeroGrado:          _emptyStr,
+            gr:                   _emptyStr,
+            sec:                  _emptyStr,
+            secTut:               _emptyStr,
+            seccionTutoria:       _emptyStr,
+            secc:                 _emptyStr,
             // Objetos plano legacy:
-            asignacionesLegacy:   _DEL,
-            asignacionesPlano:    _DEL,
-            asigPlano:            _DEL,
-            asignaciones_obj:     _DEL,
-            asigLegacy:           _DEL,
-            aulasPlano:           _DEL,
-            gradosAsignadosPlano: _DEL,
-            asignaciones2:        _DEL,
-            asigPlanoObj:         _DEL
+            asignacionesLegacy:   _emptyObj,
+            asignacionesPlano:    _emptyObj,
+            asigPlano:            _emptyObj,
+            asignaciones_obj:     _emptyObj,
+            asigLegacy:           _emptyObj,
+            aulasPlano:           _emptyObj,
+            gradosAsignadosPlano: _emptyObj,
+            asignaciones2:        _emptyObj,
+            asigPlanoObj:         _emptyObj,
+            // Posibles typos que generan SCHEMA ERROR (incluido asig_detail tu error):
+            asig_detail:          _emptyArr,
+            asigDetail:           _emptyArr,
+            asig_detall:          _emptyArr
           };
           Object.assign(update1, _DELS);
         } catch(_eDel){}
@@ -23863,6 +23872,17 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
   const seccionesCfg = (cfg.secciones || ['A','B','C','D']).map(x => String(x || '').trim().toUpperCase()).filter(Boolean);
 
   // Si uid, cargar desde Firestore; si no, usar tempAsignaciones
+  // =================================================================
+  // ✅ FIX 2026-08-25 i2c: ANTES de cargar data, RESETEAR VARIABLES
+  // GLOBALES detalladasSet / have. Si el Admin abre primero a Usuario A
+  // con AVZ 4B luego a Soledad INI/INT 1A, las globales heredadas hacían
+  // que hasGlobalDesdeDetalladas leyera el usuario anterior.
+  // =================================================================
+  try {
+    window.__asigDetalladasSetGlobal = new Set();
+    window.__asigDetalladasGsSetGlobal = new Set();
+    window.__asigDetalladasHave = false;
+  } catch(_){}
   if(uid) {
     try {
       const d = (uDataOverride && typeof uDataOverride === 'object') ? uDataOverride : null;
@@ -23905,41 +23925,77 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
       const dDet = (uid && uDataOverride && typeof uDataOverride === 'object')
         ? uDataOverride
         : (uid ? (typeof d2 !== 'undefined' ? d2 : null) : null);
-      const detArr = Array.isArray(dDet?.grados_asignados_json) ? dDet.grados_asignados_json : [];
+      // ==================================================================
+      // ✅ FIX 2026-08-25 i2: Bug "ni bien entrar sale marcado 1A Avzanzado
+      // presencial" = DETECTAR 9 ALIAS detalladas (S/D/camelCase) NO solo
+      // grados_asignados_json (D). Ayer+hoy saveUsuario guarda 9 nombres:
+      //   (D) grados_asignados_json · (S) grados_asignaciones_json
+      //   gradosAsignacionesJson · asignacionesDetalladasJson
+      //   asignacionesDetalladas · gradosAsignacionesJSON · detalladas
+      //   asigDetall · asignacionesGradosJson
+      // Si CUALQUIERA tiene length>0 con 4 campos ciclo+grado+seccion →
+      // PRIORIDAD 1 (S obre legacy d.asignaciones = {1:[A]} SIN ciclo).
+      // ==================================================================
+      const _aliasDetalladosCandidates = [
+        dDet?.grados_asignados_json,
+        dDet?.grados_asignaciones_json,
+        dDet?.gradosAsignacionesJson,
+        dDet?.asignacionesDetalladasJson,
+        dDet?.asignacionesDetalladas,
+        dDet?.gradosAsignacionesJSON,
+        dDet?.detalladas,
+        dDet?.asigDetall,
+        dDet?.asignacionesGradosJson
+      ];
+      const detArrRaw = [];
+      _aliasDetalladosCandidates.forEach(cand => {
+        if (Array.isArray(cand) && cand.length) detArrRaw.push(...cand);
+      });
+      // Dedup exacto 4 campos en detArrRaw para no repetir:
+      const _kDetDedup = new Set();
+      const detArr = [];
+      detArrRaw.forEach(entry => {
+        if (!entry || typeof entry !== 'object') return;
+        const ccRaw = String(entry.ciclo || '').trim().toUpperCase();
+        const ttRaw = String(entry.turno || '').trim().toUpperCase();
+        const ggRaw = String(entry.grado || entry.g || entry.numGrado || '').trim();
+        const ssRaw = String(entry.seccion || entry.s || entry.sec || '').trim().toUpperCase();
+        const numM = ggRaw.match(/(\d+)/); const gClean = numM ? numM[1] : ggRaw;
+        if (!gClean || !ssRaw) return;
+        const ccC = (typeof _canonCicloJS === 'function') ? (_canonCicloJS(ccRaw) || ccRaw) : ccRaw;
+        const ttC = (typeof _normModAtencion === 'function') ? (_normModAtencion(ttRaw) || ttRaw || 'PRESENCIAL') : (ttRaw || 'PRESENCIAL');
+        const k = `${ccC}|${ttC}|${gClean}|${ssRaw}`;
+        if (!_kDetDedup.has(k)) {
+          _kDetDedup.add(k);
+          detArr.push({ ciclo: ccC, turno: ttC, grado: gClean, seccion: ssRaw });
+        }
+      });
       if (detArr.length > 0) {
+        // =================================================================
+        // ✅ FIX 2026-08-25 i2b: PURGA TOTAL ANTES tempAsignaciones plano
+        // legacy {1:[A]} si hay detalladas length>0. Así el legacy plano
+        // (sin ciclo, generado por saveUsuario campo asignaciones{} sin cc)
+        // NO llega hasGlobal → NO marca AVZ PRES 1A fantasma al abrir.
+        // =================================================================
+        tempAsignaciones = {};
+        asignaciones = {};
+        try { window.tempAsignaciones = tempAsignaciones; } catch(_){}
         const _mapTempFromDet = {};
         detArr.forEach(entry => {
           if (!entry || typeof entry !== 'object') return;
-          // ============================================================
-          // ✅ RESTAURADO (Admin marcó INI/INT 1A a propósito):
-          // Respeta 100% el CICLO guardado en grados_asignaciones_json[]
-          // porque viene de un checkbox M.A.R.C.A.D.O. explícitamente
-          // por Admin (data-ciclo = INICIAL/INTERMEDIO o AVANZADO).
-          //
-          // Regla de limpieza de ciclo fantasma SOLO para entries LEGACY
-          // SIN CICLO (lineas addEntry L21714 default AVZ si NO trae cc).
-          // No debe aplicar a entries detalladas con grabación Admin.
-          // ============================================================
-          const ccRaw = String(entry.ciclo || '').trim().toUpperCase();
-          const cc = (typeof _canonCicloJS === 'function') ? (_canonCicloJS(ccRaw) || ccRaw) : ccRaw;
-          // BLOQUE ELIMINADO: if (cc !== 'AVANZADO') return;
-          // -- Ya no salteamos INI/INT si Admin lo grabó explícitamente.
-          const gg = String(entry.grado || entry.g || entry.numGrado || '').trim();
-          const ss = String(entry.seccion || entry.s || entry.sec || '').trim().toUpperCase();
+          const cc = String(entry.ciclo || '').trim().toUpperCase();
+          const gg = String(entry.grado || '').trim();
+          const ss = String(entry.seccion || '').trim().toUpperCase();
           if (!gg) return;
           const numM = gg.match(/(\d+)/); const gClean = numM ? numM[1] : gg;
           if (!_mapTempFromDet[gClean]) _mapTempFromDet[gClean] = new Set();
           if (ss && ss !== 'TODAS') _mapTempFromDet[gClean].add(ss);
         });
-        // Sobrescribir tempAsignaciones global: solo desde detalladas.
         Object.keys(_mapTempFromDet).forEach(gk => {
           tempAsignaciones[gk] = Array.from(_mapTempFromDet[gk]).sort();
         });
-        // Quitar grados de tempAsignaciones que NO están en detalladas (legacy plano residual).
-        for (const gk of Object.keys(tempAsignaciones)) {
-          if (!_mapTempFromDet[gk]) delete tempAsignaciones[gk];
-        }
-        asignaciones = tempAsignaciones; // sync referencia local const
+        asignaciones = tempAsignaciones;
+        try { window.tempAsignaciones = tempAsignaciones; } catch(_){}
         _hayDetalladasValidas = true;
       }
     } catch(_errDet) { _hayDetalladasValidas = false; }
