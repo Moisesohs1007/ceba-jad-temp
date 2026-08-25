@@ -23619,84 +23619,15 @@ async function savePrivilegios() {
         asigDetall: _detalladasFinal.length ? _detalladasFinal.slice() : [],
         asignacionesGradosJson: _detalladasFinal.length ? _detalladasFinal.slice() : []
       };
-      // ✅ FIX 2026-08-24 SOLVEDAD REAPARICIÓN FANTASMA: al guardar con estructura
-      // detallada, LIMPIAMOS TODOS los campos legacy para que, al reabrir el modal,
-      // el merge visual IIFE NO mergee data vieja que haga volver a marcar checks
-      // (ej: Soledad 1A INI/INT reaparecía después de Aceptar porque tutorGrado="1"
-      //  tutorSeccion="A" / asignaciones{} plano / tutorAulas siguen existiendo).
-      // Campos legacy a borrar: arrays, strings, objetos, camelCase, snake_case.
-      // IMPORTANTE: los 8 alias detalladas (grados_asignaciones_json,
-      // gradosAsignacionesJson, etc.) NO SE BORRAN aquí → ya fueron escritos
-      // arriba con data REAL _detalladasFinal.
-      const _LIMPIAR_LEGACY = (_detalladasFinal.length >= 0); // siempre limpiar (incluso vacío = sin aulas)
-      if (_LIMPIAR_LEGACY) {
-        const _emptyArr = [];
-        const _emptyStr = '';
-        const _emptyObj = {};
-        Object.assign(_payload, {
-          // Arrays detalladas alias TUTOR label pickArrAll L21762-65 (YA FUERON
-          // escritos arriba los 8 de asig detalladas; éstos son SOLO tutor):
-          tutorAulas: _emptyArr,
-          tutor_aulas: _emptyArr,
-          tutor_aulas_json: _emptyArr,
-          tutorAulasJson: _emptyArr,
-          tutorAulasJson2: _emptyArr,
-          tutor_aulas_objects: _emptyArr,
-          tutorAulasObjects: _emptyArr,
-          tutAulasJson: _emptyArr,
-          tutorGradosAsignados: _emptyArr,
-          tutor_grados_asignados: _emptyArr,
-          tutorGradosAsignadosArray: _emptyArr,
-          tutGradosAsig: _emptyArr,
-          gradosAsignados: _emptyArr,
-          asignacionesGrados: _emptyArr,
-          gradosAsignadosArr: _emptyArr,
-          tutorAulasArray: _emptyArr,
-          tutor_aulas_arr: _emptyArr,
-          tutAulas: _emptyArr,
-          // Arrays label L21762 alias detalladas (merged detPrimariasRaw L21723):
-          gradosAsignacionesJson: _emptyArr,
-          asignacionesDetalladasJson: _emptyArr,
-          asignacionesDetalladas: _emptyArr,
-          gradosAsignacionesJSON: _emptyArr,
-          detalladas: _emptyArr,
-          asigDetall: _emptyArr,
-          asignacionesGradosJson: _emptyArr,
-          tutAulasDet: _emptyArr,
-          // Strings legacy single grado/seccion tutor + ciclo/nivel:
-          tutorGrado: _emptyStr,
-          tutor_grado: _emptyStr,
-          tutorSeccion: _emptyStr,
-          tutor_seccion: _emptyStr,
-          tutorNivel: _emptyStr,
-          tutor_ciclo: _emptyStr,
-          cicloTutoria: _emptyStr,
-          tutorAulas_str: _emptyStr,
-          aulasTutor: _emptyStr,
-          tutAulasLista: _emptyStr,
-          // Objetos legacy alias plano (label merge L21780-85):
-          asignacionesLegacy: _emptyObj,
-          asignacionesPlano: _emptyObj,
-          asigPlano: _emptyObj,
-          asignaciones_obj: _emptyObj,
-          asigLegacy: _emptyObj,
-          aulasPlano: _emptyObj,
-          gradosAsignadosPlano: _emptyObj,
-          asignaciones2: _emptyObj,
-          // Campos legacy alias extra para seguridad:
-          ciclo_nivel: _emptyStr,
-          nivelCiclo: _emptyStr,
-          cicloAcademico: _emptyStr,
-          mod_atencion: _emptyStr,
-          modalidadAtencion: _emptyStr,
-          numGrado: _emptyStr,
-          numeroGrado: _emptyStr,
-          sec: _emptyStr,
-          secTut: _emptyStr,
-          seccionTutoria: _emptyStr,
-          secc: _emptyStr
-        });
-      }
+      // ✅ FIX 2026-08-25 k1: ELIMINADO Object.assign(_payload, 80 aliases legacy).
+      // Motivos:
+      //  1) Sobreescribía las 9 alias detalladas con _emptyArr (habían sido escritas
+      //     unas líneas arriba con data REAL _detalladasFinal).
+      //  2) Insertaba keys camelCase como asigDetall → compat.js _toSnake las convertía
+      //     a "asig_detail" → columna NO EXISTE en Supabase → SCHEMA ERROR.
+      //  3) La limpieza legacy se hace AHORA de forma segura SOLO en Firestore si es
+      //     necesario (pero no metemos keys desconocidas en el payload update que
+      //     Supabase tolere).
       await db.collection('usuarios').doc(String(editingUsuarioId)).update(_payload);
       _escritoOK = true;
       // =================================================================
@@ -23936,6 +23867,38 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
         _hayDetalladasValidas = true;
       }
     } catch(_errDet) { _hayDetalladasValidas = false; }
+    // ==================================================================
+    // ✅ FIX 2026-08-25 k3: SI NO HAY DETALLADAS VALIDAS (cayó en legacy
+    // plano {1:[A]} SIN CAMPO ciclo), INFERIR CICLO SEGÚN EL CARGO del
+    // usuario → set window.__legacyCicloUnicoHint para el check granular
+    // abajo NO marque 🔥 AVANZADO fantasma si cargo INI/INT.
+    //
+    // Caso tu imagen SOLEDAD: cargo="Docente /ciclo inicial intermedio"
+    // → hint=INI/INT → check granular MARCA BLOQUE1 INI/INT 1A, NO BLOQUE2.
+    // ==================================================================
+    try {
+      const dH = (uid && uDataOverride && typeof uDataOverride === 'object')
+        ? uDataOverride
+        : (uid ? (typeof d2 !== 'undefined' ? d2 : null) : null);
+      const _cargoStr = String(dH?.cargo || dH?.doc || dH?.cargoActual || '').trim().toUpperCase();
+      const _isCargoIni = /INICIAL|INTERMEDIO|JORNADA|PRIMARIA|INICIO/.test(_cargoStr);
+      const _isCargoAvz = /AVANZ|SECUNDARIA|HUMANIDADES|CIENCIAS/.test(_cargoStr);
+      if (!_hayDetalladasValidas) {
+        if (_isCargoIni && !_isCargoAvz) {
+          window.__legacyCicloUnicoHint = 'INICIAL/INTERMEDIO';
+          try {
+            const el = document.getElementById('asig_legacy_ciclo_hint');
+            if (el) el.value = 'INICIAL/INTERMEDIO';
+          } catch(_e1){}
+        } else if (_isCargoAvz) {
+          window.__legacyCicloUnicoHint = 'AVANZADO';
+          try {
+            const el = document.getElementById('asig_legacy_ciclo_hint');
+            if (el) el.value = 'AVANZADO';
+          } catch(_e1){}
+        }
+      }
+    } catch(_eHint){}
     const aulasLegacy = [];
     // 🔴 SI HAY DETALLADAS VÁLIDAS, NO MERGEAR LEGACY (evita contaminación ciclo fantasma).
     if (_hayDetalladasValidas) {

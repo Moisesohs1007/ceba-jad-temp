@@ -242,29 +242,26 @@ function _rowToDoc(row) {
 }
 // ============================================================
 // WHITELIST CAMPOS TABLA "usuarios" SUPABASE CONFIRMADOS.
-// ✅ FIX 2026-08-25 j1: saveUsuario enviaba 40 aliases legacy
-// (asig_detail, asig_detall, tutor_aulas_objects etc.) a la
-// tabla usuarios, PERO esas columnas NO EXISTEN en Postgres.
-// Consecuencia: Supabase lanzaba SCHEMA ERROR
-//   "Could not find the 'asig_detail' column of 'usuarios'"
-// → el update1 FALLABA COMPLETO (no se guardaba NADA).
+// ✅ FIX 2026-08-25 k2: ANTES incluía alias camelCase (asigDetall,
+// gradosAsignacionesJson, etc.) que luego _toSnake() convertía a
+// "asig_detail", "grados_asignaciones_json" algunos EXISTEN pero
+// otros NO → SCHEMA ERROR "Could not find 'asig_detail' column".
 //
-// Solución: SOLO permitir estos 25 fields camelCase confirmados.
-// Cualquier otro key del payload se OMITE en _docToRow y update()
-// de la colección "usuarios" UNICAMENTE (no afecta otras tablas).
-// Los 9 alias detalladas se incluyen para compatibilidad label.
+// SOLUCIÓN RADICAL Y SEGURA: SOLO los 20 fields que EXISTEN en
+// la tabla usuarios desde el deploy ORIGINAL. Los demás (alias
+// detalladas camelCase) SOLO existen en FIRESTORE (no en Supabase)
+// y se filtran aquí → nunca pasan a Supabase.
 // ============================================================
 const _USUARIOS_FIELDS_WHITELIST = new Set([
-  'id', 'colegioId', 'nombre', 'nombres', 'apellidos', 'email',
-  'rol', 'cargo', 'telefono',
+  'id', 'colegioId',
+  'nombre', 'nombres', 'apellidos',
+  'email', 'rol', 'cargo', 'telefono',
+  // Alcance / asignaciones
   'restringir', 'asignaciones',
-  // 9 alias detalladas (S y D) confirmados:
+  // Asignaciones detalladas (EXISTEN EN TABLA - snake_case / camelCase)
   'gradosAsignadosJson', 'grados_asignados_json',
-  'gradosAsignacionesJson', 'grados_asignaciones_json',
-  'asignacionesDetalladasJson', 'asignacionesDetalladas',
-  'gradosAsignacionesJSON', 'detalladas',
-  'asigDetall', 'asignacionesGradosJson',
-  // Tutor legacy SI existen en la tabla:
+  'grados_asignaciones_json',
+  // Tutor legacy (EXISTEN EN TABLA - confirmados tu stacktrace)
   'tutorAulasJson', 'tutor_aulas_json',
   'tutorAulasJson2',
   'tutorGradosAsignados', 'tutor_grados_asignados',
@@ -272,7 +269,9 @@ const _USUARIOS_FIELDS_WHITELIST = new Set([
   'tutorGrado', 'tutor_grado',
   'tutorSeccion', 'tutor_seccion',
   'tutorAulas', 'tutorAulasArr',
-  // Permisos:
+  'tutorAulasStr', 'tutor_aulas_str',
+  'aulasTutor',
+  // Permisos extras:
   'incidentesDiaLectura', 'incidentes_dia_lectura',
   'permisosExtra', 'permisos_extra',
   'createdAt', 'updatedAt'
