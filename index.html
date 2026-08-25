@@ -21552,7 +21552,20 @@ function _mapUsuarioCacheRow(row) {
 
 async function _cargarUsuariosCache() {
   if(_usuariosCacheData) return _usuariosCacheData;
-  const lsUsr = LSC.get('usuarios');
+  // ✅ STALE CACHE DETECTION: si el LS cache no trae los 4 arrays legacy
+  // (deploy 052864b+) → invalidamos para re-fetchear todos los fields.
+  let lsUsr = LSC.get('usuarios');
+  if (lsUsr && Array.isArray(lsUsr) && lsUsr.length > 0) {
+    const sample = lsUsr[0] || {};
+    const isStale = !(Array.isArray(sample.grados_asignados_json)
+                    && Array.isArray(sample.tutor_aulas_json)
+                    && Array.isArray(sample.tutorAulas)
+                    && Array.isArray(sample.tutorGradosAsignados));
+    if (isStale) {
+      try { LSC.del('usuarios'); } catch(_dummy){}
+      lsUsr = null; _usuariosCacheData = null;
+    }
+  }
   if(lsUsr) { _usuariosCacheData = lsUsr; return lsUsr; }
   try {
     const { data, error } = await _sb
@@ -21577,64 +21590,258 @@ function _invalidarUsuarios() {
   LSC.del('usuarios');
 }
 
-// Helper: arma el texto "🎓 Aulas" para la fila usuario (agrupado POR CICLO/NIVEL
-// si hay estructura detallada grados_asignados_json[]).
-function _userAsignacionesLabel(u) {
-  // 1) PRIMERO: estructura detallada 4 campos {ciclo,turno,grado,seccion} (savePrivilegios deploy 10fc429+)
-  const det = Array.isArray(u?.grados_asignados_json) ? u.grados_asignados_json.filter(e => !!e && typeof e === 'object') : [];
-  const tutorAulasDet = Array.isArray(u?.tutor_aulas_json) ? u.tutor_aulas_json.filter(e => !!e && typeof e === 'object' && (String(e.turno||'').trim() || String(e.modalidad||'').trim() || String(e.atencion||'').trim())) : [];
-  const allDet = det.concat(tutorAulasDet);
-  if (allDet.length > 0) {
-    // Agrupar por ciclo → Map<cicloStr, Map<gradoStr, Set<seccionStr>>>
-    const grupo = new Map();
-    for (const e of allDet) {
-      let c0 = String(e.ciclo || e.nivel || '').trim().toUpperCase();
-      const c = (c0 === 'INICIAL' || c0 === 'INTERMEDIO' || c0 === 'INICIAL/INTERMEDIO' || c0 === 'INI') ? 'INI/INT'
-              : (c0 === 'AVANZADO' || c0 === 'AVZ') ? 'AVANZADO'
-              : (c0 || 'SIN CICLO');
-      const g0 = String(e.grado || e.g || '').trim();
-      if (!g0) continue;
-      const s0 = String(e.seccion || e.s || '').trim().toUpperCase();
-      if (!grupo.has(c)) grupo.set(c, new Map());
-      const mc = grupo.get(c);
-      if (!mc.has(g0)) mc.set(g0, new Set());
-      if (s0) mc.get(g0).add(s0);
-    }
-    // Convertir a partes ordenadas (INI/INT primero luego AVANZADO luego resto)
-    const ord = ['INI/INT','AVANZADO'];
-    const keys = [...grupo.keys()].sort((a,b)=>{
-      const ia = ord.indexOf(a), ib = ord.indexOf(b);
-      const ra = (ia>=0?ia:99), rb = (ib>=0?ib:99);
-      if (ra!==rb) return ra-rb;
-      return a.localeCompare(b);
-    });
-    const partes = [];
-    for (const c of keys) {
-      const mc = grupo.get(c);
-      const gradosOrd = [...mc.keys()].sort((x,y)=>{
-        const nx = parseInt(x,10), ny = parseInt(y,10);
-        if (!isNaN(nx) && !isNaN(ny)) return nx-ny;
-        return x.localeCompare(y);
-      });
-      const segs = gradosOrd.map(g=>{
-        const ss = [...mc.get(g)].sort();
-        return `${g}${ss.length?` (${ss.join(',')})`:''}`;
-      });
-      const icono = (c === 'INI/INT') ? '🧊' : (c === 'AVANZADO') ? '🔥' : '📘';
-      partes.push(`${icono} ${c}: ${segs.join(', ')}`);
-    }
-    if (partes.length) return `🎓 Aulas: ${partes.join(' · ')}`;
+// Helper: parsea strings como "INI 1A", "INICIAL 1 B", "INTERMEDIO Grado 3 C",
+// "AVANZADO · 4B SEMI", "4C VIRTUAL", "Presencial 2A", etc. y retorna
+// {ciclo, turno, grado, seccion} o null si no se pudo parsear.
+function _parseTutorAulaStr(rawStr) {
+  const s = String(rawStr || '').trim().toUpperCase();
+  if (!s) return null;
+  // Quitar tokens no útiles: GRADO°, GRADO, G, DE
+  const clean = s
+    .replace(/GRADO\s*/g, '')
+    .replace(/°/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[·\-_,.;:()\[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean) return null;
+  // Detectar ciclo:
+  let ciclo = '';
+  const rest1 = clean
+    .replace(/\b(INICIAL\/INTERMEDIO|INICIAL INTERMEDIO)\b/, () => { ciclo = 'INI/INT'; return ''; })
+    .replace(/\b(INICIAL|INI)\b/, () => { if (!ciclo) ciclo = 'INI/INT'; return ''; })
+    .replace(/\b(INTERMEDIO|INT)\b/, () => { if (!ciclo) ciclo = 'INI/INT'; return ''; })
+    .replace(/\b(AVANZADO|AVZ|AV)\b/, () => { if (!ciclo) ciclo = 'AVANZADO'; return ''; })
+    .trim();
+  // Detectar turno:
+  let turno = '';
+  const rest2 = rest1
+    .replace(/\b(SEMI\s*PRESENCIAL|SEMIPRESENCIAL|SEMI)\b/, () => { turno = 'SEMIPRESENCIAL'; return ''; })
+    .replace(/\b(VIRTUAL|VIRT|REMOTO|ONLINE)\b/, () => { turno = 'VIRTUAL'; return ''; })
+    .replace(/\b(PRESENCIAL|PRES|PRESEN)\b/, () => { if (!turno) turno = 'PRESENCIAL'; return ''; })
+    .trim();
+  // Detectar grado (numero) y seccion (letra A-Z):
+  let grado = '', seccion = '';
+  // Patrón 1: "4 B" o "3C" o "12 A"
+  const m1 = rest2.match(/(\d{1,2})\s*([A-ZÁÉÍÓÚÑ]?)/);
+  if (m1) {
+    grado = m1[1];
+    seccion = (m1[2] || '').trim();
   }
-  // 2) FALLBACK: estructura plano legacy asignaciones{grado:[secciones]} (usuarios sin guardar ✅ Aceptar nuevo)
-  const keys = Object.keys(u?.asignaciones || {});
-  if (keys.length) {
-    const txt = keys
+  // Patrón 2: "A 4" (sección antes grado)
+  if (!grado) {
+    const m2 = rest2.match(/([A-ZÁÉÍÓÚÑ])\s*(\d{1,2})/);
+    if (m2) {
+      seccion = m2[1];
+      grado = m2[2];
+    }
+  }
+  if (!grado && !seccion) return null;
+  return {
+    ciclo: ciclo || '',
+    turno: turno || '',
+    grado: grado || '',
+    seccion: seccion || ''
+  };
+}
+
+// Helper: arma el texto "🎓 Aulas" para la fila usuario (agrupado POR CICLO/NIVEL).
+// HACE MERGE DE TODAS LAS FUENTES LEGACY para que NO NECESITES guardar ✅ Aceptar
+// en cada docente viejo — muestra agrupado por niveles automáticamente al instante.
+function _userAsignacionesLabel(u) {
+  if (!u || typeof u !== 'object') return '⚠ Sin aulas';
+  // Acumular entries aquí: Map<"ciclo|turno|grado|seccion", entry>
+  const entriesMap = new Map();
+  const addEntry = (e) => {
+    if (!e || typeof e !== 'object') return;
+    let c0 = String(e.ciclo || e.nivel || e.ciclo_nivel || e.cicloAcademico || e.nivelCiclo || '').trim().toUpperCase();
+    let c = (c0 === 'INICIAL' || c0 === 'INTERMEDIO' || c0 === 'INICIAL/INTERMEDIO' || c0 === 'INI') ? 'INI/INT'
+          : (c0 === 'AVANZADO' || c0 === 'AVZ' || c0 === 'AV') ? 'AVANZADO'
+          : c0;
+    let t0 = String(e.turno || e.modalidad || e.atencion || e.mod_atencion || e.mod || e.modalidadAtencion || '').trim().toUpperCase();
+    if (typeof _normModAtencion === 'function') t0 = (_normModAtencion(t0) || t0);
+    else {
+      t0 = t0.replace(/\s+/g,'');
+      if (t0 === 'SEMIPRESENCIAL' || t0 === 'SEMI' || t0 === 'SEMIPRES') t0 = 'SEMIPRESENCIAL';
+      else if (t0 === 'VIRTUAL' || t0 === 'VIRT' || t0 === 'ONLINE') t0 = 'VIRTUAL';
+      else if (t0 === 'PRESENCIAL' || t0 === 'PRES' || t0 === 'P') t0 = 'PRESENCIAL';
+    }
+    const g = String(e.grado || e.g || e.numGrado || e.numeroGrado || e.gr || '').trim();
+    const s = String(e.seccion || e.s || e.sec || e.seccionTutoria || e.secc || '').trim().toUpperCase();
+    if (!g && !s) return;
+    // Inferir turno por canon seccion (A=PRES B=SEMI C=VIRT D=PRES) si no trae turno:
+    let tFinal = t0 || '';
+    if (!tFinal) {
+      if (s === 'A') tFinal = 'PRESENCIAL';
+      else if (s === 'B') tFinal = 'SEMIPRESENCIAL';
+      else if (s === 'C') tFinal = 'VIRTUAL';
+      else if (s === 'D') tFinal = 'PRESENCIAL';
+      else tFinal = 'PRESENCIAL';
+    }
+    // Inferir ciclo si no trae:
+    let cFinal = c || '';
+    if (!cFinal) {
+      // Pistas desde cargo string del docente (si incluye "ciclo inicial intermedio"):
+      const cargo = String(u.cargo || '').trim().toUpperCase();
+      if (cargo.includes('INICIAL') || cargo.includes('INTERMEDIO') || cargo.includes('INI')) {
+        cFinal = 'INI/INT';
+      } else {
+        // Canon Excel actual CEBA JAD (GOLD RULE): TODOS = AVANZADO por defecto.
+        cFinal = 'AVANZADO';
+      }
+    }
+    const key = `${cFinal}|${tFinal}|${g}|${s}`;
+    if (!entriesMap.has(key)) entriesMap.set(key, { ciclo: cFinal, turno: tFinal, grado: g, seccion: s, src: new Set() });
+    if (e._src) entriesMap.get(key).src.add(e._src);
+  };
+  const pickArrAll = (...names) => {
+    const out = [];
+    for (const n of names) {
+      const v = u[n];
+      if (Array.isArray(v)) out.push(...v);
+      else if (typeof v === 'string' && v.trim()) {
+        try { const p = JSON.parse(v); if (Array.isArray(p)) out.push(...p); else out.push(v); } catch(_e1){ out.push(v); }
+      }
+    }
+    const seen = new Set();
+    return out.filter(x => {
+      try { const k = (typeof x === 'string') ? x : JSON.stringify(x); if (seen.has(k)) return false; seen.add(k); return true; }
+      catch(_e2){ return true; }
+    });
+  };
+  const allGradosAsigJson = pickArrAll('grados_asignaciones_json','gradosAsignacionesJson','asignacionesDetalladasJson','asignacionesDetalladas','gradosAsignacionesJSON','detalladas');
+  const allTutAulasJson = pickArrAll('tutor_aulas_json','tutorAulasJson2','tutor_aulas_objects','tutorAulasObjects','tutAulasJson');
+  const allTutGradosAsig = pickArrAll('tutorGradosAsignados','tutor_grados_asignados','tutorGradosAsignadosArray','tutGradosAsig','gradosAsignados','asignacionesGrados');
+  const allTutAulas = pickArrAll('tutorAulas','tutor_aulas','tutorAulasJson','tutor_aulas_arr','tutorAulasArray','tutAulas','tutor_aulas_str','aulasTutor');
+  let _asigLegacyMerge = (u.asignaciones && typeof u.asignaciones === 'object') ? { ...u.asignaciones } : {};
+  for (const fn of ['asignacionesLegacy','asignacionesPlano','asigPlano','asignaciones_obj','asigLegacy','aulasPlano','gradosAsignadosPlano']) {
+    const v = u[fn];
+    if (v && typeof v === 'object') Object.assign(_asigLegacyMerge, v);
+    else if (typeof v === 'string' && v.trim()) {
+      try { const p = JSON.parse(v); if (p && typeof p === 'object') Object.assign(_asigLegacyMerge, p); } catch(_ez){}
+    }
+  }
+  u.asignaciones = _asigLegacyMerge;
+  allGradosAsigJson.forEach(e => addEntry({ ...e, _src: 'grados_asignaciones_json' }));
+  allTutAulasJson.forEach(e => addEntry({ ...e, _src: 'tutor_aulas_json' }));
+  allTutGradosAsig.forEach(x => {
+    if (typeof x === 'string') { const p = _parseTutorAulaStr(x); if (p) addEntry({ ...p, _src: 'tutorGradosAsignados_str' }); }
+    else if (x && typeof x === 'object') addEntry({ ...x, _src: 'tutorGradosAsignados_obj' });
+  });
+  allTutAulas.forEach(x => {
+    if (typeof x === 'string') { const p = _parseTutorAulaStr(x); if (p) addEntry({ ...p, _src: 'tutorAulas_str' }); }
+    else if (x && typeof x === 'object') addEntry({ ...x, _src: 'tutorAulas_obj' });
+  });
+  // =====================================================================
+  // FUENTE 1 (antigua duplicada safe - entriesMap ignora dupes): grados_asignados_json[] (ESTRUCTURA DETALLADA 4 CAMPOS, deploy 10fc429+)
+  // =====================================================================
+  const fuente1 = (Array.isArray(u.grados_asignados_json) ? u.grados_asignados_json : []);
+  fuente1.forEach(e => addEntry({ ...e, _src: 'grados_asignados_json' }));
+  // =====================================================================
+  // FUENTE 2: tutor_aulas_json[] (OBJECTS legacy Firestore). INCLUIMOS INCLUSO
+  // LOS QUE NO TIENEN TURNO (arriba se infiere por canon sección).
+  // =====================================================================
+  const fuente2 = (Array.isArray(u.tutor_aulas_json) ? u.tutor_aulas_json : []);
+  fuente2.forEach(e => addEntry({ ...e, _src: 'tutor_aulas_json' }));
+  // =====================================================================
+  // FUENTE 3: tutorGradosAsignados[] (nombres variables)
+  // =====================================================================
+  const fuente3 = (Array.isArray(u.tutorGradosAsignados) ? u.tutorGradosAsignados : []);
+  fuente3.forEach(x => {
+    if (typeof x === 'string') {
+      const p = _parseTutorAulaStr(x); if (p) addEntry({ ...p, _src: 'tutorGradosAsignados_str' });
+    } else if (x && typeof x === 'object') {
+      addEntry({ ...x, _src: 'tutorGradosAsignados_obj' });
+    }
+  });
+  // =====================================================================
+  // FUENTE 4: tutorAulas[] (ARRAY LEGACY strings u objects). Principal fuente
+  //           para Soledad y docentes con data vieja.
+  // =====================================================================
+  const fuente4 = Array.isArray(u.tutorAulas) ? u.tutorAulas : [];
+  if (fuente4.length === 0 && typeof u.tutorAulas === 'string' && u.tutorAulas) {
+    try { fuente4.push(...JSON.parse(u.tutorAulas)); } catch(_e) { fuente4.push(u.tutorAulas); }
+  }
+  fuente4.forEach(x => {
+    if (typeof x === 'string') {
+      const p = _parseTutorAulaStr(x); if (p) addEntry({ ...p, _src: 'tutorAulas_str' });
+    } else if (x && typeof x === 'object') {
+      addEntry({ ...x, _src: 'tutorAulas_obj' });
+    }
+  });
+  // =====================================================================
+  // FUENTE 5: asignaciones{} plano (backward compat) — inferir turno por canon
+  //           sección y ciclo por cargo o default AVZ.
+  // =====================================================================
+  if (u.asignaciones && typeof u.asignaciones === 'object') {
+    for (const g of Object.keys(u.asignaciones)) {
+      const secs = Array.isArray(u.asignaciones[g]) ? u.asignaciones[g] : [];
+      if (secs.length === 0) addEntry({ grado: g, _src: 'asignaciones_gkey' });
+      for (const s of secs) addEntry({ grado: g, seccion: s, _src: 'asignaciones' });
+    }
+  }
+  // =====================================================================
+  // FUENTE 6: tutorGrado / tutorSeccion (strings single legacy)
+  // =====================================================================
+  if ((u.tutorGrado && String(u.tutorGrado).trim()) || (u.tutorSeccion && String(u.tutorSeccion).trim())) {
+    addEntry({
+      grado: String(u.tutorGrado || '').trim(),
+      seccion: String(u.tutorSeccion || '').trim().toUpperCase(),
+      _src: 'tutor_grado_seccion'
+    });
+  }
+  // =====================================================================
+  // FINAL: construir el agrupado POR CICLO → Map<cicloStr, Map<gradoStr, Set<seccionStr>>>
+  // =====================================================================
+  const allDet = Array.from(entriesMap.values());
+  if (allDet.length === 0) {
+    // Si el user marcó u.restringir pero sin campos parseables:
+    if (u.restringir) return '⚠ Sin aulas (editar → Aulas)';
+    return '';
+  }
+  const grupo = new Map();
+  for (const e of allDet) {
+    const c = e.ciclo || 'SIN CICLO';
+    const g = String(e.grado || '').trim();
+    if (!g) continue;
+    const s = String(e.seccion || '').trim().toUpperCase();
+    if (!grupo.has(c)) grupo.set(c, new Map());
+    const mc = grupo.get(c);
+    if (!mc.has(g)) mc.set(g, new Set());
+    if (s) mc.get(g).add(s);
+  }
+  const ord = ['INI/INT','AVANZADO'];
+  const keys = [...grupo.keys()].sort((a,b)=>{
+    const ia = ord.indexOf(a), ib = ord.indexOf(b);
+    const ra = (ia>=0?ia:99), rb = (ib>=0?ib:99);
+    if (ra!==rb) return ra-rb;
+    return a.localeCompare(b);
+  });
+  const partes = [];
+  for (const c of keys) {
+    const mc = grupo.get(c);
+    const gradosOrd = [...mc.keys()].sort((x,y)=>{
+      const nx = parseInt(x,10), ny = parseInt(y,10);
+      if (!isNaN(nx) && !isNaN(ny)) return nx-ny;
+      return x.localeCompare(y);
+    });
+    const segs = gradosOrd.map(g=>{
+      const ss = [...mc.get(g)].sort();
+      return `${g}${ss.length?` (${ss.join(',')})`:''}`;
+    });
+    const icono = (c === 'INI/INT') ? '🧊' : (c === 'AVANZADO') ? '🔥' : '📘';
+    partes.push(`${icono} ${c}: ${segs.join(', ')}`);
+  }
+  if (partes.length) return `🎓 Aulas: ${partes.join(' · ')}`;
+  // Fallback final:
+  const keysFb = Object.keys(u?.asignaciones || {});
+  if (keysFb.length) {
+    const txt = keysFb
       .sort((x,y)=>{ const nx=parseInt(x,10), ny=parseInt(y,10); if (!isNaN(nx)&&!isNaN(ny)) return nx-ny; return x.localeCompare(y); })
       .map(g => g + ((u.asignaciones[g]||[]).length ? ` (${[...new Set(u.asignaciones[g])].sort().join(',')})` : ''))
       .join(', ');
     return `🎓 Aulas asignadas: ${txt}`;
   }
-  // 3) Sin aulas
   return '⚠ Sin aulas (editar → Aulas)';
 }
 
