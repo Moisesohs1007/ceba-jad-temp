@@ -24285,9 +24285,26 @@ async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
   try {
     const cached = userData || _getCurrentUsuarioCache(currentUser.uid);
     if(cached) {
+      // ================================================================
+      // FIX 2026-08-24 ULTIMO Soledad dropdown B: INCLUIR detalladas
+      // (grados_asignaciones_json[] + 12 aliases) EN currentPrivilegios
+      // para que poblarFiltroSeccion pueda leerlas y agregar B al dropdown.
+      // Anteriormente currentPrivilegios SOLO tenia restringir + asignaciones
+      // plano → no se veian secciones guardadas como detalladas 4 campos.
+      // ================================================================
+      const _detKeys = [
+        'grados_asignaciones_json','gradosAsignacionesJson','asignacionesDetalladasJson','asignacionesDetalladas',
+        'gradosAsignacionesJSON','detalladas','asigDetall','asignacionesGradosJson',
+        'tutor_aulas_json','tutorAulasJson','tutorAulasJson2','tutAulasJson'
+      ];
+      const _detObj = {};
+      _detKeys.forEach(k => {
+        if (Array.isArray(cached[k])) _detObj[k] = cached[k].slice();
+      });
       currentPrivilegios = {
         restringir:   cached.restringir || false,
         asignaciones: cached.asignaciones || {},
+        ..._detObj
       };
       try {
         const cfg = cfgCached || await getConfig();
@@ -24339,9 +24356,22 @@ async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
       if(doc.exists) {
         _setCurrentUsuarioCache(currentUser.uid, doc.data() || {});
         const data = doc.data() || {};
+        // ================================================================
+        // MISMO FIX (detalladas en currentPrivilegios) para rama doc get:
+        // ================================================================
+        const _detKeys2 = [
+          'grados_asignaciones_json','gradosAsignacionesJson','asignacionesDetalladasJson','asignacionesDetalladas',
+          'gradosAsignacionesJSON','detalladas','asigDetall','asignacionesGradosJson',
+          'tutor_aulas_json','tutorAulasJson','tutorAulasJson2','tutAulasJson'
+        ];
+        const _detObj2 = {};
+        _detKeys2.forEach(k => {
+          if (Array.isArray(data[k])) _detObj2[k] = data[k].slice();
+        });
         currentPrivilegios = {
           restringir:   data.restringir   || false,
           asignaciones: data.asignaciones || {},
+          ..._detObj2
         };
         try {
           const cfg = cfgCached || await getConfig();
@@ -25120,11 +25150,25 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
     // desde las DETALLADAS (grados_asignaciones_json[] y sus 15 aliases).
     // deploy f533333 guarda en ESTA estructura; si no leemos aquí,
     // la docente queda con solo A por alumnosSet.
+    //
+    // FUENTE 1 (MÁS IMPORTANTE): _getCurrentUsuarioCache(uid) = doc COMPLETO
+    //   (contiene TODOS los campos del usuario, incluyendo las nuevas 4 fields
+    //    grados_asignaciones_json[]). Esto es lo que SOLUCIONA el bug de
+    //    currentPrivilegios/currentTutorInfo que solo traen campos limitados.
+    // FUENTE 2: currentPrivilegios (ya debería tener detalladas luego fix p1)
+    // FUENTE 3: currentTutorInfo + window.currentUser (backward compat)
     // ================================================================
     try {
-      const fu = (window.currentUser && window.currentUser) ? { ...(window.currentUser || {}) } : {};
+      const fu = {};
+      try {
+        if (window.currentUser && window.currentUser.uid && typeof _getCurrentUsuarioCache === 'function') {
+          const docFull = _getCurrentUsuarioCache(window.currentUser.uid);
+          if (docFull && typeof docFull === 'object') Object.assign(fu, docFull);
+        }
+      } catch(_eCache){}
       if (currentPrivilegios && typeof currentPrivilegios === 'object') Object.assign(fu, currentPrivilegios);
       if (currentTutorInfo && typeof currentTutorInfo === 'object') Object.assign(fu, currentTutorInfo);
+      if (window.currentUser && typeof window.currentUser === 'object') Object.assign(fu, window.currentUser);
       const _detNombres = [
         'grados_asignaciones_json','gradosAsignacionesJson','asignacionesDetalladasJson','asignacionesDetalladas',
         'gradosAsignacionesJSON','detalladas','asigDetall','asignacionesGradosJson',
