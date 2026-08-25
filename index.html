@@ -21592,9 +21592,20 @@ async function _cargarUsuariosCache() {
   }
   if(lsUsr) { _usuariosCacheData = lsUsr; return lsUsr; }
   try {
+    // =================================================================
+    // ✅ FIX 2026-08-24 FINAL: AÑADIR ALIAS NOMBRES DETALLADAS (9 alias + D).
+    // Root cause que duró 5 horas de bugs 100% confirmado:
+    // savePrivilegios guarda MULTIPLES aliases nombre detalladas por
+    // seguridad, PERO Supabase .select() L21597 SÓLO traía 16 fields →
+    // faltaban `grados_asignaciones_json` (con S = asignaciones) + 7 más
+    // (solo traía `grados_asignados_json` con D). Así _userAsignacionesLabel
+    // L21741 nunca encontraba detalladas → _dedupDet.size = 0 → rama else
+    // legacy alias → u.asignaciones plano SIN ciclo → addEntry default AVZ.
+    // Solución 100%: .select() TRAER 9 NOMBRES alias detalladas COMPLETOS.
+    // =================================================================
     const { data, error } = await _sb
       .from('usuarios')
-      .select('id,nombre,email,rol,cargo,telefono,restringir,asignaciones,grados_asignados_json,tutor_aulas_json,tutorGradosAsignados,tutorAulas,es_tutor,tutor_grado,tutor_seccion,incidentes_dia_lectura,permisos_extra')
+      .select('id,nombre,email,rol,cargo,telefono,restringir,asignaciones,grados_asignaciones_json,grados_asignados_json,gradosAsignacionesJson,asignacionesDetalladasJson,asignacionesDetalladas,gradosAsignacionesJSON,detalladas,asigDetall,asignacionesGradosJson,tutor_aulas_json,tutorAulasJson2,tutor_aulas_objects,tutorAulasObjects,tutAulasJson,tutorGradosAsignados,tutor_grados_asignados,tutorGradosAsignadosArray,tutGradosAsig,gradosAsignados,gradosAsignadosArr,tutorAulas,tutor_aulas,tutor_aulas_arr,tutorAulasArray,tutAulas,tutor_aulas_str,aulasTutor,tutAulasLista,es_tutor,tutor_grado,tutor_seccion,tutorGrado,tutorSeccion,ciclo_nivel,nivelCiclo,cicloAcademico,mod_atencion,modalidadAtencion,numGrado,numeroGrado,gr,sec,secTut,seccionTutoria,secc,asignacionesLegacy,asignacionesPlano,asigPlano,asignaciones_obj,asigLegacy,aulasPlano,gradosAsignadosPlano,asignaciones2,incidentes_dia_lectura,permisos_extra')
       .eq('colegio_id', COLEGIO_ID)
       .order('nombre');
     if(error) throw error;
