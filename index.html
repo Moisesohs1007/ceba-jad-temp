@@ -23793,19 +23793,65 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
 
   // Si uid, cargar desde Firestore; si no, usar tempAsignaciones
   // =================================================================
-  // ✅ FIX 2026-08-25 i2c: ANTES de cargar data, RESETEAR VARIABLES
-  // GLOBALES detalladasSet / have. Si el Admin abre primero a Usuario A
-  // con AVZ 4B luego a Soledad INI/INT 1A, las globales heredadas hacían
-  // que hasGlobalDesdeDetalladas leyera el usuario anterior.
+  // ✅ FIX 2026-08-25 n1+n2: PURGA NUCLEAR para usuarios INI/INT (SOLEDAD).
+  // El bug fantasma "al abrir Configurar aulas sale 🔥 AVANZADO PRES 1A"
+  // se debe a DATA LEGACY RESIDUAL en campos no-detalladas:
+  //   1) d.asignaciones = {1:["A"]} plano SIN CICLO (default AVZ Gold Rule)
+  //   2) d.tutorGrado = "1" / d.tutor_seccion = "A" strings legacy AVZ
+  //   3) _normalizeAsignacionesWithCfg() los mezcla con cfg BD alumnos hoy
+  //      que TODOS son AVZ PRES → hasGlobal=true en Bloque2.
+  //
+  // SOLUCIÓN NUCLEAR 100% LIMPIA: SI CARGO = INICIAL/INTERMEDIO (SOLEDAD)
+  // Y NO HAY DETALLADAS 4 CAMPOS:
+  //   → PURGA TOTAL tempAsignaciones={} y asignaciones={} (IIFE).
+  //   → PURGA aulasLegacy=[] (ignora tutor strings legacy).
+  //   → FORCE NIVEL HINT = INI/INT para helper granular.
   // =================================================================
   try {
     window.__asigDetalladasSetGlobal = new Set();
     window.__asigDetalladasGsSetGlobal = new Set();
     window.__asigDetalladasHave = false;
+    window.__FORCE_NIVEL_HINT = '';
+    window.__cargandoCargoIniIntFlag = false;
   } catch(_){}
   if(uid) {
     try {
       const d = (uDataOverride && typeof uDataOverride === 'object') ? uDataOverride : null;
+      // ================================================================
+      // 🔴 NUCLEAR N1: Detectar CARGO INI/INT ANTES de cargar datos.
+      // ================================================================
+      let cargoUC = '';
+      let dForCargo = d;
+      if (!dForCargo) {
+        try {
+          const docX = await db.collection('usuarios').doc(uid).get();
+          if (docX && docX.exists) dForCargo = docX.data() || {};
+        } catch(_e0){}
+      }
+      cargoUC = String(dForCargo?.cargo || dForCargo?.doc || editingUsuarioCargoActual || '').trim().toUpperCase();
+      const _cIniInt = /INICIAL|INTERMEDIO|JORNADA|PRIMARIA|INICIO/.test(cargoUC)
+                    && !/AVANZ|SECUNDARIA|HUMANIDADES|CIENCIAS/.test(cargoUC);
+      const _cAvz = /AVANZ|SECUNDARIA|HUMANIDADES|CIENCIAS/.test(cargoUC);
+      window.__cargandoCargoIniIntFlag = _cIniInt;
+      if (_cIniInt) {
+        window.__FORCE_NIVEL_HINT = 'INICIAL/INTERMEDIO';
+        window.__legacyCicloUnicoHint = 'INICIAL/INTERMEDIO';
+        try {
+          const e1 = document.getElementById('asig_legacy_ciclo_hint');
+          if (e1) e1.value = 'INICIAL/INTERMEDIO';
+        } catch(_){}
+      } else if (_cAvz) {
+        window.__FORCE_NIVEL_HINT = 'AVANZADO';
+        window.__legacyCicloUnicoHint = 'AVANZADO';
+        try {
+          const e2 = document.getElementById('asig_legacy_ciclo_hint');
+          if (e2) e2.value = 'AVANZADO';
+        } catch(_){}
+      }
+      // ================================================================
+      // Cargar data (igual que antes) → PURGA TOTAL POSTERIOR en IIFE si
+      // !hayDetalladas && cargo INI/INT.
+      // ================================================================
       if(d) {
         const preferNivel = _agendaInferNivelByGrado(String(d.tutorGrado || d.tutor_grado || '').trim(), cfg);
         tempAsignaciones = _normalizeAsignacionesWithCfg(d.asignaciones || {}, cfg, preferNivel) || {};
@@ -24008,6 +24054,36 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     }
     // Cierre else: Toda la lógica anterior (aulasLegacy + merge) SÓLO si NO hay detalladas válidas.
     }
+    // ================================================================
+    // 🔴 NUCLEAR N2 BOMBA PURGA TOTAL SOLEDAD (POST-MERGE):
+    // Si CARGO = INI/INT Y NO hay detalladas (ni Admin grabó INI/INT 1A):
+    //   → tempAsignaciones = {} Y aulasLegacy = [] y mergeByGrado = {}.
+    // Esto elimina CUALQUIER data fantasma legacy (d.asignaciones plano
+    // {1:[A]} AVZ, tutor strings 1/A, _normalizeAsignacionesWithCfg con
+    // cfg alumnos rows HOY todos AVZ, etc.) que generara check
+    // 🔥 AVANZADO PRES 1A automático al abrir.
+    // ================================================================
+    try {
+      if (window.__cargandoCargoIniIntFlag === true && !_hayDetalladasValidas) {
+        tempAsignaciones = {};
+        asignaciones = tempAsignaciones;
+        try { window.tempAsignaciones = tempAsignaciones; } catch(_){}
+        // Purga arrays y mergeByGrado local:
+        try { aulasLegacy.length = 0; } catch(_){}
+        try {
+          if (typeof mergeByGrado !== 'undefined') {
+            Object.keys(mergeByGrado || {}).forEach(k => { delete mergeByGrado[k]; });
+          }
+        } catch(_){}
+        // Purga any residuales globales:
+        try {
+          const el = document.getElementById('asig_legacy_ciclo_hint');
+          if (el) el.value = 'INICIAL/INTERMEDIO';
+          window.__legacyCicloUnicoHint = 'INICIAL/INTERMEDIO';
+          window.__FORCE_NIVEL_HINT = 'INICIAL/INTERMEDIO';
+        } catch(_){}
+      }
+    } catch(_ePurga){}
     // FIX 2026-08-24 (último bug "marcas no aparecen al reabrir"):
     // Asegurar referencias cruzadas: helper granular lee window.tempAsignaciones,
     // y variable local const asignaciones = tempAsignaciones. Si la referencia
@@ -24265,6 +24341,23 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     const numG = g.match(/(\d+)/); const gK = numG ? numG[1] : g;
     const sK = String(seccionRaw||'').trim().toUpperCase();
     if (!gK || !sK) return false;
+    // ==================================================================
+    // 🔴 NUCLEAR N3 BLOQUEO POR CARGO (FUERZA BRUTA):
+    // Si __FORCE_NIVEL_HINT = INI/INTERMEDIO y la tarjeta actual es BLOQUE2
+    // 🔥 AVANZADO y NO hay detalladas grabadas → return false INMEDIATO.
+    // (evita check fantasma data basura AVZ que sobreviva a purga n1/n2).
+    // ==================================================================
+    try {
+      const forceHint = String(window.__FORCE_NIVEL_HINT || '').trim().toUpperCase();
+      const hasDet = !!window.__asigDetalladasHave;
+      if (!hasDet) {
+        if (forceHint === 'INICIAL/INTERMEDIO' || forceHint === 'INI/INT' || forceHint === 'INICIAL' || forceHint === 'INTERMEDIO') {
+          if (cicloT !== 'INICIAL' && cicloT !== 'INTERMEDIO' && cicloT !== 'INICIAL/INTERMEDIO') return false;
+        } else if (forceHint === 'AVANZADO' || forceHint === 'AVZ') {
+          if (cicloT !== 'AVANZADO') return false;
+        }
+      }
+    } catch(_eN3){}
     // ✅ FIX 2026-08-24: hasGlobal DESDE DETALLADAS (primordial)
     let hasGlobal = false;
     let usarDetalladas = false;
