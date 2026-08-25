@@ -21347,15 +21347,11 @@ async function openModalUsuario(uid, nombre, rol, email) {
       _uTutorAulasForm = [{ ciclo:'', grado: String(initU.tutorGrado||'').trim(), seccion: String(initU.tutorSeccion||'').trim().toUpperCase() }].filter(a => a.grado && a.seccion);
     }
     toggleTutorFields({ grado: initU.tutorGrado || null, seccion: initU.tutorSeccion || null });
-    if(canSetExtras) {
-      const px0 = (initU.permisosExtra && typeof initU.permisosExtra === 'object') ? initU.permisosExtra : {};
-      _applyPermisosEspecialesToForm({
-        ...px0,
-        incidentesDiaLectura: (px0.incidentesDiaLectura !== undefined) ? !!px0.incidentesDiaLectura : !!initU.incidentesDiaLectura
-      });
-    } else {
-      _applyPermisosEspecialesToForm({});
-    }
+    const px0Base = (initU.permisosExtra && typeof initU.permisosExtra === 'object') ? initU.permisosExtra : {};
+    _applyPermisosEspecialesToForm({
+      ...px0Base,
+      incidentesDiaLectura: (px0Base.incidentesDiaLectura !== undefined) ? !!px0Base.incidentesDiaLectura : !!initU.incidentesDiaLectura
+    });
     actualizarResumenPermisosEspeciales();
     _setCargoUI(initU.cargo || '');
     try {
@@ -21385,7 +21381,11 @@ async function openModalUsuario(uid, nombre, rol, email) {
             incidentesDiaLectura: (px.incidentesDiaLectura !== undefined) ? !!px.incidentesDiaLectura : !!uData.incidentesDiaLectura
           });
         } else {
-          _applyPermisosEspecialesToForm({});
+          const pxBase = (uData.permisosExtra && typeof uData.permisosExtra === 'object') ? uData.permisosExtra : {};
+          _applyPermisosEspecialesToForm({
+            ...pxBase,
+            incidentesDiaLectura: (pxBase.incidentesDiaLectura !== undefined) ? !!pxBase.incidentesDiaLectura : !!uData.incidentesDiaLectura
+          });
         }
         actualizarResumenPermisosEspeciales();
         document.getElementById('u-telefono').value = uData.telefono || '';
@@ -21448,8 +21448,37 @@ async function saveUsuario() {
   if(!editingUsuarioId && email && !_looksLikeEmail(email)) { toast('Correo inválido','warning'); return; }
 
   try {
-    const permisosExtra = _isAdminDirector() ? _getPermisosEspecialesFromForm() : {};
-    const incidentesDiaLectura = _isAdminDirector() ? !!permisosExtra?.incidentesDiaLectura : false;
+    const permisosExtraFromForm = _getPermisosEspecialesFromForm();
+    let permisosExtra = { ...(permisosExtraFromForm || {}) };
+    const secKeys = Object.keys(permisosExtra?.sections || {}).filter(k => !!permisosExtra.sections[k]);
+    const hasAnythingFromForm = !!permisosExtra.verTodasAulas || !!permisosExtra.incidentesDiaLectura || !!permisosExtra.incidentesVerTodo || !!permisosExtra.modoCarnets || !!permisosExtra.alumnosFotosMasivo || (secKeys.length > 0);
+    if (!hasAnythingFromForm) {
+      const chkInc = document.getElementById('pe-incidentes-dia-lectura');
+      const chkAllInc = document.getElementById('pe-incidentes-ver-todo');
+      const chkCarn = document.getElementById('pe-modo-carnets');
+      const chkAllA = document.getElementById('pe-ver-todas-aulas');
+      const chkFotos = document.getElementById('pe-alumnos-fotos-masivo');
+      const sectionsFb = {};
+      [
+        'scan','alumnos','registro','reportes','incidentes','materiales','materiales-entrega',
+        'comunicado','agenda','rol-examenes','alertas','usuarios','config','ia-horarios','horarios-grado'
+      ].forEach(k => {
+        const el = document.getElementById('pe-sec-' + k);
+        if (el && el.checked) sectionsFb[k] = true;
+      });
+      const fbHas = !!chkAllA?.checked || !!chkInc?.checked || !!chkAllInc?.checked || !!chkCarn?.checked || !!chkFotos?.checked || (Object.keys(sectionsFb).length > 0);
+      if (fbHas) {
+        permisosExtra = {
+          incidentesDiaLectura: !!chkInc?.checked,
+          incidentesVerTodo: !!chkAllInc?.checked,
+          modoCarnets: !!chkCarn?.checked,
+          verTodasAulas: !!chkAllA?.checked,
+          alumnosFotosMasivo: !!chkFotos?.checked,
+          sections: sectionsFb
+        };
+      }
+    }
+    const incidentesDiaLectura = !!permisosExtra?.incidentesDiaLectura;
     const rolScope = (rol === 'profesor' || rol === 'psicologo');
     const restringir = rolScope ? document.getElementById('u-restringir').checked : false;
     let asignaciones = rolScope ? tempAsignaciones : {};
@@ -21752,6 +21781,17 @@ async function saveUsuario() {
           });
           await db.collection('usuarios').doc(editingUsuarioId).update(update3);
         }
+      }
+      try {
+        const _finalSafe = {};
+        _finalSafe.permisosExtra = permisosExtra;
+        _finalSafe.permisos_extra = permisosExtra;
+        _finalSafe.incidentesDiaLectura = incidentesDiaLectura;
+        _finalSafe.incidentes_dia_lectura = incidentesDiaLectura;
+        _finalSafe.updatedAt = new Date().toISOString();
+        await db.collection('usuarios').doc(editingUsuarioId).update(_finalSafe);
+      } catch(eFinal) {
+        console.warn('[saveUsuario] FINAL safe update permisos fallback error. (ignorado, no romper toast)', eFinal?.code || eFinal?.message || eFinal);
       }
       _invalidarUsuarios();
       // Mostrar/ocultar botón recuperar según teléfono
