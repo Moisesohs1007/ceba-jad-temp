@@ -23420,7 +23420,31 @@ async function savePrivilegios() {
         restringir: _restrFinal,
         asignaciones: tempAsignaciones || {},
         // ✅ ESTRUCTURA DETALLADA: ciclo|turno|grado|seccion (no heurística al reabrir)
-        grados_asignados_json: _detalladasFinal.length ? _detalladasFinal : []
+        grados_asignados_json: _detalladasFinal.length ? _detalladasFinal.slice() : [],
+        // =================================================================
+        // ✅ FIX 2026-08-24 TYPO 1 LETRA (BUG ROOT label siempre AVZ):
+        // _userAsignacionesLabel L21741 LEE `grados_asignaciones_json` (con
+        // S de asigNAcioneS), PERO savePrivilegios GUARDABA solo
+        // `grados_asignados_json` (con D de asigNadoS). La label NUNCA
+        // encontraba las detalladas 4 campos → caía a rama else legacy
+        // alias → entries legacy SIN ciclo → addEntry L21727 default AVZ
+        // → label SIEMPRE aparecía "AVANZADO: 1 (A)" aunque Admin hubiera
+        // guardado Bloque1 INI/INT 1A.
+        //
+        // Solución 100%: GUARDAR MÚLTIPLES ALIASES detalladas con la data
+        // REAL _detalladasFinal (lo contrario de antes, que ponía
+        // _emptyArr para "limpiar"). Así cualquier código que lea
+        // CUALQUIER variante del nombre SÍ vea la asignación correcta con
+        // ciclo INI/INT / AVZ exacto.
+        // =================================================================
+        grados_asignaciones_json: _detalladasFinal.length ? _detalladasFinal.slice() : [],
+        gradosAsignacionesJson: _detalladasFinal.length ? _detalladasFinal.slice() : [],
+        asignacionesDetalladasJson: _detalladasFinal.length ? _detalladasFinal.slice() : [],
+        asignacionesDetalladas: _detalladasFinal.length ? _detalladasFinal.slice() : [],
+        gradosAsignacionesJSON: _detalladasFinal.length ? _detalladasFinal.slice() : [],
+        detalladas: _detalladasFinal.length ? _detalladasFinal.slice() : [],
+        asigDetall: _detalladasFinal.length ? _detalladasFinal.slice() : [],
+        asignacionesGradosJson: _detalladasFinal.length ? _detalladasFinal.slice() : []
       };
       // ✅ FIX 2026-08-24 SOLVEDAD REAPARICIÓN FANTASMA: al guardar con estructura
       // detallada, LIMPIAMOS TODOS los campos legacy para que, al reabrir el modal,
@@ -23428,13 +23452,17 @@ async function savePrivilegios() {
       // (ej: Soledad 1A INI/INT reaparecía después de Aceptar porque tutorGrado="1"
       //  tutorSeccion="A" / asignaciones{} plano / tutorAulas siguen existiendo).
       // Campos legacy a borrar: arrays, strings, objetos, camelCase, snake_case.
+      // IMPORTANTE: los 8 alias detalladas (grados_asignaciones_json,
+      // gradosAsignacionesJson, etc.) NO SE BORRAN aquí → ya fueron escritos
+      // arriba con data REAL _detalladasFinal.
       const _LIMPIAR_LEGACY = (_detalladasFinal.length >= 0); // siempre limpiar (incluso vacío = sin aulas)
       if (_LIMPIAR_LEGACY) {
         const _emptyArr = [];
         const _emptyStr = '';
         const _emptyObj = {};
         Object.assign(_payload, {
-          // Arrays detalladas alias (label pickArrAll L21762-65):
+          // Arrays detalladas alias TUTOR label pickArrAll L21762-65 (YA FUERON
+          // escritos arriba los 8 de asig detalladas; éstos son SOLO tutor):
           tutorAulas: _emptyArr,
           tutor_aulas: _emptyArr,
           tutor_aulas_json: _emptyArr,
