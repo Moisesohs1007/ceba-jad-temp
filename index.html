@@ -21604,6 +21604,15 @@ async function _cargarUsuariosCache() {
 function _invalidarUsuarios() {
   _usuariosCacheData = null;
   LSC.del('usuarios');
+  // ✅ FIX 2026-08-24: borrar también LSC con prefijos comunes que algunas
+  // versiones antiguas usaban para no re-usar cache viejo con campos legacy.
+  try {
+    if (window.localStorage) {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+      keys.filter(k => k && (k === 'usuarios' || k.startsWith('usuarios_') || k.startsWith('ceba_usuarios') || k.includes('usuariosCache') || k.includes('cache_usuario'))).forEach(k => { try { localStorage.removeItem(k); } catch(_d){} });
+    }
+  } catch(_eLsc){ /* ignore */ }
 }
 
 // Helper: parsea strings como "INI 1A", "INICIAL 1 B", "INTERMEDIO Grado 3 C",
@@ -21710,6 +21719,54 @@ function _userAsignacionesLabel(u) {
     if (!entriesMap.has(key)) entriesMap.set(key, { ciclo: cFinal, turno: tFinal, grado: g, seccion: s, src: new Set() });
     if (e._src) entriesMap.get(key).src.add(e._src);
   };
+  // ===================================================================
+  // ✅ PRIORIDAD 1 LABEL (2026-08-24 SOLedad FIX): igual que IIFE cargarCheckboxes.
+  // Si EXISTEN grados_asignaciones_json[] (ESTRUCTURA DETALLADA 4 campos), SÓLO
+  // renderizar desde ELLAS — NO MERGEAR legacy alias (que tienen INI/INT residual
+  // de hace 3 importaciones, y a pesar que savePrivilegios limpió 20 campos, user
+  // puede haber guardado con deploy viejo y queden alias). Así el label coincide
+  // 100% con el modal Configurar aulas (img1 = img2 fila).
+  // ===================================================================
+  const _detPrimariasRaw = (Array.isArray(u.grados_asignaciones_json) ? u.grados_asignaciones_json : []).filter(e => !!e && typeof e === 'object');
+  // Merge otras variantes nombre detalladas:
+  ['gradosAsignacionesJson','asignacionesDetalladasJson','asignacionesDetalladas','gradosAsignacionesJSON','detalladas','asigDetall','asignacionesGradosJson'].forEach(altName => {
+    const altArr = Array.isArray(u[altName]) ? u[altName] : [];
+    altArr.forEach(e => { if (e && typeof e === 'object') _detPrimariasRaw.push(e); });
+  });
+  // Deduplicar detalladas exactas:
+  const _dedupDet = new Map();
+  _detPrimariasRaw.forEach(e => {
+    try {
+      const gg = String(e.grado || e.g || e.numGrado || e.numeroGrado || e.gr || '').trim();
+      const ss = String(e.seccion || e.s || e.sec || e.seccionTutoria || e.secc || '').trim().toUpperCase();
+      if (!gg || !ss) return;
+      let cc = String(e.ciclo || e.nivel || e.ciclo_nivel || e.cicloAcademico || e.nivelCiclo || '').trim().toUpperCase();
+      if (cc === 'INICIAL' || cc === 'INTERMEDIO' || cc === 'INI') cc = 'INI/INT';
+      else if (cc === 'AVANZADO' || cc === 'AVZ' || cc === 'AV') cc = 'AVANZADO';
+      let tt = String(e.turno || e.modalidad || e.atencion || e.mod_atencion || e.mod || e.modalidadAtencion || '').trim().toUpperCase();
+      if (typeof _normModAtencion === 'function') tt = (_normModAtencion(tt) || tt);
+      tt = (tt || '').replace(/\s+/g,'');
+      if (tt === 'SEMIPRESENCIAL' || tt === 'SEMI' || tt === 'SEMIPRES') tt = 'SEMIPRESENCIAL';
+      else if (tt === 'VIRTUAL' || tt === 'VIRT' || tt === 'ONLINE') tt = 'VIRTUAL';
+      else if (tt === 'PRESENCIAL' || tt === 'PRES' || tt === 'P') tt = 'PRESENCIAL';
+      if (!tt) { if (ss === 'A' || ss === 'D') tt = 'PRESENCIAL'; else if (ss === 'B') tt = 'SEMIPRESENCIAL'; else if (ss === 'C') tt = 'VIRTUAL'; else tt = 'PRESENCIAL'; }
+      if (!cc) {
+        const cargo = String(u.cargo || '').trim().toUpperCase();
+        cc = (cargo.includes('INICIAL') || cargo.includes('INTERMEDIO') || cargo.includes('INI')) ? 'INI/INT' : 'AVANZADO';
+      }
+      const numG = gg.match(/(\d+)/); const gClean = numG ? numG[1] : gg;
+      const _k = `${cc}|${tt}|${gClean}|${ss}`;
+      if (!_dedupDet.has(_k)) _dedupDet.set(_k, { ciclo: cc, turno: tt, grado: gClean, seccion: ss });
+    } catch(_eDet){}
+  });
+  if (_dedupDet.size > 0) {
+    // ✅ HAY detalladas 4 campos: INYECTAR SÓLO estas en entriesMap. Saltar TODO legacy alias.
+    _dedupDet.forEach((val) => {
+      const kk = `${val.ciclo}|${val.turno}|${val.grado}|${val.seccion}`;
+      entriesMap.set(kk, { ...val, src: new Set(['grados_asignaciones_json']) });
+    });
+    // Render loop salteado: vamos DIRECTAMENTE a construir el label desde entriesMap (lineas 21850+).
+  } else {
   const pickArrAll = (...names) => {
     const out = [];
     for (const n of names) {
@@ -21805,6 +21862,8 @@ function _userAsignacionesLabel(u) {
       seccion: String(u.tutorSeccion || '').trim().toUpperCase(),
       _src: 'tutor_grado_seccion'
     });
+  }
+  // ✅ Cierre else de PRIORIDAD LABEL 1 (SIN detalladas → usa pickArrAll legacy):
   }
   // =====================================================================
   // FINAL: construir el agrupado POR CICLO → Map<cicloStr, Map<gradoStr, Set<seccionStr>>>
@@ -23343,18 +23402,35 @@ async function savePrivilegios() {
         const _emptyStr = '';
         const _emptyObj = {};
         Object.assign(_payload, {
+          // Arrays detalladas alias (label pickArrAll L21762-65):
           tutorAulas: _emptyArr,
           tutor_aulas: _emptyArr,
           tutor_aulas_json: _emptyArr,
           tutorAulasJson: _emptyArr,
+          tutorAulasJson2: _emptyArr,
           tutor_aulas_objects: _emptyArr,
           tutorAulasObjects: _emptyArr,
+          tutAulasJson: _emptyArr,
           tutorGradosAsignados: _emptyArr,
           tutor_grados_asignados: _emptyArr,
+          tutorGradosAsignadosArray: _emptyArr,
+          tutGradosAsig: _emptyArr,
           gradosAsignados: _emptyArr,
           asignacionesGrados: _emptyArr,
           gradosAsignadosArr: _emptyArr,
-          // Strings legacy single grado/seccion tutor:
+          tutorAulasArray: _emptyArr,
+          tutor_aulas_arr: _emptyArr,
+          tutAulas: _emptyArr,
+          // Arrays label L21762 alias detalladas (merged detPrimariasRaw L21723):
+          gradosAsignacionesJson: _emptyArr,
+          asignacionesDetalladasJson: _emptyArr,
+          asignacionesDetalladas: _emptyArr,
+          gradosAsignacionesJSON: _emptyArr,
+          detalladas: _emptyArr,
+          asigDetall: _emptyArr,
+          asignacionesGradosJson: _emptyArr,
+          tutAulasDet: _emptyArr,
+          // Strings legacy single grado/seccion tutor + ciclo/nivel:
           tutorGrado: _emptyStr,
           tutor_grado: _emptyStr,
           tutorSeccion: _emptyStr,
@@ -23362,7 +23438,10 @@ async function savePrivilegios() {
           tutorNivel: _emptyStr,
           tutor_ciclo: _emptyStr,
           cicloTutoria: _emptyStr,
-          // Objetos legacy plano alias:
+          tutorAulas_str: _emptyStr,
+          aulasTutor: _emptyStr,
+          tutAulasLista: _emptyStr,
+          // Objetos legacy alias plano (label merge L21780-85):
           asignacionesLegacy: _emptyObj,
           asignacionesPlano: _emptyObj,
           asigPlano: _emptyObj,
@@ -23371,13 +23450,18 @@ async function savePrivilegios() {
           aulasPlano: _emptyObj,
           gradosAsignadosPlano: _emptyObj,
           asignaciones2: _emptyObj,
-          // Legacy tutor_aulas_str / aulasTutor:
-          tutor_aulas_str: _emptyStr,
-          aulasTutor: _emptyStr,
-          tutAulasLista: _emptyStr,
-          asigDetall: _emptyArr,
-          asignacionesDetalladasJson: _emptyArr,
-          asignacionesDetalladas: _emptyArr
+          // Campos legacy alias extra para seguridad:
+          ciclo_nivel: _emptyStr,
+          nivelCiclo: _emptyStr,
+          cicloAcademico: _emptyStr,
+          mod_atencion: _emptyStr,
+          modalidadAtencion: _emptyStr,
+          numGrado: _emptyStr,
+          numeroGrado: _emptyStr,
+          sec: _emptyStr,
+          secTut: _emptyStr,
+          seccionTutoria: _emptyStr,
+          secc: _emptyStr
         });
       }
       await db.collection('usuarios').doc(String(editingUsuarioId)).update(_payload);
