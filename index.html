@@ -25115,6 +25115,34 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
         });
       });
     } catch(_) {}
+    // ================================================================
+    // ✅ FIX 2026-08-24 (ULTIMO) SOLEDAD 1B/1C: extraer secciones
+    // desde las DETALLADAS (grados_asignaciones_json[] y sus 15 aliases).
+    // deploy f533333 guarda en ESTA estructura; si no leemos aquí,
+    // la docente queda con solo A por alumnosSet.
+    // ================================================================
+    try {
+      const fu = (window.currentUser && window.currentUser) ? { ...(window.currentUser || {}) } : {};
+      if (currentPrivilegios && typeof currentPrivilegios === 'object') Object.assign(fu, currentPrivilegios);
+      if (currentTutorInfo && typeof currentTutorInfo === 'object') Object.assign(fu, currentTutorInfo);
+      const _detNombres = [
+        'grados_asignaciones_json','gradosAsignacionesJson','asignacionesDetalladasJson','asignacionesDetalladas',
+        'gradosAsignacionesJSON','detalladas','asigDetall','asignacionesGradosJson',
+        'tutor_aulas_json','tutorAulasJson','tutorAulasJson2','tutAulasJson'
+      ];
+      _detNombres.forEach(kName => {
+        try {
+          const _arr = Array.isArray(fu[kName]) ? fu[kName] : [];
+          _arr.forEach(e => {
+            if (!e || typeof e !== 'object') return;
+            const gC = String(e.grado || e.g || e.numGrado || e.numeroGrado || e.gr || '').trim();
+            if (grado && grado !== 'TODOS' && gC && gC !== String(grado||'').trim()) return;
+            const sC = String(e.seccion || e.s || e.sec || e.seccionTutoria || e.secc || '').trim().toUpperCase();
+            if (sC && sC !== 'TODAS') seccionesSet.add(sC);
+          });
+        } catch(_e){}
+      });
+    } catch(_) {}
     try {
       const ga = Array.isArray(currentTutorInfo?.gradosAsignados) ? currentTutorInfo.gradosAsignados : [];
       ga.forEach(a => {
@@ -25149,24 +25177,25 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
   const seccionesDeAlumnos = [...seccionesSet].sort();
 
   // ======================================================================
-  // ✅ FIX 2026-08-24 SOLEDAD DOCENTE 1B/1C NO APARECEN en dropdown (NO ADMIN).
+  // ✅ FIX 2026-08-24 SOLEDAD DOCENTE 1B/1C NO APARECEN en dropdown:
   //
   // TANTO Admin COMO Docente: USAR cfg.secciones COMPLETAS (A/B/C/D/...) y
   // NO filtrar por "alumnos que existen HOY en Firestore". El docente Soledad
   // tiene 1B SEMI asignado en Configurar aulas, pero si la BD no tiene rows
   // de 1B (importación vieja mala), el dropdown se quedaba SIN B.
   //
-  // Soledad y todos los docentes deben ver A B C D siempre (lo del config),
-  // aunque en la BD no haya alumnos en esa sección (la tabla queda vacía o
-  // muestra 0 según corresponda; la consistencia Excel > BD temporal).
-  //
-  // ÚNICO caso en que se usa el set filtrado (alumnos ∪ asignadas) = docente
-  // sin config secciones.
+  // Además: si cfg.secciones llega VACÍO por bug cache/config, forzar la base
+  // hardcodeada ['A','B','C','D'] para nunca perder B/C/D.
   // ======================================================================
-  const seccCfg = (cfg.secciones || []).filter(Boolean);
-  let secciones = (seccCfg.length > 0) ? seccCfg.slice() : seccionesDeAlumnos.slice();
+  const seccCfgRaw = (cfg.secciones || []).filter(Boolean);
+  const seccCfgBase = (seccCfgRaw.length > 0) ? seccCfgRaw.slice() : ['A','B','C','D'];
+  const seccCfg = [...new Set(seccCfgBase.map(s => String(s||'').trim().toUpperCase()).filter(Boolean))];
+  let secciones = seccCfg.slice();
   // Safety: agregar secciones que existan en alumnos (o asignadas docente) y cfg no tenga (ej: E, F...)
-  seccionesDeAlumnos.forEach(s => { if (secciones.indexOf(s) === -1) secciones.push(s); });
+  seccionesDeAlumnos.forEach(s => {
+    const sUp = String(s||'').trim().toUpperCase();
+    if (sUp && secciones.indexOf(sUp) === -1) secciones.push(sUp);
+  });
 
   el.innerHTML = `<option value="" disabled selected>-- Sección --</option><option value="TODOS">Todas</option>`;
   secciones.forEach(s => { el.innerHTML += `<option value="${s}">${s}</option>`; });
