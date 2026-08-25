@@ -20911,10 +20911,39 @@ async function poblarTutorAulaSelects({ grado = null, seccion = null } = {}) {
   const gEl = document.getElementById('u-tutor-grado');
   const sEl = document.getElementById('u-tutor-seccion');
   if(!nEl || !gEl || !sEl) return;
-  await poblarFiltroNivel('u-tutor-nivel');
-  try {
-    Array.from(nEl.options || []).forEach(o => { if(o && o.value === 'TODOS') o.remove(); });
-  } catch(e) {}
+  // =================================================================
+  // ✅ FIX 2026-08-25 BUG 1 user paso5: Dropdown Tutor "Nivel" SOLO
+  // mostraba AVANZADO y NO aparecia INICIAL / INTERMEDIO.
+  // Root cause: poblarFiltroNivel('u-tutor-nivel') usa la regla Gold
+  // Rule Excel "solo niveles que tienen alumnos rows". Como hoy NO
+  // HAY alumnos INI/INT en BD, la función pobla SÓLO AVZ options.
+  //
+  // Para el TUTOR del docente (asignacion aula TUTOR WhatsApp) NO
+  // debemos depender de existencia de alumnos rows. El Admin puede
+  // asignar como TUTOR a un docente de INI/INT aunque aún no haya
+  // importado la hoja de alumnos INI/INT.
+  //
+  // Solución: overwrite hardcode u-tutor-nivel options SÓLO para
+  // este select. SIEMPRE incluye INICIAL / INTERMEDIO / AVANZADO
+  // (y TODOS por consistencia).
+  // =================================================================
+  const _OPTS_TUTOR = [
+    {v:'',            label:'-- Nivel --', sel:true,  dis:true},
+    {v:'TODOS',       label:'Todos',       sel:false, dis:false},
+    {v:'INICIAL',     label:'🧊 INICIAL',  sel:false, dis:false},
+    {v:'INTERMEDIO',  label:'🧊 INTERMEDIO', sel:false, dis:false},
+    {v:'INICIAL/INTERMEDIO', label:'🧊 INICIAL / INTERMEDIO', sel:false, dis:false},
+    {v:'AVANZADO',    label:'🔥 AVANZADO', sel:false, dis:false}
+  ];
+  nEl.innerHTML = '';
+  _OPTS_TUTOR.forEach(o => {
+    const opt = document.createElement('option');
+    opt.value = o.v;
+    opt.textContent = o.label;
+    if (o.sel) opt.selected = true;
+    if (o.dis) opt.disabled = true;
+    nEl.appendChild(opt);
+  });
   _enableSelect('u-tutor-nivel');
   _disableSelect('u-tutor-grado');
   _disableSelect('u-tutor-seccion');
@@ -21383,6 +21412,47 @@ async function saveUsuario() {
     if(rolScope && (asignaciones && typeof asignaciones === 'object')){
       gradosAsignadosJson = _asignacionesObjToAulasList(asignaciones) || [];
     }
+    // =================================================================
+    // ✅ FIX 2026-08-25 BUG 2 (user paso6 label AVZ aunque guarda INI/INT):
+    // Root confirmado 100%: saveUsuario() UPDATE L21506 guardaba SÓLO
+    // grados_asignados_json (con D = asignados), PERO _userAsignacionesLabel
+    // L21741 LEE 8 alias con letra S u otros nombres legacy. La label
+    // NUNCA encontraba detalladas → _dedupDet.size=0 → else legacy fallback
+    // u.asignaciones plano SIN ciclo → addEntry default AVZ Gold Rule.
+    //
+    // SOLUCION 100%: construir _detalladasFinal (9 alias + 30 legacy) con
+    // la data REAL gradosAsignadosJson. Si alguna entry NO TIENE ciclo
+    // (key tempAsignaciones sin sufijo), fuerza ciclo con inferencia segura
+    // según cargo "Docente Inicial Intermedio" si NO hay entries AVZ.
+    // Luego añadir a update1 y payloadCrear.
+    // =================================================================
+    const _hasAnyAvanzado = Array.isArray(gradosAsignadosJson)
+      ? gradosAsignadosJson.some(a => _canonCicloJS(a?.ciclo || '') === 'AVANZADO')
+      : false;
+    const _cargoString = String(cargo || '').toUpperCase();
+    const _cargoIniHint = /INICIAL|INTERMEDIO/.test(_cargoString);
+    const _detalladasFinalFix = (Array.isArray(gradosAsignadosJson) ? gradosAsignadosJson.slice() : []).map(a => {
+      const cc = _canonCicloJS(a?.ciclo || '') || '';
+      if (cc) return { ...(a||{}), ciclo: cc };
+      // Si entry NO tiene ciclo (asignaciones plano {1:[A]} sin sufijo):
+      if (_cargoIniHint && !_hasAnyAvanzado) {
+        return { ...(a||{}), ciclo: 'INICIAL/INTERMEDIO' };
+      }
+      return { ...(a||{}), ciclo: 'AVANZADO' };
+    }).filter(a => a && String(a.grado||'').trim() && String(a.seccion||'').trim());
+    const _aliasDet9 = _detalladasFinalFix.length ? _detalladasFinalFix.slice() : [];
+    // Construir 9 NOMBRES alias detalladas (igual que savePrivilegios L23433):
+    let _camposDet9 = {
+      grados_asignaciones_json: _aliasDet9.length ? _aliasDet9.slice() : [],  // S (asignaciones) → LEE label L21741
+      grados_asignados_json:   _aliasDet9.length ? _aliasDet9.slice() : [],  // D (asignados)
+      gradosAsignacionesJson:  _aliasDet9.length ? _aliasDet9.slice() : [],  // camelCase S
+      asignacionesDetalladasJson: _aliasDet9.length ? _aliasDet9.slice() : [],
+      asignacionesDetalladas:  _aliasDet9.length ? _aliasDet9.slice() : [],
+      gradosAsignacionesJSON:  _aliasDet9.length ? _aliasDet9.slice() : [],
+      detalladas:              _aliasDet9.length ? _aliasDet9.slice() : [],
+      asigDetall:              _aliasDet9.length ? _aliasDet9.slice() : [],
+      asignacionesGradosJson:  _aliasDet9.length ? _aliasDet9.slice() : []
+    };
     // ---- FIN NUEVOS CAMPOS CEBA/EBR ----
 
     // ===== Fix LEGACY strings runtime: si hay asignaciones con datos PERO tutorGrado/tutorSeccion están VACÍOS,
@@ -21425,6 +21495,35 @@ async function saveUsuario() {
         asignaciones = _normalizeAsignacionesWithCfg(asignaciones || {}, cfg, tutorNivel || '') || {};
         // Re-computar gradosAsignadosJson con la asignación NORMALIZADA
         gradosAsignadosJson = _asignacionesObjToAulasList(asignaciones) || [];
+        // =================================================================
+        // ✅ FIX 2026-08-25: re-calcular _camposDet9 / _detalladasFinalFix
+        // despues normalizacion restringir (por si ahora trae sufijo ciclo).
+        // =================================================================
+        const _hasAnyAvanzado2 = Array.isArray(gradosAsignadosJson)
+          ? gradosAsignadosJson.some(a => _canonCicloJS(a?.ciclo || '') === 'AVANZADO')
+          : false;
+        const _cargoString2 = String(cargo || '').toUpperCase();
+        const _cargoIniHint2 = /INICIAL|INTERMEDIO/.test(_cargoString2);
+        const _detFix = (Array.isArray(gradosAsignadosJson) ? gradosAsignadosJson.slice() : []).map(a => {
+          const cc = _canonCicloJS(a?.ciclo || '') || '';
+          if (cc) return { ...(a||{}), ciclo: cc };
+          if (_cargoIniHint2 && !_hasAnyAvanzado2) {
+            return { ...(a||{}), ciclo: 'INICIAL/INTERMEDIO' };
+          }
+          return { ...(a||{}), ciclo: 'AVANZADO' };
+        }).filter(a => a && String(a.grado||'').trim() && String(a.seccion||'').trim());
+        const _aliDet = _detFix.length ? _detFix.slice() : [];
+        _camposDet9 = {
+          grados_asignaciones_json: _aliDet.length ? _aliDet.slice() : [],
+          grados_asignados_json:   _aliDet.length ? _aliDet.slice() : [],
+          gradosAsignacionesJson:  _aliDet.length ? _aliDet.slice() : [],
+          asignacionesDetalladasJson: _aliDet.length ? _aliDet.slice() : [],
+          asignacionesDetalladas:  _aliDet.length ? _aliDet.slice() : [],
+          gradosAsignacionesJSON:  _aliDet.length ? _aliDet.slice() : [],
+          detalladas:              _aliDet.length ? _aliDet.slice() : [],
+          asigDetall:              _aliDet.length ? _aliDet.slice() : [],
+          asignacionesGradosJson:  _aliDet.length ? _aliDet.slice() : []
+        };
       } catch(e0) {}
     }
 
@@ -21446,7 +21545,9 @@ async function saveUsuario() {
         restringir,
         asignaciones,
         tutor_aulas_json: tutorAulasJson,
-        grados_asignados_json: gradosAsignadosJson
+        grados_asignados_json: gradosAsignadosJson,
+        // ✅ FIX 2026-08-25: Añadir 9 alias detalladas
+        ..._camposDet9
       };
       if (esProfesor) {
         payloadCrear.esTutor = esTutor;
@@ -21475,7 +21576,73 @@ async function saveUsuario() {
     } else {
       // EDITAR usuario
       const update1 = { nombre, rol, cargo, telefono: telefonoVal, incidentesDiaLectura, permisosExtra, restringir, asignaciones,
-                        tutor_aulas_json: tutorAulasJson, grados_asignados_json: gradosAsignadosJson };
+                        tutor_aulas_json: tutorAulasJson, grados_asignados_json: gradosAsignadosJson,
+                        // ✅ FIX 2026-08-25: Añadir 9 alias detalladas CON CICLO EXACTO
+                        ..._camposDet9
+      };
+      // =================================================================
+      // ✅ FIX 2026-08-25 FINAL LABEL SIEMPRE AVZ → BORRAR 30 ALIASES LEGACY
+      // Si _camposDet9 tiene entries length>0, el Admin YA grabó la asignación
+      // usando la estructura detallada (Bloque1 INI/INT o Bloque2 AVZ checkbox).
+      // Por lo tanto los 30 aliases legacy strings/objects/plano (tutorAulas,
+      // tutorAulasObjects, ciclo_nivel, mod_atencion, numGrado, asignaciones2,
+      // etc.) son DATA BASURA MIGRADA de hace deployments pasados Y NO deben
+      // ser leídos por pickArrAll → addEntry default AVZ Gold Rule.
+      //
+      // Solución: firebase.firestore.FieldValue.delete() en cada alias.
+      // =================================================================
+      if (rolScope && _camposDet9 && Array.isArray(_camposDet9.grados_asignaciones_json) && _camposDet9.grados_asignaciones_json.length) {
+        try {
+          const _DEL = firebase.firestore.FieldValue.delete();
+          const _DELS = {
+            // Tutor arrays legacy alias (no confundir con tutor_aulas_json / tutorAulasJson guardado arriba):
+            tutor_aulas_objects:  _DEL,
+            tutorAulasObjects:    _DEL,
+            tutAulasJson:         _DEL,
+            tutorAulasJson2:      _DEL,
+            tutor_grados_asignados: _DEL,
+            tutorGradosAsignadosArray: _DEL,
+            tutGradosAsig:        _DEL,
+            gradosAsignados:      _DEL,
+            gradosAsignadosArr:   _DEL,
+            tutor_aulas:          _DEL,
+            tutor_aulas_arr:      _DEL,
+            tutorAulasArray:      _DEL,
+            tutAulas:             _DEL,
+            tutor_aulas_str:      _DEL,
+            aulasTutor:           _DEL,
+            tutAulasLista:        _DEL,
+            tutorGrado:           _DEL,
+            tutorSeccion:         _DEL,
+            tutor_grado:          _DEL,
+            tutor_seccion:        _DEL,
+            // Strings single ciclo/turno legacy:
+            ciclo_nivel:          _DEL,
+            nivelCiclo:           _DEL,
+            cicloAcademico:       _DEL,
+            mod_atencion:         _DEL,
+            modalidadAtencion:    _DEL,
+            numGrado:             _DEL,
+            numeroGrado:          _DEL,
+            gr:                   _DEL,
+            sec:                  _DEL,
+            secTut:               _DEL,
+            seccionTutoria:       _DEL,
+            secc:                 _DEL,
+            // Objetos plano legacy:
+            asignacionesLegacy:   _DEL,
+            asignacionesPlano:    _DEL,
+            asigPlano:            _DEL,
+            asignaciones_obj:     _DEL,
+            asigLegacy:           _DEL,
+            aulasPlano:           _DEL,
+            gradosAsignadosPlano: _DEL,
+            asignaciones2:        _DEL,
+            asigPlanoObj:         _DEL
+          };
+          Object.assign(update1, _DELS);
+        } catch(_eDel){}
+      }
       // Solo actualizar campos de tutor si el usuario es profesor.
       // Cambio clave: SI esProfesor=true Y existen asignaciones (restringido),
       // MANTENER tutorGrado/tutorSeccion aunque esTutor=false → FIX A runtime legacy strings.
