@@ -21926,6 +21926,26 @@ function _parseTutorAulaStr(rawStr) {
 // en cada docente viejo — muestra agrupado por niveles automáticamente al instante.
 function _userAsignacionesLabel(u) {
   if (!u || typeof u !== 'object') return '⚠ Sin aulas';
+  // ================================================================
+  // ✅ FIX 2026-08-25 REPARO CICLO POR CARGO en LABEL (render-only):
+  // Si la bd Firestore tiene entries con ciclo=AVANZADO guardadas POR
+  // ERROR en deploys anteriores (antes Fix A/B/C ciclo default POR
+  // CARGO), el label sigue mostrando 🔥 AVANZADO aunque el docente sea
+  // INI/INT y Admin ya haya guardado INI/INT (sobrescribir la entry
+  // correcta a veces tarda o pasa por cache RAM).
+  //
+  // SOLUCIÓN (SOLO RENDER, NO MODIFICA DB):
+  // - Si u.cargo = Docente INICIAL/INTERMEDIO Y la entry tiene
+  //   ciclo=AVANZADO (legacy erróneo) Y NO HAY ENTRIES con
+  //   ciclo=INI/INT (nunca se guardó correctamente) → INTERPRETAR
+  //   ciclo=AVANZADO como INI/INT (pues el docente NO puede ser AVZ).
+  // - Si u.cargo = AVZ/HUMANIDADES y entry INI/INT legacy → reparo a AVZ.
+  // Luego de dedupDet, tenemos grupo para saber si hay entries correctas.
+  // ================================================================
+  const _cargo = String(u.cargo || u.doc || '').trim().toUpperCase();
+  const _cargoIni = /INICIAL|INTERMEDIO|JORNADA|INICIO|PRIMARIA/.test(_cargo)
+                 && !/AVANZ|SECUNDARIA|HUMANIDADES|CIENCIAS/.test(_cargo);
+  const _cargoAvz = /AVANZ|SECUNDARIA|HUMANIDADES|CIENCIAS/.test(_cargo);
   // Acumular entries aquí: Map<"ciclo|turno|grado|seccion", entry>
   const entriesMap = new Map();
   const addEntry = (e) => {
@@ -21958,16 +21978,13 @@ function _userAsignacionesLabel(u) {
     let cFinal = c || '';
     if (!cFinal) {
       // ================================================================
-      // ✅ GOLD RULE EXCEL GLOBAL PERMANENTE (usuario 2026-08-24 VERBATIM):
-      // "se tiene q basar en el excel olvida otra regla anterior, si en
-      // excel inidca q son avaznado asi sera, y no dberia aparece enada de
-      // inicial/intermedio pq no hay ningun alumno registrado por ahora enese nivel"
-      //
-      // NUNCA MÁS inferir ciclo INI/INT por string `u.cargo = Docente Jornada
-      // Inicial Intermedio`. NO importa el cargo docente. Default 100% = AVANZADO.
-      // (El cargo se usa solo para texto descriptivo en fila, nada de ciclo.)
+      // ✅ FIX 2026-08-25 Label ciclo default SIN CICLO POR CARGO (no Gold AVZ):
+      // Gold Rule Excel default AVZ sólo se aplica si el CARGO del docente
+      // no es INI/INT. Si cargo=INI/INT y no hay ciclo → INI/INT.
       // ================================================================
-      cFinal = 'AVANZADO';
+      if (_cargoIni) cFinal = 'INI/INT';
+      else if (_cargoAvz) cFinal = 'AVANZADO';
+      else cFinal = 'AVANZADO';
     }
     const key = `${cFinal}|${tFinal}|${g}|${s}`;
     if (!entriesMap.has(key)) entriesMap.set(key, { ciclo: cFinal, turno: tFinal, grado: g, seccion: s, src: new Set() });
@@ -22005,14 +22022,42 @@ function _userAsignacionesLabel(u) {
       else if (tt === 'PRESENCIAL' || tt === 'PRES' || tt === 'P') tt = 'PRESENCIAL';
       if (!tt) { if (ss === 'A' || ss === 'D') tt = 'PRESENCIAL'; else if (ss === 'B') tt = 'SEMIPRESENCIAL'; else if (ss === 'C') tt = 'VIRTUAL'; else tt = 'PRESENCIAL'; }
       if (!cc) {
-        const cargo = String(u.cargo || '').trim().toUpperCase();
-        cc = (cargo.includes('INICIAL') || cargo.includes('INTERMEDIO') || cargo.includes('INI')) ? 'INI/INT' : 'AVANZADO';
+        cc = (_cargoIni ? 'INI/INT' : 'AVANZADO');
       }
       const numG = gg.match(/(\d+)/); const gClean = numG ? numG[1] : gg;
       const _k = `${cc}|${tt}|${gClean}|${ss}`;
       if (!_dedupDet.has(_k)) _dedupDet.set(_k, { ciclo: cc, turno: tt, grado: gClean, seccion: ss });
     } catch(_eDet){}
   });
+  // ================================================================
+  // ✅ FIX 2026-08-25 REPARO _dedupDet: SI TODAS LAS ENTRIES tienen ciclo
+  // opuesto al CARGO del usuario (ej: Soledad doc INI/INT, pero bd
+  // entries detalladas AVZ por deploy viejo) → reparo todas a ciclo
+  // correcto (INI/INT) para que label muestre 🧊 INI/INT.
+  // ================================================================
+  try {
+    if (_dedupDet.size > 0) {
+      let hasIniInt = false; let hasAvz = false;
+      _dedupDet.forEach(v => {
+        const cc = String(v.ciclo || '').trim().toUpperCase();
+        if (cc === 'INI/INT') hasIniInt = true;
+        else if (cc === 'AVANZADO') hasAvz = true;
+      });
+      const needReparo = (_cargoIni && hasAvz && !hasIniInt) || (_cargoAvz && hasIniInt && !hasAvz);
+      if (needReparo) {
+        const fixObj = _cargoIni ? 'INI/INT' : 'AVANZADO';
+        const _dedupDetFixed = new Map();
+        _dedupDet.forEach((val, kOld) => {
+          const partes = kOld.split('|');
+          partes[0] = fixObj;
+          const kNew = partes.join('|');
+          _dedupDetFixed.set(kNew, { ...val, ciclo: fixObj });
+        });
+        _dedupDet.clear();
+        _dedupDetFixed.forEach((val, k) => _dedupDet.set(k, val));
+      }
+    }
+  } catch(_eReparoDet){}
   if (_dedupDet.size > 0) {
     // ✅ HAY detalladas 4 campos: CLEAR entriesMap slate para NO quedar
     // con entries legacy que se agregaron por error (ej: alias INI/INT residual
@@ -24124,35 +24169,45 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     // Cierre else: Toda la lógica anterior (aulasLegacy + merge) SÓLO si NO hay detalladas válidas.
     }
     // ================================================================
-    // 🔴 NUCLEAR N2 BOMBA PURGA TOTAL SOLEDAD (POST-MERGE):
-    // Si CARGO = INI/INT Y NO hay detalladas (ni Admin grabó INI/INT 1A):
-    //   → tempAsignaciones = {} Y aulasLegacy = [] y mergeByGrado = {}.
-    // Esto elimina CUALQUIER data fantasma legacy (d.asignaciones plano
-    // {1:[A]} AVZ, tutor strings 1/A, _normalizeAsignacionesWithCfg con
-    // cfg alumnos rows HOY todos AVZ, etc.) que generara check
-    // 🔥 AVANZADO PRES 1A automático al abrir.
+    // ✅ FIX 2026-08-25 n2 REVISADO: Purga selectiva (NO purge tempAsig total)
+    // ================================================================
+    // Problema anterior: tempAsignaciones={} PURGABA 100% marcas legacy
+    // plano {1:["A"]} que sí estaban guardadas en bd INI/INT PERO sin
+    // detalladas 4 campos → modal aparecía 0 checked (todo vacío).
+    //
+    // SOLUCIÓN 2026-08-25 CORREGIDA:
+    // - Mantener tempAsignaciones / aulasLegacy / mergeByGrado como están.
+    //   El helper granular N3 y la BOMBA return false POR CARGO (arriba)
+    //   SE ENCARGA de que ninguna marca INI/INT aparezca en Bloque2 AVZ
+    //   y viceversa (no se ve fantasma).
+    // - LO QUE SÍ PURGAR: si hay entries de tempAsignaciones key "1 (Avanzado)"
+    //   y cargo=INI/INT (data contaminada BD rows alumnos AVZ merge), o keys
+    //   "1 (Inicial)" en cargo AVZ → SÓLO purgar esas keys contaminadas.
     // ================================================================
     try {
-      if (window.__cargandoCargoIniIntFlag === true && !_hayDetalladasValidas) {
-        tempAsignaciones = {};
-        asignaciones = tempAsignaciones;
-        try { window.tempAsignaciones = tempAsignaciones; } catch(_){}
-        // Purga arrays y mergeByGrado local:
-        try { aulasLegacy.length = 0; } catch(_){}
+      const flagIniInt = window.__cargandoCargoIniIntFlag === true;
+      const flagAvz = (String(window.__FORCE_NIVEL_HINT || '').toUpperCase() === 'AVANZADO');
+      // 1) limpiar mergeByGrado / tempAsignaciones keys contaminadas:
+      const cleanKeys = (objRef) => {
         try {
-          if (typeof mergeByGrado !== 'undefined') {
-            Object.keys(mergeByGrado || {}).forEach(k => { delete mergeByGrado[k]; });
-          }
+          if (!objRef || typeof objRef !== 'object') return;
+          Object.keys(objRef).forEach(kRaw => {
+            const k = String(kRaw || '').trim().toUpperCase();
+            if (flagIniInt) {
+              // si cargo INI/INT → purgar keys "1 (Avanzado)" / "AVZ" etc:
+              if (/\(AVANZADO\)|\(AVZ\)|AVANZADO.*$/.test(k)) delete objRef[kRaw];
+            } else if (flagAvz) {
+              // si cargo AVZ → purgar keys "1 (Inicial)" / "1 (Intermedio)":
+              if (/\(INICIAL\)|\(INTERMEDIO\)|\(INI\)|\(INT\)/.test(k)) delete objRef[kRaw];
+            }
+          });
         } catch(_){}
-        // Purga any residuales globales:
-        try {
-          const el = document.getElementById('asig_legacy_ciclo_hint');
-          if (el) el.value = 'INICIAL/INTERMEDIO';
-          window.__legacyCicloUnicoHint = 'INICIAL/INTERMEDIO';
-          window.__FORCE_NIVEL_HINT = 'INICIAL/INTERMEDIO';
-        } catch(_){}
-      }
-    } catch(_ePurga){}
+      };
+      cleanKeys(tempAsignaciones);
+      cleanKeys(asignaciones);
+      try { cleanKeys(mergeByGrado); } catch(_){}
+      try { window.tempAsignaciones = tempAsignaciones; } catch(_){}
+    } catch(_ePurga2){}
     // FIX 2026-08-24 (último bug "marcas no aparecen al reabrir"):
     // Asegurar referencias cruzadas: helper granular lee window.tempAsignaciones,
     // y variable local const asignaciones = tempAsignaciones. Si la referencia
@@ -24341,6 +24396,30 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
           _hayDetallada = true;
         };
         if (!_c) _c = 'AVANZADO';
+        // ================================================================
+        // ✅ FIX 2026-08-25 IIFE Reparo CICLO entries legacy basura:
+        // Si la entry det guardada tenía ciclo=AVANZADO POR ERROR (deploy
+        // anterior buggy), PERO el docente es CARGO INI/INTERMEDIO
+        // (__FORCE_NIVEL_HINT=INI/INT) → INTERPRETAR la entry como
+        // ciclo=INI/INT. Así al reabrir el modal:
+        //   - Bloque1 INI/INT PRES 1A → sí marca checked (antes no).
+        //   - Bloque2 AVZ PRES 1A → N3 bomba return false (nunca).
+        // Y viceversa: si FORCE_AVZ y entry INI/INT legacy → reparo a AVZ.
+        // ================================================================
+        try {
+          const fForce = String(window.__FORCE_NIVEL_HINT || '').trim().toUpperCase();
+          if (fForce === 'INICIAL/INTERMEDIO' || fForce === 'INI/INT' || fForce === 'INICIAL' || fForce === 'INTERMEDIO') {
+            const entCicloUp = String(_c || '').trim().toUpperCase();
+            if (entCicloUp === 'AVANZADO' || entCicloUp === 'AVZ') {
+              _c = 'INICIAL/INTERMEDIO';
+            }
+          } else if (fForce === 'AVANZADO' || fForce === 'AVZ') {
+            const entCicloUp = String(_c || '').trim().toUpperCase();
+            if (entCicloUp === 'INICIAL' || entCicloUp === 'INTERMEDIO' || entCicloUp === 'INI/INT' || entCicloUp === 'INICIAL/INTERMEDIO') {
+              _c = 'AVANZADO';
+            }
+          }
+        } catch(_eReparoDet){}
         const esIniInt = (_c === 'INICIAL' || _c === 'INTERMEDIO' || _c === 'INICIAL/INTERMEDIO');
         if (esIniInt) {
           ['INICIAL','INTERMEDIO','INICIAL/INTERMEDIO'].forEach(cc => _push(cc, _t));
@@ -24411,20 +24490,21 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     const sK = String(seccionRaw||'').trim().toUpperCase();
     if (!gK || !sK) return false;
     // ==================================================================
-    // 🔴 NUCLEAR N3 BLOQUEO POR CARGO (FUERZA BRUTA):
-    // Si __FORCE_NIVEL_HINT = INI/INTERMEDIO y la tarjeta actual es BLOQUE2
-    // 🔥 AVANZADO y NO hay detalladas grabadas → return false INMEDIATO.
-    // (evita check fantasma data basura AVZ que sobreviva a purga n1/n2).
+    // 🔴 NUCLEAR N3 BLOQUEO POR CARGO (FUERZA BRUTA SIEMPRE ACTIVO):
+    // - Si __FORCE_NIVEL_HINT=INI/INT y tarjeta=BLOQUE2 🔥 AVANZADO →
+    //   return false INMEDIATO (incluso si entries detalladas AVZ legacy).
+    // - Si FORCE_AVZ y tarjeta=BLOQUE1 INI/INT → return false inmediato.
+    // ANTES: solo corría si !hasDetalladas → cuando bd tenía entries AVZ
+    // legacy no bloqueaba → fantasma checked Bloque2. HOY: SIEMPRE.
     // ==================================================================
     try {
       const forceHint = String(window.__FORCE_NIVEL_HINT || '').trim().toUpperCase();
-      const hasDet = !!window.__asigDetalladasHave;
-      if (!hasDet) {
-        if (forceHint === 'INICIAL/INTERMEDIO' || forceHint === 'INI/INT' || forceHint === 'INICIAL' || forceHint === 'INTERMEDIO') {
-          if (cicloT !== 'INICIAL' && cicloT !== 'INTERMEDIO' && cicloT !== 'INICIAL/INTERMEDIO') return false;
-        } else if (forceHint === 'AVANZADO' || forceHint === 'AVZ') {
-          if (cicloT !== 'AVANZADO') return false;
-        }
+      const isForceIni = (forceHint === 'INICIAL/INTERMEDIO' || forceHint === 'INI/INT' || forceHint === 'INICIAL' || forceHint === 'INTERMEDIO');
+      const isForceAvz = (forceHint === 'AVANZADO' || forceHint === 'AVZ');
+      if (isForceIni) {
+        if (cicloT !== 'INICIAL' && cicloT !== 'INTERMEDIO' && cicloT !== 'INICIAL/INTERMEDIO') return false;
+      } else if (isForceAvz) {
+        if (cicloT !== 'AVANZADO') return false;
       }
     } catch(_eN3){}
     // ✅ FIX 2026-08-24: hasGlobal DESDE DETALLADAS (primordial)
