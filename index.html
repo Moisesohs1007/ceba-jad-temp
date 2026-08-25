@@ -20914,26 +20914,21 @@ async function poblarTutorAulaSelects({ grado = null, seccion = null } = {}) {
   // =================================================================
   // ✅ FIX 2026-08-25 BUG 1 user paso5: Dropdown Tutor "Nivel" SOLO
   // mostraba AVANZADO y NO aparecia INICIAL / INTERMEDIO.
-  // Root cause: poblarFiltroNivel('u-tutor-nivel') usa la regla Gold
-  // Rule Excel "solo niveles que tienen alumnos rows". Como hoy NO
-  // HAY alumnos INI/INT en BD, la función pobla SÓLO AVZ options.
+  // y BUG 2026-08-25 h1: Grado/Seccion vacíos por poblarFiltro* sin rows.
   //
-  // Para el TUTOR del docente (asignacion aula TUTOR WhatsApp) NO
-  // debemos depender de existencia de alumnos rows. El Admin puede
-  // asignar como TUTOR a un docente de INI/INT aunque aún no haya
-  // importado la hoja de alumnos INI/INT.
-  //
-  // Solución: overwrite hardcode u-tutor-nivel options SÓLO para
-  // este select. SIEMPRE incluye INICIAL / INTERMEDIO / AVANZADO
-  // (y TODOS por consistencia).
+  // SOLUCIÓN: overwrite hardcode options SÓLO para TUTOR selects.
+  // NO DEPENDER de cfg.grados ni alumnos rows existentes hoy. El Admin
+  // debe poder asignar TUTOR a cualquier docente INI/INT aunque no
+  // haya importado la hoja de alumnos INI/INT aún.
   // =================================================================
+  // --- Nivel ---
   const _OPTS_TUTOR = [
-    {v:'',            label:'-- Nivel --', sel:true,  dis:true},
-    {v:'TODOS',       label:'Todos',       sel:false, dis:false},
-    {v:'INICIAL',     label:'🧊 INICIAL',  sel:false, dis:false},
-    {v:'INTERMEDIO',  label:'🧊 INTERMEDIO', sel:false, dis:false},
-    {v:'INICIAL/INTERMEDIO', label:'🧊 INICIAL / INTERMEDIO', sel:false, dis:false},
-    {v:'AVANZADO',    label:'🔥 AVANZADO', sel:false, dis:false}
+    {v:'',                  label:'-- Nivel --',             sel:true,  dis:true},
+    {v:'TODOS',             label:'Todos',                   sel:false, dis:false},
+    {v:'INICIAL',           label:'🧊 INICIAL',              sel:false, dis:false},
+    {v:'INTERMEDIO',        label:'🧊 INTERMEDIO',           sel:false, dis:false},
+    {v:'INICIAL/INTERMEDIO',label:'🧊 INICIAL / INTERMEDIO', sel:false, dis:false},
+    {v:'AVANZADO',          label:'🔥 AVANZADO',             sel:false, dis:false}
   ];
   nEl.innerHTML = '';
   _OPTS_TUTOR.forEach(o => {
@@ -20944,6 +20939,30 @@ async function poblarTutorAulaSelects({ grado = null, seccion = null } = {}) {
     if (o.dis) opt.disabled = true;
     nEl.appendChild(opt);
   });
+  // --- Grado: siempre 1-6 hardcode CEBA ---
+  const _OPTS_GRADO_BASE = [{v:'',label:'-- Grado --',sel:true,dis:true}];
+  for (let i = 1; i <= 6; i++) _OPTS_GRADO_BASE.push({v:String(i),label:String(i),sel:false,dis:false});
+  gEl.innerHTML = '';
+  _OPTS_GRADO_BASE.forEach(o => {
+    const opt = document.createElement('option');
+    opt.value = o.v;
+    opt.textContent = o.label;
+    if (o.sel) opt.selected = true;
+    if (o.dis) opt.disabled = true;
+    gEl.appendChild(opt);
+  });
+  // --- Seccion: siempre A/B/C/D hardcode CEBA canon ---
+  const _OPTS_SECC_BASE = [{v:'',label:'-- Sección --',sel:true,dis:true}];
+  ['A','B','C','D'].forEach(l => _OPTS_SECC_BASE.push({v:l,label:l,sel:false,dis:false}));
+  sEl.innerHTML = '';
+  _OPTS_SECC_BASE.forEach(o => {
+    const opt = document.createElement('option');
+    opt.value = o.v;
+    opt.textContent = o.label;
+    if (o.sel) opt.selected = true;
+    if (o.dis) opt.disabled = true;
+    sEl.appendChild(opt);
+  });
   _enableSelect('u-tutor-nivel');
   _disableSelect('u-tutor-grado');
   _disableSelect('u-tutor-seccion');
@@ -20952,9 +20971,10 @@ async function poblarTutorAulaSelects({ grado = null, seccion = null } = {}) {
       const cfg = await getConfig();
       const niv = _agendaInferNivelByGrado(grado, cfg);
       if(niv) nEl.value = niv;
-      await onUTutorNivelChange();
+      // Habilitar manualmente Grado/Seccion para prefill:
+      _enableSelect('u-tutor-grado');
       gEl.value = String(grado || '').trim();
-      await onUTutorGradoChange();
+      _enableSelect('u-tutor-seccion');
       sEl.value = String(seccion || '').trim().toUpperCase();
     } catch(e2) {}
   } else {
@@ -20972,12 +20992,35 @@ async function onUTutorNivelChange() {
     if(gEl) gEl.value = '';
     if(sEl) sEl.value = '';
     _disableSelect('u-tutor-seccion');
-    await poblarFiltroSeccion('u-tutor-seccion', null);
+    // =================================================================
+    // ✅ FIX 2026-08-25 h1: Grado/Seccion vacíos (disabled).
+    // Sobreescribir hardcode options: Grado 1-6 SIEMPRE (no cfg / no
+    // alumnos rows). NO llamar poblarFiltroGrado() para u-tutor-grado,
+    // esa función depende de alumnos existentes hoy = bug.
+    // =================================================================
+    if(gEl) {
+      const items = [{v:'',label:'-- Grado --',sel:true,dis:true}];
+      for (let i = 1; i <= 6; i++) items.push({v:String(i),label:String(i),sel:false,dis:false});
+      gEl.innerHTML = '';
+      items.forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.v; opt.textContent = o.label;
+        if (o.sel) opt.selected = true; if (o.dis) opt.disabled = true;
+        gEl.appendChild(opt);
+      });
+    }
+    if(sEl) {
+      const items = [{v:'',label:'-- Sección --',sel:true,dis:true}];
+      ['A','B','C','D'].forEach(l => items.push({v:l,label:l,sel:false,dis:false}));
+      sEl.innerHTML = '';
+      items.forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.v; opt.textContent = o.label;
+        if (o.sel) opt.selected = true; if (o.dis) opt.disabled = true;
+        sEl.appendChild(opt);
+      });
+    }
     if(!nivel || nivel === 'TODOS') { _disableSelect('u-tutor-grado'); return; }
-    await poblarFiltroGrado('u-tutor-grado', nivel);
-    try {
-      Array.from(gEl.options || []).forEach(o => { if(o && o.value === 'TODOS') o.remove(); });
-    } catch(e0) {}
     _enableSelect('u-tutor-grado');
   } catch(e) {}
 }
@@ -20988,12 +21031,18 @@ async function onUTutorGradoChange() {
     const sEl = document.getElementById('u-tutor-seccion');
     if(sEl) sEl.value = '';
     _disableSelect('u-tutor-seccion');
-    await poblarFiltroSeccion('u-tutor-seccion', null);
+    if(sEl) {
+      const items = [{v:'',label:'-- Sección --',sel:true,dis:true}];
+      ['A','B','C','D'].forEach(l => items.push({v:l,label:l,sel:false,dis:false}));
+      sEl.innerHTML = '';
+      items.forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.v; opt.textContent = o.label;
+        if (o.sel) opt.selected = true; if (o.dis) opt.disabled = true;
+        sEl.appendChild(opt);
+      });
+    }
     if(!grado || grado === 'TODOS') return;
-    await poblarFiltroSeccion('u-tutor-seccion', grado);
-    try {
-      Array.from(sEl.options || []).forEach(o => { if(o && o.value === 'TODOS') o.remove(); });
-    } catch(e0) {}
     _enableSelect('u-tutor-seccion');
   } catch(e) {}
 }
