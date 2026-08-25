@@ -21727,12 +21727,31 @@ async function saveUsuario() {
           update1.tutorSeccion = '';
         }
       }
+      const _S_ALIAS_DET_BLACKLIST = [
+        'gradosAsignacionesJson','grados_asignaciones_json',
+        'asignacionesDetalladasJson','asignacionesDetalladas',
+        'gradosAsignacionesJSON','detalladas','asigDetall',
+        'asignacionesGradosJson','asig_detail','asigDetail'
+      ];
       try {
         await db.collection('usuarios').doc(editingUsuarioId).update(update1);
       } catch(e) {
+        console.warn('[saveUsuario] update1 fallback alias cleanup. error=', e?.code || e?.message || e);
         const update2 = { ...update1 };
-        delete update2.permisosExtra;
-        await db.collection('usuarios').doc(editingUsuarioId).update(update2);
+        _S_ALIAS_DET_BLACKLIST.forEach(k => { if (k in update2) delete update2[k]; });
+        try {
+          await db.collection('usuarios').doc(editingUsuarioId).update(update2);
+        } catch(e2) {
+          console.warn('[saveUsuario] update2 fallback extreme. Removing all top-level JSON/det keys. error=', e2?.code || e2?.message || e2);
+          const update3 = { ...update2 };
+          Object.keys(update3).forEach(k => {
+            const v = update3[k];
+            if (v && typeof v === 'object' && !Array.isArray(v) && k !== 'permisosExtra' && k !== 'permisos_extra' && k !== 'asignaciones' && k !== 'grados_asignados_json') {
+              delete update3[k];
+            }
+          });
+          await db.collection('usuarios').doc(editingUsuarioId).update(update3);
+        }
       }
       _invalidarUsuarios();
       // Mostrar/ocultar botón recuperar según teléfono
