@@ -23498,7 +23498,45 @@ async function savePrivilegios() {
       }
       await db.collection('usuarios').doc(String(editingUsuarioId)).update(_payload);
       _escritoOK = true;
+      // =================================================================
+      // ✅ FIX 2026-08-24 INVALIDACIÓN ULTRA AGRESIVA CACHE USUARIOS:
+      // El bug "label sigue AVZ 1A a pesar de guardar INI/INT 1A" sucede
+      // porque LSC cache RAM + localStorage mantiene la versión ANTERIOR
+      // del usuario (grados_asignaciones_json con ciclo=AVZ 1A grabado
+      // hace 20 minutos). Aunque _invalidarUsuarios() borra lsUsr, hay
+      // casos borde donde el array RAM no se borró a tiempo antes que
+      // renderUsuarios() vuelva a correr.
+      //
+      // Solución ultra segura:
+      // 1) 3x invalidación (RAM null + LSC del + localStorage prefijos).
+      // 2) Forzar `renderUsuarios()` RE-SINCRÓNICO DESPUÉS de invalidar,
+      //    para que refetch Firestore/Supabase en vivo.
+      // 3) Reemplazar el cacheData de editingUsuarioId EN EL ARRAY mismo
+      //    con el _payload recién guardado (así si render corre antes del
+      //    fetch vee la data nueva).
+      // =================================================================
+      try {
+        _usuariosCacheData = null;
+        try { if (window.LSC) { LSC.del('usuarios'); LSC.del('ceba-jad:usuarios'); LSC.del('ceba-jad-temp:usuarios'); } } catch(_x1){}
+        try {
+          if (window.localStorage) {
+            const kks = [];
+            for (let i = 0; i < localStorage.length; i++) kks.push(localStorage.key(i));
+            kks.filter(k => k && (k.includes('usuario') || k.includes('User') || k.includes('cache') || k.startsWith('ceba'))).forEach(k => { try { localStorage.removeItem(k); } catch(_x2){} });
+          }
+        } catch(_x3){}
+        // Parcho el array RAM si aún existe:
+        if (Array.isArray(_usuariosCacheData) && _usuariosCacheData.length && editingUsuarioId) {
+          const idx = _usuariosCacheData.findIndex(x => String(x?.id || x?.uid || '') === String(editingUsuarioId));
+          if (idx >= 0) {
+            const _pMerge = (_payload && typeof _payload === 'object') ? _payload : {};
+            _usuariosCacheData[idx] = { ...(_usuariosCacheData[idx] || {}), ..._pMerge, id: String(editingUsuarioId) };
+          }
+        }
+      } catch(_inv){}
       try { _invalidarUsuarios(); } catch(_e2){}
+      // Refresco EXPLÍCITO render tabla usuarios SIN cache.
+      try { if (typeof renderUsuarios === 'function') setTimeout(() => { try { renderUsuarios(); } catch(_r){} }, 120); } catch(_rr){}
     } catch(_errDB) {
       try { console.error('[savePrivilegios] Firestore update falló', _errDB); } catch(_){}
     }
