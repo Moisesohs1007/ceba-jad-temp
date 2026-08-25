@@ -23331,6 +23331,55 @@ async function savePrivilegios() {
         // ✅ ESTRUCTURA DETALLADA: ciclo|turno|grado|seccion (no heurística al reabrir)
         grados_asignados_json: _detalladasFinal.length ? _detalladasFinal : []
       };
+      // ✅ FIX 2026-08-24 SOLVEDAD REAPARICIÓN FANTASMA: al guardar con estructura
+      // detallada, LIMPIAMOS TODOS los campos legacy para que, al reabrir el modal,
+      // el merge visual IIFE NO mergee data vieja que haga volver a marcar checks
+      // (ej: Soledad 1A INI/INT reaparecía después de Aceptar porque tutorGrado="1"
+      //  tutorSeccion="A" / asignaciones{} plano / tutorAulas siguen existiendo).
+      // Campos legacy a borrar: arrays, strings, objetos, camelCase, snake_case.
+      const _LIMPIAR_LEGACY = (_detalladasFinal.length >= 0); // siempre limpiar (incluso vacío = sin aulas)
+      if (_LIMPIAR_LEGACY) {
+        const _emptyArr = [];
+        const _emptyStr = '';
+        const _emptyObj = {};
+        Object.assign(_payload, {
+          tutorAulas: _emptyArr,
+          tutor_aulas: _emptyArr,
+          tutor_aulas_json: _emptyArr,
+          tutorAulasJson: _emptyArr,
+          tutor_aulas_objects: _emptyArr,
+          tutorAulasObjects: _emptyArr,
+          tutorGradosAsignados: _emptyArr,
+          tutor_grados_asignados: _emptyArr,
+          gradosAsignados: _emptyArr,
+          asignacionesGrados: _emptyArr,
+          gradosAsignadosArr: _emptyArr,
+          // Strings legacy single grado/seccion tutor:
+          tutorGrado: _emptyStr,
+          tutor_grado: _emptyStr,
+          tutorSeccion: _emptyStr,
+          tutor_seccion: _emptyStr,
+          tutorNivel: _emptyStr,
+          tutor_ciclo: _emptyStr,
+          cicloTutoria: _emptyStr,
+          // Objetos legacy plano alias:
+          asignacionesLegacy: _emptyObj,
+          asignacionesPlano: _emptyObj,
+          asigPlano: _emptyObj,
+          asignaciones_obj: _emptyObj,
+          asigLegacy: _emptyObj,
+          aulasPlano: _emptyObj,
+          gradosAsignadosPlano: _emptyObj,
+          asignaciones2: _emptyObj,
+          // Legacy tutor_aulas_str / aulasTutor:
+          tutor_aulas_str: _emptyStr,
+          aulasTutor: _emptyStr,
+          tutAulasLista: _emptyStr,
+          asigDetall: _emptyArr,
+          asignacionesDetalladasJson: _emptyArr,
+          asignacionesDetalladas: _emptyArr
+        });
+      }
       await db.collection('usuarios').doc(String(editingUsuarioId)).update(_payload);
       _escritoOK = true;
       try { _invalidarUsuarios(); } catch(_e2){}
@@ -23424,7 +23473,7 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     } catch(e) {}
   }
 
-  const asignaciones = tempAsignaciones;
+  let asignaciones = tempAsignaciones;
 
   // ================================================================
   // FIX 2026-08-24: DOBLE LLENADO (2 sistemas legacy + nuevo)
@@ -23436,7 +23485,46 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
   // verdad visual para Admin), sin importar por cuál vía se asignó.
   // ================================================================
   (() => {
+    // ✅ NUEVO 2026-08-24 FIX SOLEDAD (igual Orlando pero merge visual):
+    // PRIMERO: si existen GRADOS_ASIGNADOS_JSON[] (detalladas 4 campos reales),
+    // construir tempAsignaciones DESDE ELLAS (no desde asignaciones{} plano que
+    // puede venir de importaciones antiguas sin ciclo). NO mergear legacy de
+    // tutorsAulas etc. porque savePrivilegios de deploy anterior ya limpió, o
+    // porque legacy son sin ciclo → contaminan doble marca INI/INT+AVZ.
+    let _hayDetalladasValidas = false;
+    try {
+      const dDet = (uid && uDataOverride && typeof uDataOverride === 'object')
+        ? uDataOverride
+        : (uid ? (typeof d2 !== 'undefined' ? d2 : null) : null);
+      const detArr = Array.isArray(dDet?.grados_asignados_json) ? dDet.grados_asignados_json : [];
+      if (detArr.length > 0) {
+        const _mapTempFromDet = {};
+        detArr.forEach(entry => {
+          if (!entry || typeof entry !== 'object') return;
+          const gg = String(entry.grado || entry.g || entry.numGrado || '').trim();
+          const ss = String(entry.seccion || entry.s || entry.sec || '').trim().toUpperCase();
+          if (!gg) return;
+          const numM = gg.match(/(\d+)/); const gClean = numM ? numM[1] : gg;
+          if (!_mapTempFromDet[gClean]) _mapTempFromDet[gClean] = new Set();
+          if (ss && ss !== 'TODAS') _mapTempFromDet[gClean].add(ss);
+        });
+        // Sobrescribir tempAsignaciones global: solo desde detalladas.
+        Object.keys(_mapTempFromDet).forEach(gk => {
+          tempAsignaciones[gk] = Array.from(_mapTempFromDet[gk]).sort();
+        });
+        // Quitar grados de tempAsignaciones que NO están en detalladas (legacy plano residual).
+        for (const gk of Object.keys(tempAsignaciones)) {
+          if (!_mapTempFromDet[gk]) delete tempAsignaciones[gk];
+        }
+        asignaciones = tempAsignaciones; // sync referencia local const
+        _hayDetalladasValidas = true;
+      }
+    } catch(_errDet) { _hayDetalladasValidas = false; }
     const aulasLegacy = [];
+    // 🔴 SI HAY DETALLADAS VÁLIDAS, NO MERGEAR LEGACY (evita contaminación ciclo fantasma).
+    if (_hayDetalladasValidas) {
+      // skip merge legacy
+    } else {
     try {
       const d = (uid && uDataOverride && typeof uDataOverride === 'object')
         ? uDataOverride
@@ -23486,6 +23574,8 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     const mergedKeys = Object.keys(mergeByGrado);
     if (mergedKeys.length > 0) {
       mergedKeys.forEach(g => { tempAsignaciones[g] = Array.from(mergeByGrado[g]).sort(); });
+    }
+    // Cierre else: Toda la lógica anterior (aulasLegacy + merge) SÓLO si NO hay detalladas válidas.
     }
     // FIX 2026-08-24 (último bug "marcas no aparecen al reabrir"):
     // Asegurar referencias cruzadas: helper granular lee window.tempAsignaciones,
@@ -23579,6 +23669,51 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
       modaFallbackPorGs[`${gK}|${sK}`] = turno;
     });
   } catch(eFb) {}
+  // ===================================================================
+  // ✅ CÁLCULO LEGACY CICLO ÚNICO (antes helper granular):
+  // Para gsDetallada=false + hasGlobal=true + A/B/C canon, la asignación
+  // legacy PLANA SÓLO PUEDE PERTENECER A 1 CICLO (NO AMBOS INI/INT y AVZ).
+  // Evita doble marca PRES 1A en INI/INT y AVZ como pasa con Soledad Acuña
+  // (igual fix Orlando 305d6d8 pero ahora a NIVEL CICLO, no sólo modalidad).
+  // · Pistas INI/INT → hint = 'INI/INT'
+  // · Default GOLD RULE Excel todo → hint = 'AVANZADO'
+  // ===================================================================
+  try {
+    const dHint = (uid && uDataOverride && typeof uDataOverride === 'object')
+      ? uDataOverride
+      : (uid ? (typeof d2 !== 'undefined' ? d2 : null) : null);
+    let hintCiclo = 'AVANZADO';
+    // Pista 1: cargo string docente "ciclo inicial intermedio" (Soledad img captura)
+    const cargoStr = (String(dHint?.cargo || dHint?.descripcionCargo || dHint?.puesto || '').trim() + ' ' + String(dHint?.cargo_select || dHint?.rolCustom || '')).toLowerCase();
+    if (/inicial/.test(cargoStr) || /intermedio/.test(cargoStr) || /ciclo ini/.test(cargoStr)) hintCiclo = 'INI/INT';
+    // Pista 2: campos legacy nivel/ciclo/tutorNivel usuario = INI/INT
+    const cicloRawUsr = String(dHint?.ciclo || dHint?.nivel || dHint?.tutorNivel || dHint?.tutor_ciclo || dHint?.cicloTutoria || '').trim().toUpperCase();
+    if (cicloRawUsr === 'INICIAL' || cicloRawUsr === 'INTERMEDIO' || cicloRawUsr === 'INICIAL/INTERMEDIO' || cicloRawUsr === 'INI') hintCiclo = 'INI/INT';
+    // Pista 3: byCicloTurno INI/INT Presencial > 0 (hay alumnos reales INI/INT hoy) + user con data de INI/INT
+    const hayAlumnosIniIntHoy = (
+      (byCicloTurno['INICIAL|PRESENCIAL'] || 0) +
+      (byCicloTurno['INTERMEDIO|PRESENCIAL'] || 0) +
+      (byCicloTurno['INICIAL/INTERMEDIO|PRESENCIAL'] || 0)
+    ) > 0;
+    // Pista 4: strings/objetos tutorAulas legacy tokens INI/INT
+    try {
+      const tutRaw = [];
+      if (Array.isArray(dHint?.tutorAulas)) tutRaw.push(...dHint.tutorAulas);
+      if (Array.isArray(dHint?.tutor_aulas_json)) tutRaw.push(...dHint.tutor_aulas_json);
+      if (Array.isArray(dHint?.tutor_aulas)) tutRaw.push(...dHint.tutor_aulas);
+      if (typeof dHint?.tutorAulas === 'string' && dHint.tutorAulas.trim()) tutRaw.push(dHint.tutorAulas);
+      for (const raw of tutRaw) {
+        const s = (typeof raw === 'string' ? raw : (String(raw?.ciclo||'') + ' ' + String(raw?.nivel||'') + ' ' + String(raw?.nombre||'') + ' ' + String(raw?.turno||''))).toUpperCase();
+        if (/INICIAL|INTERMEDIO|INI\/INT|\bINI\b/.test(s)) { hintCiclo = 'INI/INT'; break; }
+      }
+    } catch(_hintSub) {}
+    // Pista 5: byCicloTurnoGradoSec INI/INT cualquiera turno gs existente para ALGUNA key
+    if (!hayAlumnosIniIntHoy && hintCiclo === 'AVANZADO') {
+      const gsKeysIniIntExistentes = Object.keys(byCicloTurnoGradoSec || {}).some(k => k.startsWith('INICIAL|') || k.startsWith('INTERMEDIO|') || k.startsWith('INICIAL/INTERMEDIO|'));
+      if (gsKeysIniIntExistentes && /inicial|intermedio/.test(cargoStr)) hintCiclo = 'INI/INT';
+    }
+    window.__legacyCicloUnicoHint = hintCiclo;
+  } catch(_hintErr) { window.__legacyCicloUnicoHint = 'AVANZADO'; }
   // Construir SET de matches EXACTOS para el helper granular (FUENTE DE VERDAD N°1):
   // Si grados_asignados_json[] trae ciclo+turno+grado+seccion (guardados por savePrivilegios
   // de este deploy o posteriores), usamos MATCH EXACTO y NO heurística → sin doble marca.
@@ -23709,7 +23844,19 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     // ===================================================================
     if (hasGlobal && (sK === 'A' || sK === 'B' || sK === 'C')) {
       const _canon = { A: 'PRESENCIAL', B: 'SEMIPRESENCIAL', C: 'VIRTUAL' }[sK];
-      if (turnoTarjeta === _canon) return true;
+      if (turnoTarjeta === _canon) {
+        // ✅ NUEVO 2026-08-24 FIX SOLEDAD (mismo Orlando a NIVEL CICLO):
+        // Si es legacy plano (gsDetallada=false), NUNCA marcar en AMBOS ciclos.
+        // Sólo marcar en el ciclo determinado por __legacyCicloUnicoHint
+        // (pistas cargo/nivel/tutorAulas → INI/INT, else AVZ default).
+        if (!gsDetallada && window.__legacyCicloUnicoHint) {
+          const hint = String(window.__legacyCicloUnicoHint || '').trim().toUpperCase();
+          const quieroIniInt = (cicloT === 'INICIAL' || cicloT === 'INTERMEDIO' || cicloT === 'INICIAL/INTERMEDIO');
+          const hintIniInt = (hint === 'INI/INT' || hint === 'INICIAL/INTERMEDIO' || hint === 'INICIAL' || hint === 'INTERMEDIO' || hint === 'INI' || hint === 'INT');
+          if (quieroIniInt !== hintIniInt) return false;
+        }
+        return true;
+      }
       // ✅ CUALQUIER OTRA MODALIDAD PARA A/B/C = FALSE INMEDIATO (bloqueo).
       // Esto impide que byTurnoGradoSec["PRESENCIAL|4|B"] = true o cualquier
       // otro paso residual marque B en PRESENCIAL o C en SEMI etc.
