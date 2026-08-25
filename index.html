@@ -21213,30 +21213,51 @@ function _getPxBackup(uid) {
     if (!s) return null;
     const o = JSON.parse(s);
     if (!o || typeof o !== 'object') return null;
-    return o;
+    const d = (o.__data && typeof o.__data === 'object') ? o.__data : o;
+    return {
+      incidentesDiaLectura: !!d.incidentesDiaLectura,
+      incidentesVerTodo: !!d.incidentesVerTodo,
+      modoCarnets: !!d.modoCarnets,
+      verTodasAulas: !!d.verTodasAulas,
+      alumnosFotosMasivo: !!d.alumnosFotosMasivo,
+      sections: (d.sections && typeof d.sections === 'object') ? d.sections : {},
+      __t: Number(o.__t || 0) || 0
+    };
   } catch(_) { return null; }
 }
-function _setPxBackup(uid, px) {
-  try { localStorage.setItem(_pxBackupKey(uid), JSON.stringify(px || {})); } catch(_) {}
+function _setPxBackup(uid, px, { overwriteIfEmpty=true } = {}) {
+  try {
+    const clean = {
+      incidentesDiaLectura: !!(px && px.incidentesDiaLectura),
+      incidentesVerTodo: !!(px && px.incidentesVerTodo),
+      modoCarnets: !!(px && px.modoCarnets),
+      verTodasAulas: !!(px && px.verTodasAulas),
+      alumnosFotosMasivo: !!(px && px.alumnosFotosMasivo),
+      sections: (px && px.sections && typeof px.sections === 'object') ? px.sections : {}
+    };
+    const sLen = Object.keys(clean.sections).filter(k => !!clean.sections[k]).length;
+    const hasAny = !!clean.verTodasAulas || !!clean.incidentesDiaLectura || !!clean.incidentesVerTodo || !!clean.modoCarnets || !!clean.alumnosFotosMasivo || (sLen > 0);
+    if (!hasAny && !overwriteIfEmpty) return;
+    const payload = { __t: Date.now(), __data: clean };
+    localStorage.setItem(_pxBackupKey(uid), JSON.stringify(payload));
+  } catch(_) {}
 }
-function _mergePxBest(...sources) {
-  let best = null;
-  let bestScore = -1;
-  sources.forEach(s => {
-    if (!s || typeof s !== 'object') return;
-    const secLen = Object.keys(s.sections || {}).filter(k => !!s.sections[k]).length;
-    const score = (s.verTodasAulas ? 2 : 0) + (s.incidentesDiaLectura ? 2 : 0) + (s.incidentesVerTodo ? 2 : 0) + (s.modoCarnets ? 2 : 0) + (s.alumnosFotosMasivo ? 2 : 0) + (secLen * 2);
-    if (score > bestScore) { bestScore = score; best = s; }
-  });
-  if (!best) return {};
+function _cleanPx(px) {
+  const d = px || {};
   return {
-    incidentesDiaLectura: !!best.incidentesDiaLectura,
-    incidentesVerTodo: !!best.incidentesVerTodo,
-    modoCarnets: !!best.modoCarnets,
-    verTodasAulas: !!best.verTodasAulas,
-    alumnosFotosMasivo: !!best.alumnosFotosMasivo,
-    sections: (best.sections && typeof best.sections === 'object') ? best.sections : {}
+    incidentesDiaLectura: !!d.incidentesDiaLectura,
+    incidentesVerTodo: !!d.incidentesVerTodo,
+    modoCarnets: !!d.modoCarnets,
+    verTodasAulas: !!d.verTodasAulas,
+    alumnosFotosMasivo: !!d.alumnosFotosMasivo,
+    sections: (d.sections && typeof d.sections === 'object') ? d.sections : {}
   };
+}
+function _pxIsEmpty(px) {
+  const d = px || {};
+  if (d.verTodasAulas || d.incidentesDiaLectura || d.incidentesVerTodo || d.modoCarnets || d.alumnosFotosMasivo) return false;
+  const secs = Object.keys(d.sections || {}).filter(k => !!d.sections[k]);
+  return secs.length === 0;
 }
 
 function _getPermisosEspecialesFromForm() {
@@ -21246,7 +21267,7 @@ function _getPermisosEspecialesFromForm() {
     px = JSON.parse(raw) || {};
   } catch(e) { px = {}; }
   const incLegacy = !!document.getElementById('u-incidentes-dia-lectura')?.checked;
-  const hiddenOut = {
+  return {
     incidentesDiaLectura: (px.incidentesDiaLectura !== undefined) ? !!px.incidentesDiaLectura : incLegacy,
     incidentesVerTodo:    !!px.incidentesVerTodo,
     modoCarnets:          !!px.modoCarnets,
@@ -21254,20 +21275,17 @@ function _getPermisosEspecialesFromForm() {
     alumnosFotosMasivo:   !!px.alumnosFotosMasivo,
     sections:             (px.sections && typeof px.sections === 'object') ? px.sections : {}
   };
-  const domPx = _readPxCheckboxesDirectDOM();
-  const backupPx = _getPxBackup(editingUsuarioId || '');
-  return _mergePxBest(backupPx, domPx.__hasSomething ? domPx : null, hiddenOut);
 }
 
-function _applyPermisosEspecialesToForm(perms) {
-  const domPx = _readPxCheckboxesDirectDOM();
-  const backupPx = _getPxBackup(editingUsuarioId || '');
-  const px = _mergePxBest(backupPx, domPx.__hasSomething ? domPx : null, perms);
+function _applyPermisosEspecialesToForm(perms, { alsoUpdateBackup=true, overwriteBackupEmpty=true } = {}) {
+  const px = _cleanPx(perms);
   const jsonEl = document.getElementById('u-permisos-extra-json');
   if(jsonEl) jsonEl.value = JSON.stringify(px);
   const inc = document.getElementById('u-incidentes-dia-lectura');
   if(inc) inc.checked = !!px.incidentesDiaLectura;
-  if (editingUsuarioId) _setPxBackup(editingUsuarioId, px);
+  if (alsoUpdateBackup && editingUsuarioId) {
+    _setPxBackup(editingUsuarioId, px, { overwriteIfEmpty: !!overwriteBackupEmpty });
+  }
 }
 
 function actualizarResumenPermisosEspeciales() {
@@ -21538,10 +21556,7 @@ async function saveUsuario() {
       const chkAllA = document.getElementById('pe-ver-todas-aulas');
       const chkFotos = document.getElementById('pe-alumnos-fotos-masivo');
       const sectionsFb = {};
-      [
-        'scan','alumnos','registro','reportes','incidentes','materiales','materiales-entrega',
-        'comunicado','agenda','rol-examenes','alertas','usuarios','config','ia-horarios','horarios-grado'
-      ].forEach(k => {
+      _PE_SEC_KEYS.forEach(k => {
         const el = document.getElementById('pe-sec-' + k);
         if (el && el.checked) sectionsFb[k] = true;
       });
@@ -21555,6 +21570,22 @@ async function saveUsuario() {
           alumnosFotosMasivo: !!chkFotos?.checked,
           sections: sectionsFb
         };
+      } else {
+        const backupPx = _getPxBackup(editingUsuarioId || '');
+        if (backupPx) {
+          const sLen = Object.keys(backupPx.sections || {}).filter(k => !!backupPx.sections[k]).length;
+          const hasBackup = !!backupPx.verTodasAulas || !!backupPx.incidentesDiaLectura || !!backupPx.incidentesVerTodo || !!backupPx.modoCarnets || !!backupPx.alumnosFotosMasivo || (sLen > 0);
+          if (hasBackup) {
+            permisosExtra = {
+              incidentesDiaLectura: !!backupPx.incidentesDiaLectura,
+              incidentesVerTodo: !!backupPx.incidentesVerTodo,
+              modoCarnets: !!backupPx.modoCarnets,
+              verTodasAulas: !!backupPx.verTodasAulas,
+              alumnosFotosMasivo: !!backupPx.alumnosFotosMasivo,
+              sections: backupPx.sections || {}
+            };
+          }
+        }
       }
     }
     const incidentesDiaLectura = !!permisosExtra?.incidentesDiaLectura;
