@@ -21715,32 +21715,16 @@ function _userAsignacionesLabel(u) {
     let cFinal = c || '';
     if (!cFinal) {
       // ================================================================
-      // ✅ FIX 2026-08-24 SOLedad INI/INT fantasma label:
-      // SI EL DOCENTE TIENE grados_asignaciones_json[] DETALLADAS (length>0)
-      // → NO INFERIMOS ciclo por el string CARGO "Docente Jornada Inicial Intermedio".
-      // Default directo = AVANZADO (GOLD RULE Excel 100%).
-      // Solo inferimos INI/INT por cargo si NO hay detalladas (legacy docentes).
+      // ✅ GOLD RULE EXCEL GLOBAL PERMANENTE (usuario 2026-08-24 VERBATIM):
+      // "se tiene q basar en el excel olvida otra regla anterior, si en
+      // excel inidca q son avaznado asi sera, y no dberia aparece enada de
+      // inicial/intermedio pq no hay ningun alumno registrado por ahora enese nivel"
+      //
+      // NUNCA MÁS inferir ciclo INI/INT por string `u.cargo = Docente Jornada
+      // Inicial Intermedio`. NO importa el cargo docente. Default 100% = AVANZADO.
+      // (El cargo se usa solo para texto descriptivo en fila, nada de ciclo.)
       // ================================================================
-      const tieneDetalladas = !!(u && (
-        (Array.isArray(u.grados_asignaciones_json) && u.grados_asignaciones_json.length > 0) ||
-        (Array.isArray(u.gradosAsignacionesJson) && u.gradosAsignacionesJson.length > 0) ||
-        (Array.isArray(u.asignacionesDetalladasJson) && u.asignacionesDetalladasJson.length > 0) ||
-        (Array.isArray(u.asignacionesDetalladas) && u.asignacionesDetalladas.length > 0) ||
-        (Array.isArray(u.gradosAsignacionesJSON) && u.gradosAsignacionesJSON.length > 0) ||
-        (Array.isArray(u.detalladas) && u.detalladas.length > 0) ||
-        (Array.isArray(u.asigDetall) && u.asigDetall.length > 0) ||
-        (Array.isArray(u.asignacionesGradosJson) && u.asignacionesGradosJson.length > 0)
-      ));
-      if (tieneDetalladas) {
-        cFinal = 'AVANZADO';
-      } else {
-        const cargo = String(u.cargo || '').trim().toUpperCase();
-        if (cargo.includes('INICIAL') || cargo.includes('INTERMEDIO') || cargo.includes('INI')) {
-          cFinal = 'INI/INT';
-        } else {
-          cFinal = 'AVANZADO';
-        }
-      }
+      cFinal = 'AVANZADO';
     }
     const key = `${cFinal}|${tFinal}|${g}|${s}`;
     if (!entriesMap.has(key)) entriesMap.set(key, { ciclo: cFinal, turno: tFinal, grado: g, seccion: s, src: new Set() });
@@ -21895,6 +21879,25 @@ function _userAsignacionesLabel(u) {
     });
   }
   // ✅ Cierre else de PRIORIDAD LABEL 1 (SIN detalladas → usa pickArrAll legacy):
+  }
+  // =====================================================================
+  // ✅ FIX 2026-08-24 FINAL CLEAN SLATE (antes render agrupado):
+  // Gold Rule Excel PERMANENTE usuario (no hay alumnos INI/INT NUNCA).
+  //
+  // Si entriesMap TIENE al menos 1 entry ciclo === 'AVANZADO' CONFIRMADO
+  // (venga de detalladas o de inferencia default AVZ addEntry) →
+  // ELIMINAR COMPLETAMENTE TODAS entries CICLO === 'INI/INT' residuales
+  // de aliases legacy que SÍ traían ciclo="INI/INT" explícito grabado
+  // en deploys antiguos (antes Gold Rule AVZ).
+  //
+  // Esto garantiza label SOLAMENTE 🔥 AVANZADO sin 🧊 INI/INT fantasma.
+  // =====================================================================
+  const hayAvanzadoConfirmado = Array.from(entriesMap.values()).some(e => e.ciclo === 'AVANZADO');
+  if (hayAvanzadoConfirmado) {
+    for (const kk of Array.from(entriesMap.keys())) {
+      const e = entriesMap.get(kk);
+      if (e && e.ciclo === 'INI/INT') entriesMap.delete(kk);
+    }
   }
   // =====================================================================
   // FINAL: construir el agrupado POR CICLO → Map<cicloStr, Map<gradoStr, Set<seccionStr>>>
