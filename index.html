@@ -9396,6 +9396,20 @@ async function renderAlumnos() {
     console.table(_dbg2);
     console.groupEnd();
   } catch(_dbg2e) {}
+  try {
+    const sKcanon = String(_vSeccion || '').toUpperCase();
+    if (_vMod && (sKcanon === 'A' || sKcanon === 'B' || sKcanon === 'C')) {
+      const modNorm = (typeof _normModAtencion === 'function') ? (_normModAtencion(_vMod) || String(_vMod).trim().toUpperCase()) : String(_vMod).trim().toUpperCase();
+      const _canonMod = { A: 'PRESENCIAL', B: 'SEMIPRESENCIAL', C: 'VIRTUAL' }[sKcanon];
+      if (modNorm !== _canonMod) {
+        const btnLimpiar = document.getElementById('limpiar-filtros-alumnos');
+        let hint = '';
+        if (btnLimpiar) hint = ' · Usa [X Limpiar] y vuelve a seleccionar: Seccion ' + sKcanon + ' → Modalidad ' + _canonMod + '.';
+        if (typeof showToast === 'function') showToast('⚠️ Combinación inválida: Sección ' + sKcanon + ' SÓLO corresponde a Modalidad ' + _canonMod + ' (no ' + modNorm + ').' + hint, 'warning', 7000);
+        _vMod = '__BLOQUEAR__';
+      }
+    }
+  } catch(_blkErr) {}
 
 
   // ------------------------------------------------------------------
@@ -9556,7 +9570,9 @@ async function renderAlumnos() {
       const _cfg = typeof configCache !== 'undefined' ? configCache : {};
       alumnos = alumnos.filter(a => _matchNivel(a, _vNivel, _cfg));
     }
-    if (_vMod) {
+    if (_vMod === '__BLOQUEAR__') {
+      alumnos = [];
+    } else if (_vMod) {
       const modNorm = (_normModAtencion ? _normModAtencion(_vMod) : String(_vMod||'').trim().toUpperCase().replace(/[\s\-_]/g,'')) || String(_vMod||'').trim();
       // 5 estrategias de match por si la normalización falla por UTF-8 raro o variantes.
       function _matchMod(aTurnoRaw, modTarget) {
