@@ -23909,6 +23909,48 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
   window.__asigDetalladasGsSetGlobal = _asigDetalladasGsSet;
   window.__asigDetalladasHave = _asigDetalladasHave;
 
+  // =====================================================================
+  // ✅ FIX 2026-08-24 CRÍTICO FINAL (BUG DE REAPARICIÓN CHECKBOX AVZ CUANDO
+  //    SÓLO SE MARCÓ INI/INT 1A, Y VICEVERSA):
+  //
+  // El bug confirmado: la variable `hasGlobal` se calculaba con
+  // `tempAsignaciones (plano {1:[A]})` → SIN información de ciclo. Así que
+  // si `grados_asignaciones_json[]` SÓLO tenía {ciclo:INI/INT, 1A}, tempAsig
+  // ponía {1:[A]} → `hasGlobal = true` tanto para el checkbox AVZ PRES 1A
+  // COMO para el INI/INT PRES 1A → el de AVZ aparecía marcado a pesar de
+  // haberlo desmarcado y guardado INI/INT solo.
+  //
+  // Solución 100% limpia:
+  // 1) SI HAY detalladas 4 campos (window.__asigDetalladasHave === true):
+  //    CALCULAR `hasGlobal` DESDE LAS DETALLADAS CON MATCH CICLO+TURNO+GRADO
+  //    +SECCIÓN EXACTO (no tempAsig plano). NUNCA usar tempAsig cuando hay
+  //    detalladas grabadas por Admin.
+  // 2) SÓLO SI __asigDetalladasHave = false (docente nunca grabó con ✅Aceptar,
+  //    todo legacy) → usar tempAsignaciones plano (comportamiento histórico).
+  // =====================================================================
+  window.__hasGlobalDesdeDetalladas = function(turnoTarjetaNorm, cicloTarjetaNorm, gK, sK) {
+    try {
+      const sSet = window.__asigDetalladasSetGlobal;
+      if (!sSet || !(sSet instanceof Set) || sSet.size === 0) return null; // null = fallback tempAsig
+      const esIniInt = (cicloTarjetaNorm === 'INICIAL' || cicloTarjetaNorm === 'INTERMEDIO' || cicloTarjetaNorm === 'INICIAL/INTERMEDIO');
+      const ciclosParaMatch = [];
+      if (esIniInt) {
+        ['INICIAL','INTERMEDIO','INICIAL/INTERMEDIO'].forEach(cc => ciclosParaMatch.push(cc));
+      } else {
+        ciclosParaMatch.push(cicloTarjetaNorm);
+        if (cicloTarjetaNorm !== 'AVANZADO') ciclosParaMatch.push('AVANZADO');
+      }
+      for (const cc of ciclosParaMatch) {
+        const k1 = `${cc}|${turnoTarjetaNorm}|${gK}|${sK}`;
+        const k2 = `${cc}|${turnoTarjetaNorm}|G${gK}|${sK}`;
+        const k3 = `${cc}|${turnoTarjetaNorm}|${gK}°|${sK}`;
+        if (sSet.has(k1) || sSet.has(k2) || sSet.has(k3)) return true;
+      }
+      // Explicito: NO está en detalladas → FALSE (no usar tempAsig para hasGlobal)
+      return false;
+    } catch(_eHas) { return null; }
+  };
+
   // Helper de chequeo por TARJETA (turnoTarjeta + cicloTarjeta x grado x seccion)
   // Usado dentro del render para decidir si marcar cada checkbox individual
   window.__checkAsigGranularPorModTarjeta = function(turnoTarjetaRaw, cicloTarjetaRaw, gradoRaw, seccionRaw) {
@@ -23922,10 +23964,22 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
     const numG = g.match(/(\d+)/); const gK = numG ? numG[1] : g;
     const sK = String(seccionRaw||'').trim().toUpperCase();
     if (!gK || !sK) return false;
-    const tempObj = window.tempAsignaciones || tempAsignaciones || {};
-    if (!Object.prototype.hasOwnProperty.call(tempObj, gK)) return false;
-    const secsArr = Array.isArray(tempObj[gK]) ? tempObj[gK] : [];
-    const hasGlobal = secsArr.some(x => String(x||'').trim().toUpperCase() === sK);
+    // ✅ FIX 2026-08-24: hasGlobal DESDE DETALLADAS (primordial)
+    let hasGlobal = false;
+    let usarDetalladas = false;
+    try {
+      if (window.__asigDetalladasHave && typeof window.__hasGlobalDesdeDetalladas === 'function') {
+        const resDet = window.__hasGlobalDesdeDetalladas(turnoTarjeta, cicloT, gK, sK);
+        if (resDet === true || resDet === false) { hasGlobal = !!resDet; usarDetalladas = true; }
+      }
+    } catch(_e0) {}
+    if (!usarDetalladas) {
+      // Legacy fallback: tempAsignaciones plano (solo sin detalladas grabadas)
+      const tempObj = window.tempAsignaciones || tempAsignaciones || {};
+      if (!Object.prototype.hasOwnProperty.call(tempObj, gK)) return false;
+      const secsArr = Array.isArray(tempObj[gK]) ? tempObj[gK] : [];
+      hasGlobal = secsArr.some(x => String(x||'').trim().toUpperCase() === sK);
+    }
     if (!hasGlobal) return false;
     const esIniInt = (cicloT === 'INICIAL' || cicloT === 'INTERMEDIO' || cicloT === 'INICIAL/INTERMEDIO');
     const gsKey = `${gK}|${sK}`;
