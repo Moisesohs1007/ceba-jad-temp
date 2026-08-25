@@ -21162,6 +21162,67 @@ function _aulasListToAsignacionesObj(listArr) {
   return out;
 }
 
+const _PE_SEC_KEYS = [
+  'scan','alumnos','registro','reportes','incidentes','materiales','materiales-entrega',
+  'comunicado','agenda','rol-examenes','alertas','usuarios','config','ia-horarios','horarios-grado'
+];
+function _readPxCheckboxesDirectDOM() {
+  const chkInc = document.getElementById('pe-incidentes-dia-lectura');
+  const chkAllInc = document.getElementById('pe-incidentes-ver-todo');
+  const chkCarn = document.getElementById('pe-modo-carnets');
+  const chkAllA = document.getElementById('pe-ver-todas-aulas');
+  const chkFotos = document.getElementById('pe-alumnos-fotos-masivo');
+  const sections = {};
+  _PE_SEC_KEYS.forEach(k => {
+    const el = document.getElementById('pe-sec-' + k);
+    if (el && el.checked) sections[k] = true;
+  });
+  const out = {
+    incidentesDiaLectura: !!chkInc?.checked,
+    incidentesVerTodo: !!chkAllInc?.checked,
+    modoCarnets: !!chkCarn?.checked,
+    verTodasAulas: !!chkAllA?.checked,
+    alumnosFotosMasivo: !!chkFotos?.checked,
+    sections
+  };
+  const secLen = Object.keys(sections).length;
+  out.__hasSomething = !!out.verTodasAulas || !!out.incidentesDiaLectura || !!out.incidentesVerTodo || !!out.modoCarnets || !!out.alumnosFotosMasivo || (secLen > 0);
+  return out;
+}
+function _pxBackupKey(uid) { return 'asmqr_pebackup_' + (window.COLEGIO_ID || 'ceba') + '_' + String(uid || '').replace(/[^a-zA-Z0-9_-]/g,''); }
+function _getPxBackup(uid) {
+  try {
+    const k = _pxBackupKey(uid);
+    const s = localStorage.getItem(k);
+    if (!s) return null;
+    const o = JSON.parse(s);
+    if (!o || typeof o !== 'object') return null;
+    return o;
+  } catch(_) { return null; }
+}
+function _setPxBackup(uid, px) {
+  try { localStorage.setItem(_pxBackupKey(uid), JSON.stringify(px || {})); } catch(_) {}
+}
+function _mergePxBest(...sources) {
+  let best = null;
+  let bestScore = -1;
+  sources.forEach(s => {
+    if (!s || typeof s !== 'object') return;
+    const secLen = Object.keys(s.sections || {}).filter(k => !!s.sections[k]).length;
+    const score = (s.verTodasAulas ? 2 : 0) + (s.incidentesDiaLectura ? 2 : 0) + (s.incidentesVerTodo ? 2 : 0) + (s.modoCarnets ? 2 : 0) + (s.alumnosFotosMasivo ? 2 : 0) + (secLen * 2);
+    if (score > bestScore) { bestScore = score; best = s; }
+  });
+  if (!best) return {};
+  return {
+    incidentesDiaLectura: !!best.incidentesDiaLectura,
+    incidentesVerTodo: !!best.incidentesVerTodo,
+    modoCarnets: !!best.modoCarnets,
+    verTodasAulas: !!best.verTodasAulas,
+    alumnosFotosMasivo: !!best.alumnosFotosMasivo,
+    sections: (best.sections && typeof best.sections === 'object') ? best.sections : {}
+  };
+}
+
 function _getPermisosEspecialesFromForm() {
   let px = {};
   try {
@@ -21169,7 +21230,7 @@ function _getPermisosEspecialesFromForm() {
     px = JSON.parse(raw) || {};
   } catch(e) { px = {}; }
   const incLegacy = !!document.getElementById('u-incidentes-dia-lectura')?.checked;
-  return {
+  const hiddenOut = {
     incidentesDiaLectura: (px.incidentesDiaLectura !== undefined) ? !!px.incidentesDiaLectura : incLegacy,
     incidentesVerTodo:    !!px.incidentesVerTodo,
     modoCarnets:          !!px.modoCarnets,
@@ -21177,21 +21238,20 @@ function _getPermisosEspecialesFromForm() {
     alumnosFotosMasivo:   !!px.alumnosFotosMasivo,
     sections:             (px.sections && typeof px.sections === 'object') ? px.sections : {}
   };
+  const domPx = _readPxCheckboxesDirectDOM();
+  const backupPx = _getPxBackup(editingUsuarioId || '');
+  return _mergePxBest(backupPx, domPx.__hasSomething ? domPx : null, hiddenOut);
 }
 
 function _applyPermisosEspecialesToForm(perms) {
-  const px = {
-    incidentesDiaLectura: !!perms?.incidentesDiaLectura,
-    incidentesVerTodo:    !!perms?.incidentesVerTodo,
-    modoCarnets:          !!perms?.modoCarnets,
-    verTodasAulas:        !!perms?.verTodasAulas,
-    alumnosFotosMasivo:   !!perms?.alumnosFotosMasivo,
-    sections:             (perms?.sections && typeof perms.sections === 'object') ? perms.sections : {}
-  };
+  const domPx = _readPxCheckboxesDirectDOM();
+  const backupPx = _getPxBackup(editingUsuarioId || '');
+  const px = _mergePxBest(backupPx, domPx.__hasSomething ? domPx : null, perms);
   const jsonEl = document.getElementById('u-permisos-extra-json');
   if(jsonEl) jsonEl.value = JSON.stringify(px);
   const inc = document.getElementById('u-incidentes-dia-lectura');
   if(inc) inc.checked = !!px.incidentesDiaLectura;
+  if (editingUsuarioId) _setPxBackup(editingUsuarioId, px);
 }
 
 function actualizarResumenPermisosEspeciales() {
@@ -21246,21 +21306,20 @@ function savePermisosEspeciales() {
   const chkAllA = document.getElementById('pe-ver-todas-aulas');
   const chkFotos = document.getElementById('pe-alumnos-fotos-masivo');
   const sections = {};
-  [
-    'scan','alumnos','registro','reportes','incidentes','materiales','materiales-entrega',
-    'comunicado','agenda','rol-examenes','alertas','usuarios','config','ia-horarios','horarios-grado'
-  ].forEach(k => {
+  _PE_SEC_KEYS.forEach(k => {
     const el = document.getElementById('pe-sec-' + k);
     if(el && el.checked) sections[k] = true;
   });
-  _applyPermisosEspecialesToForm({
+  const built = {
     incidentesDiaLectura: !!chkInc?.checked,
     incidentesVerTodo: !!chkAllInc?.checked,
     modoCarnets: !!chkCarn?.checked,
     verTodasAulas: !!chkAllA?.checked,
     alumnosFotosMasivo: !!chkFotos?.checked,
     sections
-  });
+  };
+  _applyPermisosEspecialesToForm(built);
+  if (editingUsuarioId) _setPxBackup(editingUsuarioId, built);
   actualizarResumenPermisosEspeciales();
   closeModal('modal-permisos-especiales');
 }
@@ -21274,6 +21333,10 @@ async function openModalUsuario(uid, nombre, rol, email) {
   const extraWrap = document.getElementById('u-permisos-extra');
   const canSetExtras = _isAdminDirector();
   if(extraWrap) extraWrap.style.display = canSetExtras ? '' : 'none';
+  try {
+    const bkPx = uid ? _getPxBackup(uid) : null;
+    if (bkPx) _applyPermisosEspecialesToForm(bkPx);
+  } catch(_bk0){}
 
   const mUsr = document.getElementById('modal-usuario');
   if(mUsr) {
@@ -21793,6 +21856,7 @@ async function saveUsuario() {
       } catch(eFinal) {
         console.warn('[saveUsuario] FINAL safe update permisos fallback error. (ignorado, no romper toast)', eFinal?.code || eFinal?.message || eFinal);
       }
+      if (editingUsuarioId) _setPxBackup(editingUsuarioId, permisosExtra);
       _invalidarUsuarios();
       // Mostrar/ocultar botón recuperar según teléfono
       // Si se ingresó nueva contraseña, cambiarla
