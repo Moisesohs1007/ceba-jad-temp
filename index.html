@@ -23378,22 +23378,21 @@ async function savePrivilegios() {
       tempAsignaciones[g] = tempAsignaciones[g].slice().sort();
     }
   });
-  // Cleanup detalladas: quitar duplicados exactos + FORZAR ciclo GOLD RULE
+  // Cleanup detalladas: quitar duplicados exactos. CICLO SE RESPETARÁ 100%
+  // del data-ciclo del checkbox marcado por el Admin (Bloque1 INI/INT o
+  // Bloque2 AVZ). SI y SOLO SI el Admin NO marca nada (ciclo vacío) → default
+  // Gold Rule Excel AVANZADO (hoy no hay alumnos INI/INT registrados).
+  // ------------------------------------------------------------------
+  // IMPORTANTE: El hardcode cc=AVANZADO que estaba acá se ELIMINÓ porque
+  // Admin Moises explicitamente marcó Bloque1 INI/INT y queria que el label
+  // muestre INI/INT:1(A) (no AVANZADO fantasma). FUENTE DE VERDAD = data-ciclo.
   const _dedup = new Map();
   _detalladas.forEach(d => {
-    // ================================================================
-    // ✅ GOLD RULE EXCEL (RESTUCTURACION 2026-08-24): NUNCA ciclo INI/INT
-    // en detalladas. El Excel GENERAL SOLO tiene alumnos AVANZADO.
-    // Forcejamos ciclo = AVANZADO en TODAS entries aunque el checkbox
-    // data-ciclo diga "INICIAL/INTERMEDIO" (por retrocompatibilidad de
-    // plantilla 2 bloques). Si mañana Excel real trae INI/INT reales
-    // (con alumnos rows en BD), des-comentar línea _canonCicloJS.
-    // ================================================================
-    let cc = 'AVANZADO';
-    // let cc = d.ciclo || 'AVANZADO';
-    // if (typeof _canonCicloJS === 'function' && cc) cc = (_canonCicloJS(cc) || cc);
+    let cc = String(d.ciclo || '').trim();
+    if (typeof _canonCicloJS === 'function' && cc) cc = (_canonCicloJS(cc) || cc);
+    // Gold Rule default SOLO si Admin no marca nada:
     if (!cc) cc = 'AVANZADO';
-    let tt = d.turno || 'PRESENCIAL';
+    let tt = String(d.turno || '').trim();
     if (typeof _normModAtencion === 'function') tt = (_normModAtencion(tt) || tt || 'PRESENCIAL');
     if (!tt) tt = 'PRESENCIAL';
     const gg = String(d.grado || '').trim();
@@ -23638,20 +23637,19 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
         detArr.forEach(entry => {
           if (!entry || typeof entry !== 'object') return;
           // ============================================================
-          // ✅ GOLD RULE EXCEL (RESTRUCTURACIÓN 2026-08-24): Al ABRIR el
-          // modal "Configurar aulas", SÓLO renderizamos checkboxes de
-          // entries grados_asignaciones_json[] CON ciclo === "AVANZADO".
+          // ✅ RESTAURADO (Admin marcó INI/INT 1A a propósito):
+          // Respeta 100% el CICLO guardado en grados_asignaciones_json[]
+          // porque viene de un checkbox M.A.R.C.A.D.O. explícitamente
+          // por Admin (data-ciclo = INICIAL/INTERMEDIO o AVANZADO).
           //
-          // CUALQUIER entry con ciclo INI/INT (guardada por bug en deploys
-          // pasados o aliases legacy) → **SALTEARLA COMPLETAMENTE**.
-          //
-          // Si mañana Excel real trae INI/INT reales, cambiar el string
-          // de ciclo o remover el bloque if de salteo; NUNCA remover
-          // el filtro sin confirmar que existen alumnos rows en BD.
+          // Regla de limpieza de ciclo fantasma SOLO para entries LEGACY
+          // SIN CICLO (lineas addEntry L21714 default AVZ si NO trae cc).
+          // No debe aplicar a entries detalladas con grabación Admin.
           // ============================================================
           const ccRaw = String(entry.ciclo || '').trim().toUpperCase();
           const cc = (typeof _canonCicloJS === 'function') ? (_canonCicloJS(ccRaw) || ccRaw) : ccRaw;
-          if (cc !== 'AVANZADO') return; // SALTEAR INI/INT FANTASMA
+          // BLOQUE ELIMINADO: if (cc !== 'AVANZADO') return;
+          // -- Ya no salteamos INI/INT si Admin lo grabó explícitamente.
           const gg = String(entry.grado || entry.g || entry.numGrado || '').trim();
           const ss = String(entry.seccion || entry.s || entry.sec || '').trim().toUpperCase();
           if (!gg) return;
