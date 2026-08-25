@@ -24666,7 +24666,7 @@ function _invalidarCacheAlumnos() {
 async function getAlumnosFiltrados() {
   const r = _normRol(currentRol);
   if(r === 'profesor' || r === 'psicologo') {
-    if(!!currentPerms?.verTodasAulas) return DB.getAlumnos();
+    if(!!currentPerms?.verTodasAulas) return _purgeCanonInconsistencias(await DB.getAlumnos());
     // Convertir a lista de aulas CON ciclo correcto (parseando sufijos)
     let aulasConCiclo = _profesorAsignacionesAulasList();
     // =============================================================
@@ -24723,22 +24723,20 @@ async function getAlumnosFiltrados() {
         try {
           const todos = await DB.getAlumnos();
           const filtrados = aplicarFiltroProfesor(todos || []);
-          if (filtrados && filtrados.length > 0) return filtrados;
+          if (filtrados && filtrados.length > 0) return _purgeCanonInconsistencias(filtrados);
         } catch (_) {}
       }
     }
     if(aulasConCiclo.length) {
       try {
         const dbScoped = await DB.getAlumnosScoped(aulasConCiclo);
-        // Siempre refinar en memoria con la regla laxa (por si la BD mandó de más)
         const refiner = aplicarFiltroProfesor(dbScoped || []);
-        if (refiner && refiner.length > 0) return refiner;
-        // Si aún vacío, fallback nivel dios para no perder alumnos
+        if (refiner && refiner.length > 0) return _purgeCanonInconsistencias(refiner);
         const todos = await DB.getAlumnos();
-        return aplicarFiltroProfesor(todos || []);
+        return _purgeCanonInconsistencias(aplicarFiltroProfesor(todos || []));
       } catch(_e) {
         const todos = await DB.getAlumnos();
-        return aplicarFiltroProfesor(todos || []);
+        return _purgeCanonInconsistencias(aplicarFiltroProfesor(todos || []));
       }
     }
     // Scope VACÍO: devolvemos [] y mostramos 1 toast por sesión (NO mostramos todo el colegio)
@@ -24765,7 +24763,35 @@ async function getAlumnosFiltrados() {
   _alumnosCacheFull = null;
   _alumnosCacheTs = 0;
   const alumnos = await DB.getAlumnos();
-  return alumnos || [];
+  return _purgeCanonInconsistencias(alumnos || []);
+}
+
+/**
+ * ✅ PURGE UNIVERSAL INCONDICIONAL CEBA (Admin + Docente, último bloqueo antes de render).
+ * Elimina DE LA TABLA (no de la BD) alumnos con combinación A/B/C que NO siguen el canon:
+ *   A = PRESENCIAL; B = SEMIPRESENCIAL; C = VIRTUAL.
+ * Root Cause Soledad/Orlando: registros importados viejos 1B/4B PRESENCIAL no existen en Excel.
+ * @param {Array} alumnosArr Lista de alumnos raw (Firestore).
+ * @returns {Array} Lista SIN combinaciones inválidas por sección A/B/C.
+ */
+function _purgeCanonInconsistencias(alumnosArr) {
+  if (!(alumnosArr && Array.isArray(alumnosArr) && alumnosArr.length)) return [];
+  return alumnosArr.filter(a => {
+    try {
+      if (!a || typeof a !== 'object') return false;
+      const sK = String((a && (a.seccion || a.SECCION || '')) || '').trim().toUpperCase();
+      if (sK !== 'A' && sK !== 'B' && sK !== 'C') return true;
+      let turnoRaw = String((a && (a.turno || a.modalidad || a.mod_atencion || a.MODALIDAD || a.ATENCION || '')) || '').trim();
+      if (!turnoRaw) return true;
+      let tNorm = (typeof _normModAtencion === 'function') ? (_normModAtencion(turnoRaw) || turnoRaw) : turnoRaw;
+      if (typeof tNorm === 'string') tNorm = tNorm.trim().toUpperCase().replace(/\s+/g, '');
+      else tNorm = String(tNorm || '').toUpperCase().replace(/\s+/g, '');
+      if (!tNorm) return true;
+      const canonMod = { A: 'PRESENCIAL', B: 'SEMIPRESENCIAL', C: 'VIRTUAL' }[sK];
+      if (tNorm !== canonMod) return false;
+      return true;
+    } catch(_purgeErr) { return true; }
+  });
 }
 
 // ============================================================
