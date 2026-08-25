@@ -21538,6 +21538,10 @@ function _mapUsuarioCacheRow(row) {
     telefono: row.telefono || '',
     restringir: !!row.restringir,
     asignaciones: (row.asignaciones && typeof row.asignaciones === 'object') ? row.asignaciones : {},
+    grados_asignados_json: Array.isArray(row.grados_asignados_json) ? row.grados_asignados_json : [],
+    tutor_aulas_json: Array.isArray(row.tutor_aulas_json) ? row.tutor_aulas_json : [],
+    tutorGradosAsignados: Array.isArray(row.tutorGradosAsignados) ? row.tutorGradosAsignados : [],
+    tutorAulas: Array.isArray(row.tutorAulas) ? row.tutorAulas : (typeof row.tutorAulas === 'string' ? [row.tutorAulas] : []),
     esTutor: !!row.es_tutor,
     tutorGrado: row.tutor_grado || '',
     tutorSeccion: row.tutor_seccion || '',
@@ -21553,14 +21557,17 @@ async function _cargarUsuariosCache() {
   try {
     const { data, error } = await _sb
       .from('usuarios')
-      .select('id,nombre,email,rol,cargo,telefono,restringir,asignaciones,es_tutor,tutor_grado,tutor_seccion,incidentes_dia_lectura,permisos_extra')
+      .select('id,nombre,email,rol,cargo,telefono,restringir,asignaciones,grados_asignados_json,tutor_aulas_json,tutorGradosAsignados,tutorAulas,es_tutor,tutor_grado,tutor_seccion,incidentes_dia_lectura,permisos_extra')
       .eq('colegio_id', COLEGIO_ID)
       .order('nombre');
     if(error) throw error;
     _usuariosCacheData = (data || []).map(_mapUsuarioCacheRow).filter(Boolean);
   } catch(e0) {
     const snap = await db.collection('usuarios').get();
-    _usuariosCacheData = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
+    _usuariosCacheData = snap.docs.map(d => {
+      const raw = { id: d.id, ...d.data() };
+      return _mapUsuarioCacheRow(raw);
+    });
   }
   LSC.set('usuarios', _usuariosCacheData, LSC.TTL_USUARIOS);
   return _usuariosCacheData;
@@ -21568,6 +21575,67 @@ async function _cargarUsuariosCache() {
 function _invalidarUsuarios() {
   _usuariosCacheData = null;
   LSC.del('usuarios');
+}
+
+// Helper: arma el texto "🎓 Aulas" para la fila usuario (agrupado POR CICLO/NIVEL
+// si hay estructura detallada grados_asignados_json[]).
+function _userAsignacionesLabel(u) {
+  // 1) PRIMERO: estructura detallada 4 campos {ciclo,turno,grado,seccion} (savePrivilegios deploy 10fc429+)
+  const det = Array.isArray(u?.grados_asignados_json) ? u.grados_asignados_json.filter(e => !!e && typeof e === 'object') : [];
+  const tutorAulasDet = Array.isArray(u?.tutor_aulas_json) ? u.tutor_aulas_json.filter(e => !!e && typeof e === 'object' && (String(e.turno||'').trim() || String(e.modalidad||'').trim() || String(e.atencion||'').trim())) : [];
+  const allDet = det.concat(tutorAulasDet);
+  if (allDet.length > 0) {
+    // Agrupar por ciclo → Map<cicloStr, Map<gradoStr, Set<seccionStr>>>
+    const grupo = new Map();
+    for (const e of allDet) {
+      let c0 = String(e.ciclo || e.nivel || '').trim().toUpperCase();
+      const c = (c0 === 'INICIAL' || c0 === 'INTERMEDIO' || c0 === 'INICIAL/INTERMEDIO' || c0 === 'INI') ? 'INI/INT'
+              : (c0 === 'AVANZADO' || c0 === 'AVZ') ? 'AVANZADO'
+              : (c0 || 'SIN CICLO');
+      const g0 = String(e.grado || e.g || '').trim();
+      if (!g0) continue;
+      const s0 = String(e.seccion || e.s || '').trim().toUpperCase();
+      if (!grupo.has(c)) grupo.set(c, new Map());
+      const mc = grupo.get(c);
+      if (!mc.has(g0)) mc.set(g0, new Set());
+      if (s0) mc.get(g0).add(s0);
+    }
+    // Convertir a partes ordenadas (INI/INT primero luego AVANZADO luego resto)
+    const ord = ['INI/INT','AVANZADO'];
+    const keys = [...grupo.keys()].sort((a,b)=>{
+      const ia = ord.indexOf(a), ib = ord.indexOf(b);
+      const ra = (ia>=0?ia:99), rb = (ib>=0?ib:99);
+      if (ra!==rb) return ra-rb;
+      return a.localeCompare(b);
+    });
+    const partes = [];
+    for (const c of keys) {
+      const mc = grupo.get(c);
+      const gradosOrd = [...mc.keys()].sort((x,y)=>{
+        const nx = parseInt(x,10), ny = parseInt(y,10);
+        if (!isNaN(nx) && !isNaN(ny)) return nx-ny;
+        return x.localeCompare(y);
+      });
+      const segs = gradosOrd.map(g=>{
+        const ss = [...mc.get(g)].sort();
+        return `${g}${ss.length?` (${ss.join(',')})`:''}`;
+      });
+      const icono = (c === 'INI/INT') ? '🧊' : (c === 'AVANZADO') ? '🔥' : '📘';
+      partes.push(`${icono} ${c}: ${segs.join(', ')}`);
+    }
+    if (partes.length) return `🎓 Aulas: ${partes.join(' · ')}`;
+  }
+  // 2) FALLBACK: estructura plano legacy asignaciones{grado:[secciones]} (usuarios sin guardar ✅ Aceptar nuevo)
+  const keys = Object.keys(u?.asignaciones || {});
+  if (keys.length) {
+    const txt = keys
+      .sort((x,y)=>{ const nx=parseInt(x,10), ny=parseInt(y,10); if (!isNaN(nx)&&!isNaN(ny)) return nx-ny; return x.localeCompare(y); })
+      .map(g => g + ((u.asignaciones[g]||[]).length ? ` (${[...new Set(u.asignaciones[g])].sort().join(',')})` : ''))
+      .join(', ');
+    return `🎓 Aulas asignadas: ${txt}`;
+  }
+  // 3) Sin aulas
+  return '⚠ Sin aulas (editar → Aulas)';
 }
 
 async function renderUsuarios() {
@@ -21581,8 +21649,9 @@ async function renderUsuarios() {
       const rol = _normRol(u.rol);
       const esYo = u.uid === currentUser.uid ? ' (tú)' : '';
       const rolProfLike = (rol==='profesor'||rol==='psicologo');
-      const asigTxt = (rolProfLike&&(u.restringir||(u.asignaciones&&Object.keys(u.asignaciones).length>0)))
-        ? `<br><span style="font-size:0.72rem;color:var(--accent);">${Object.keys(u.asignaciones||{}).length?'🎓 Aulas asignadas: '+Object.keys(u.asignaciones||{}).map(g=>g+((u.asignaciones[g]||[]).length?(' ('+(u.asignaciones[g]||[]).join(',')+')'):'')).join(', '):'⚠ Sin aulas (editar → Aulas)'}</span>`
+      const tieneAsig = (u.restringir||(u.asignaciones&&Object.keys(u.asignaciones).length>0)||(u.grados_asignados_json&&u.grados_asignados_json.length>0)||(u.tutor_aulas_json&&u.tutor_aulas_json.length>0));
+      const asigTxt = (rolProfLike && tieneAsig)
+        ? `<br><span style="font-size:0.72rem;color:var(--accent);">${_userAsignacionesLabel(u)}</span>`
         : (rolProfLike ? `<br><span style="font-size:0.72rem;color:#f59e0b;">Sin restricción (ver todas las aulas)</span>` : '');
       const tutTxt = (u.esTutor&&(u.tutorGrado||(u.tutor_aulas_json&&u.tutor_aulas_json[0]?.grado)))
         ? `<br><span style="font-size:0.72rem;color:#60a5fa;">Tutor: ${u.tutorGrado||u.tutor_aulas_json[0].grado} ${u.tutorSeccion||u.tutor_aulas_json[0].seccion||''}</span>`
