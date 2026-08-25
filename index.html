@@ -20754,6 +20754,12 @@ function _modalLockOff() {
 function closeModal(id) {
   const el = document.getElementById(id);
   if(!el) return;
+  if (id === 'modal-permisos-especiales') {
+    setTimeout(() => { try { _resetPxCheckboxesDOMToFalse(); } catch(_) {} }, 40);
+  }
+  if (id === 'modal-usuario') {
+    setTimeout(() => { try { _resetPxCheckboxesDOMToFalse(); editingUsuarioId = null; } catch(_) {} }, 40);
+  }
   el.classList.remove('open');
   el.classList.remove('active');
   el.style.display = ''; // reset inline style para que CSS tome control
@@ -21166,6 +21172,16 @@ const _PE_SEC_KEYS = [
   'scan','alumnos','registro','reportes','incidentes','materiales','materiales-entrega',
   'comunicado','agenda','rol-examenes','alertas','usuarios','config','ia-horarios','horarios-grado'
 ];
+function _resetPxCheckboxesDOMToFalse() {
+  ['pe-incidentes-dia-lectura','pe-incidentes-ver-todo','pe-modo-carnets','pe-ver-todas-aulas','pe-alumnos-fotos-masivo'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) try { el.checked = false; } catch(_) {}
+  });
+  _PE_SEC_KEYS.forEach(k => {
+    const el = document.getElementById('pe-sec-' + k);
+    if (el) try { el.checked = false; } catch(_) {}
+  });
+}
 function _readPxCheckboxesDirectDOM() {
   const chkInc = document.getElementById('pe-incidentes-dia-lectura');
   const chkAllInc = document.getElementById('pe-incidentes-ver-todo');
@@ -21271,6 +21287,7 @@ function actualizarResumenPermisosEspeciales() {
 
 let _permisosEspecialesDraft = null;
 function openModalPermisosEspeciales() {
+  _resetPxCheckboxesDOMToFalse();
   _permisosEspecialesDraft = _getPermisosEspecialesFromForm();
   const chkInc = document.getElementById('pe-incidentes-dia-lectura');
   if(chkInc) chkInc.checked = !!_permisosEspecialesDraft?.incidentesDiaLectura;
@@ -21284,10 +21301,7 @@ function openModalPermisosEspeciales() {
   if(chkFotos) chkFotos.checked = !!_permisosEspecialesDraft?.alumnosFotosMasivo;
 
   const secs = _permisosEspecialesDraft?.sections || {};
-  [
-    'scan','alumnos','registro','reportes','incidentes','materiales','materiales-entrega',
-    'comunicado','agenda','rol-examenes','alertas','usuarios','config','ia-horarios','horarios-grado'
-  ].forEach(k => {
+  _PE_SEC_KEYS.forEach(k => {
     const el = document.getElementById('pe-sec-' + k);
     if(el) el.checked = !!secs[k];
   });
@@ -21322,9 +21336,11 @@ function savePermisosEspeciales() {
   if (editingUsuarioId) _setPxBackup(editingUsuarioId, built);
   actualizarResumenPermisosEspeciales();
   closeModal('modal-permisos-especiales');
+  setTimeout(() => { _resetPxCheckboxesDOMToFalse(); }, 50);
 }
 
 async function openModalUsuario(uid, nombre, rol, email) {
+  _resetPxCheckboxesDOMToFalse();
   editingUsuarioId = uid || null;
   document.getElementById('modal-usuario-title').textContent = uid ? 'Editar Usuario' : 'Nuevo Usuario';
   document.getElementById('u-pass').value = '';
@@ -21858,6 +21874,7 @@ async function saveUsuario() {
       }
       if (editingUsuarioId) _setPxBackup(editingUsuarioId, permisosExtra);
       _invalidarUsuarios();
+      setTimeout(() => { _resetPxCheckboxesDOMToFalse(); editingUsuarioId = null; }, 60);
       // Mostrar/ocultar botón recuperar según teléfono
       // Si se ingresó nueva contraseña, cambiarla
       if(pass && pass.length >= 6) {
