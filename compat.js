@@ -241,37 +241,33 @@ function _rowToDoc(row) {
   return out;
 }
 // ============================================================
-// WHITELIST CAMPOS TABLA "usuarios" SUPABASE CONFIRMADOS.
-// ✅ FIX 2026-08-25 k2: ANTES incluía alias camelCase (asigDetall,
-// gradosAsignacionesJson, etc.) que luego _toSnake() convertía a
-// "asig_detail", "grados_asignaciones_json" algunos EXISTEN pero
-// otros NO → SCHEMA ERROR "Could not find 'asig_detail' column".
-//
-// SOLUCIÓN RADICAL Y SEGURA: SOLO los 20 fields que EXISTEN en
-// la tabla usuarios desde el deploy ORIGINAL. Los demás (alias
-// detalladas camelCase) SOLO existen en FIRESTORE (no en Supabase)
-// y se filtran aquí → nunca pasan a Supabase.
+// ✅ FIX 2026-08-25 m1: WHITELIST FINAL (SOLO 15 CAMPOS CONFIRMADOS
+// en los stacktrace user compat.get data {…} de hoy (Soledad y Llerena).
+// CUALQUIER campo NO listado AQUI = OMISION TOTAL en _docToRow y
+// DocumentRef.set/update(). ELIMINADOS alias: grados_asignaciones_json
+// (ERROR hoy), asigDetall, asignacionesDetalladas, detalladas, etc.
+// Firestore = schema libre (acepta TODO); Supabase = SÓLO estos 15.
 // ============================================================
 const _USUARIOS_FIELDS_WHITELIST = new Set([
+  // Identidad / metadata:
   'id', 'colegioId',
   'nombre', 'nombres', 'apellidos',
   'email', 'rol', 'cargo', 'telefono',
-  // Alcance / asignaciones
+  // Alcance base:
   'restringir', 'asignaciones',
-  // Asignaciones detalladas (EXISTEN EN TABLA - snake_case / camelCase)
+  // Detalladas (SÓLO 1 CONFIRMADO = grados_asignados_json D = asignados):
   'gradosAsignadosJson', 'grados_asignados_json',
-  'grados_asignaciones_json',
-  // Tutor legacy (EXISTEN EN TABLA - confirmados tu stacktrace)
+  // Eliminado grados_asignaciones_json (con S = asignaciones) - TU ERROR HOY
+  // "Could not find the 'grados_asignaciones_json' column" (NO existe tabla)
+  // Tutor legacy (EXISTEN en tabla - vistos tu stacktrace):
+  'esTutor', 'es_tutor',
+  'tutorGrado',  'tutor_grado',
+  'tutorSeccion','tutor_seccion',
   'tutorAulasJson', 'tutor_aulas_json',
   'tutorAulasJson2',
   'tutorGradosAsignados', 'tutor_grados_asignados',
-  'esTutor', 'es_tutor',
-  'tutorGrado', 'tutor_grado',
-  'tutorSeccion', 'tutor_seccion',
   'tutorAulas', 'tutorAulasArr',
-  'tutorAulasStr', 'tutor_aulas_str',
-  'aulasTutor',
-  // Permisos extras:
+  // Permisos:
   'incidentesDiaLectura', 'incidentes_dia_lectura',
   'permisosExtra', 'permisos_extra',
   'createdAt', 'updatedAt'

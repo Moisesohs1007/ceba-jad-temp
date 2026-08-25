@@ -21594,9 +21594,12 @@ async function saveUsuario() {
         restringir,
         asignaciones,
         tutor_aulas_json: tutorAulasJson,
-        grados_asignados_json: gradosAsignadosJson,
-        // ✅ FIX 2026-08-25: Añadir 9 alias detalladas
-        ..._camposDet9
+        grados_asignados_json: gradosAsignadosJson
+        // ✅ FIX 2026-08-25 m2c: ELIMINADO spread ..._camposDet9 en crear usuario.
+        // Los alias detalladas camelCase SÓLO existen en Firestore. Edge function
+        // admin-crear-usuario inserta la fila de tabla usuarios Supabase directo
+        // y NO existe columna "grados_asignaciones_json" (con S asignaciones).
+        // Resultado: SCHEMA ERROR en Llerena.
       };
       if (esProfesor) {
         payloadCrear.esTutor = esTutor;
@@ -21605,6 +21608,18 @@ async function saveUsuario() {
           payloadCrear.tutorSeccion = tutorSeccion;
         }
       }
+      // ✅ FIX 2026-08-25 m2c: FILTRADO MANUAL payloadCrear (SÓLO fields edge function conoce)
+      try {
+        const _CREAR_ALLOW = new Set([
+          'email','password','rol','nombre','cargo','telefono',
+          'incidentesDiaLectura','permisosExtra','restringir',
+          'asignaciones','tutor_aulas_json','grados_asignados_json',
+          'esTutor','tutorGrado','tutorSeccion'
+        ]);
+        for (const k of Object.keys(payloadCrear)) {
+          if (!_CREAR_ALLOW.has(String(k))) delete payloadCrear[k];
+        }
+      } catch(_e0){}
       const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-crear-usuario`, {
         method: 'POST',
         headers: {
@@ -21629,6 +21644,22 @@ async function saveUsuario() {
                         // ✅ FIX 2026-08-25: Añadir 9 alias detalladas CON CICLO EXACTO
                         ..._camposDet9
       };
+      // ✅ FIX 2026-08-25 m2d: FILTRADO MANUAL update1 keys desconocidas.
+      // Elimina keys camelCase alias sospechosas gradosAsignacionesJson → snake_case
+      // 'grados_asignaciones_json' (ERROR HOY Llerena columna NO existe).
+      // IMPORTANTE: NO borrar las 9 alias detalladas de Firestore → compat.js ya
+      // whitelista Supabase sync y las filtra automaticamente. Este filtro SOLO
+      // elimina keys LEGACY que ya venían de _payloads anteriores (asig_detail etc.)
+      try {
+        const _UPDATE1_REMOVE_IF_LOWER_IN = ['asig_detail','asigdet','tutor_aulas_objects','aulas_objects','tutgradosasig','gradosasignadosarr','tutoraulasarray','tutor_aulas_str','tutoraulasstr','ciclo_nivel','nivciclo','ciclo_aca','mod_atencion','modalidadatencion','numgrado','numerogrado','sectut','secciontutoria','secc ','asignacioneslegacy','asigplano','asig_plano','asignaciones_obj','asiglegacy','aulasplano','asignaciones2','asigplanoobj'];
+        for (const k of Object.keys(update1)) {
+          const lk = String(k).toLowerCase().replace(/[^a-z0-9]/g,'');
+          for (const bad of _UPDATE1_REMOVE_IF_LOWER_IN) {
+            const bl = String(bad).toLowerCase().replace(/[^a-z0-9]/g,'');
+            if (bl && lk === bl) { delete update1[k]; break; }
+          }
+        }
+      } catch(_eUF){}
       // =================================================================
       // ✅ FIX 2026-08-25 FINAL j1/j2: ELIMINADO bloque 40 aliases legacy
       // _DELS con valores VACIOS (arr/obj/str). Ahora compat.js WHITELIST
@@ -23620,14 +23651,35 @@ async function savePrivilegios() {
         asignacionesGradosJson: _detalladasFinal.length ? _detalladasFinal.slice() : []
       };
       // ✅ FIX 2026-08-25 k1: ELIMINADO Object.assign(_payload, 80 aliases legacy).
-      // Motivos:
-      //  1) Sobreescribía las 9 alias detalladas con _emptyArr (habían sido escritas
-      //     unas líneas arriba con data REAL _detalladasFinal).
-      //  2) Insertaba keys camelCase como asigDetall → compat.js _toSnake las convertía
-      //     a "asig_detail" → columna NO EXISTE en Supabase → SCHEMA ERROR.
-      //  3) La limpieza legacy se hace AHORA de forma segura SOLO en Firestore si es
-      //     necesario (pero no metemos keys desconocidas en el payload update que
-      //     Supabase tolere).
+      // ✅ FIX 2026-08-25 m2b: DOBLE FILTRO payload antes .update()
+      // Firestore acepta TODO (schema libre), PERO el sync Supabase dentro de
+      // compat.js necesita filtrar. Aun así, pasamos el payload original
+      // (Firestore necesita 9 alias detalladas para label fila). Supabase sync
+      // filtra de todos modos con _USUARIOS_FIELDS_WHITELIST.
+      try {
+        const _DET_KEEP_KEYS = new Set([
+          'restringir','asignaciones',
+          'gradosAsignadosJson','grados_asignados_json',
+          'gradosAsignacionesJson','grados_asignaciones_json',
+          'asignacionesDetalladasJson','asignacionesDetalladas',
+          'gradosAsignacionesJSON','detalladas','asigDetall','asignacionesGradosJson',
+          'tutorAulasJson','tutor_aulas_json','tutorAulasJson2',
+          'tutorGradosAsignados','tutor_grados_asignados',
+          'tutorAulas','tutorAulasArr','tutorAulasStr','aulasTutor',
+          'esTutor','es_tutor','tutorGrado','tutor_grado','tutorSeccion','tutor_seccion',
+          'incidentesDiaLectura','incidentes_dia_lectura','permisosExtra','permisos_extra',
+          'updatedAt'
+        ]);
+        for (const k of Object.keys(_payload)) {
+          if (!_DET_KEEP_KEYS.has(String(k))) {
+            // Si key es legada y NO queremos en Firestore tampoco (asig_detail etc.): borrar
+            const lk = String(k).toLowerCase();
+            if (lk.includes('asig_') || lk.includes('asigdet') || lk.includes('tutor_aulas_objects') || lk.includes('gradosasignados') && !lk.includes('grados_asignados_json')) {
+              delete _payload[k];
+            }
+          }
+        }
+      } catch(_eF) {}
       await db.collection('usuarios').doc(String(editingUsuarioId)).update(_payload);
       _escritoOK = true;
       // =================================================================
@@ -24228,6 +24280,22 @@ async function cargarCheckboxesPrivilegios(uid, uDataOverride) {
       if (!Object.prototype.hasOwnProperty.call(tempObj, gK)) return false;
       const secsArr = Array.isArray(tempObj[gK]) ? tempObj[gK] : [];
       hasGlobal = secsArr.some(x => String(x||'').trim().toUpperCase() === sK);
+      // =================================================================
+      // ✅ FIX 2026-08-25 m3: LEGACY CICLO UNICO HINT (por CARGO usuario).
+      // Si hasGlobal=true pero viene de tempAsig plano SIN CAMPO ciclo, NO
+      // marcar AMBOS bloques INI/INT y AVZ (fue tu bug Soledad al abrir sale
+      // 🔥 AVANZADO 1A PRES automático fantasma aun cuando cargo es INI/INT).
+      // Solución: si __legacyCicloUnicoHint = INI/INT → SÓLO true si la tarjeta
+      // actual es BLOQUE1 INI/INT. Si hint = AVZ → SÓLO true si es BLOQUE2.
+      // =================================================================
+      if (hasGlobal) {
+        const h = String(window.__legacyCicloUnicoHint || '').trim().toUpperCase();
+        if (h === 'INICIAL/INTERMEDIO' || h === 'INI/INT' || h === 'INICIAL' || h === 'INTERMEDIO') {
+          if (cicloT !== 'INICIAL' && cicloT !== 'INTERMEDIO' && cicloT !== 'INICIAL/INTERMEDIO') return false;
+        } else if (h === 'AVANZADO' || h === 'AVZ') {
+          if (cicloT !== 'AVANZADO') return false;
+        }
+      }
     }
     if (!hasGlobal) return false;
     const esIniInt = (cicloT === 'INICIAL' || cicloT === 'INTERMEDIO' || cicloT === 'INICIAL/INTERMEDIO');
