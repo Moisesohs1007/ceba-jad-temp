@@ -21881,25 +21881,6 @@ function _userAsignacionesLabel(u) {
   // ✅ Cierre else de PRIORIDAD LABEL 1 (SIN detalladas → usa pickArrAll legacy):
   }
   // =====================================================================
-  // ✅ FIX 2026-08-24 FINAL CLEAN SLATE (antes render agrupado):
-  // Gold Rule Excel PERMANENTE usuario (no hay alumnos INI/INT NUNCA).
-  //
-  // Si entriesMap TIENE al menos 1 entry ciclo === 'AVANZADO' CONFIRMADO
-  // (venga de detalladas o de inferencia default AVZ addEntry) →
-  // ELIMINAR COMPLETAMENTE TODAS entries CICLO === 'INI/INT' residuales
-  // de aliases legacy que SÍ traían ciclo="INI/INT" explícito grabado
-  // en deploys antiguos (antes Gold Rule AVZ).
-  //
-  // Esto garantiza label SOLAMENTE 🔥 AVANZADO sin 🧊 INI/INT fantasma.
-  // =====================================================================
-  const hayAvanzadoConfirmado = Array.from(entriesMap.values()).some(e => e.ciclo === 'AVANZADO');
-  if (hayAvanzadoConfirmado) {
-    for (const kk of Array.from(entriesMap.keys())) {
-      const e = entriesMap.get(kk);
-      if (e && e.ciclo === 'INI/INT') entriesMap.delete(kk);
-    }
-  }
-  // =====================================================================
   // FINAL: construir el agrupado POR CICLO → Map<cicloStr, Map<gradoStr, Set<seccionStr>>>
   // =====================================================================
   const allDet = Array.from(entriesMap.values());
