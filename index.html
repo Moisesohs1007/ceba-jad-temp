@@ -21714,13 +21714,32 @@ function _userAsignacionesLabel(u) {
     // Inferir ciclo si no trae:
     let cFinal = c || '';
     if (!cFinal) {
-      // Pistas desde cargo string del docente (si incluye "ciclo inicial intermedio"):
-      const cargo = String(u.cargo || '').trim().toUpperCase();
-      if (cargo.includes('INICIAL') || cargo.includes('INTERMEDIO') || cargo.includes('INI')) {
-        cFinal = 'INI/INT';
-      } else {
-        // Canon Excel actual CEBA JAD (GOLD RULE): TODOS = AVANZADO por defecto.
+      // ================================================================
+      // ✅ FIX 2026-08-24 SOLedad INI/INT fantasma label:
+      // SI EL DOCENTE TIENE grados_asignaciones_json[] DETALLADAS (length>0)
+      // → NO INFERIMOS ciclo por el string CARGO "Docente Jornada Inicial Intermedio".
+      // Default directo = AVANZADO (GOLD RULE Excel 100%).
+      // Solo inferimos INI/INT por cargo si NO hay detalladas (legacy docentes).
+      // ================================================================
+      const tieneDetalladas = !!(u && (
+        (Array.isArray(u.grados_asignaciones_json) && u.grados_asignaciones_json.length > 0) ||
+        (Array.isArray(u.gradosAsignacionesJson) && u.gradosAsignacionesJson.length > 0) ||
+        (Array.isArray(u.asignacionesDetalladasJson) && u.asignacionesDetalladasJson.length > 0) ||
+        (Array.isArray(u.asignacionesDetalladas) && u.asignacionesDetalladas.length > 0) ||
+        (Array.isArray(u.gradosAsignacionesJSON) && u.gradosAsignacionesJSON.length > 0) ||
+        (Array.isArray(u.detalladas) && u.detalladas.length > 0) ||
+        (Array.isArray(u.asigDetall) && u.asigDetall.length > 0) ||
+        (Array.isArray(u.asignacionesGradosJson) && u.asignacionesGradosJson.length > 0)
+      ));
+      if (tieneDetalladas) {
         cFinal = 'AVANZADO';
+      } else {
+        const cargo = String(u.cargo || '').trim().toUpperCase();
+        if (cargo.includes('INICIAL') || cargo.includes('INTERMEDIO') || cargo.includes('INI')) {
+          cFinal = 'INI/INT';
+        } else {
+          cFinal = 'AVANZADO';
+        }
       }
     }
     const key = `${cFinal}|${tFinal}|${g}|${s}`;
@@ -21768,6 +21787,10 @@ function _userAsignacionesLabel(u) {
     } catch(_eDet){}
   });
   if (_dedupDet.size > 0) {
+    // ✅ HAY detalladas 4 campos: CLEAR entriesMap slate para NO quedar
+    // con entries legacy que se agregaron por error (ej: alias INI/INT residual
+    // de hace 3 deploys que entraron antes del bloque). Clean slate 100%.
+    entriesMap.clear();
     // ✅ HAY detalladas 4 campos: INYECTAR SÓLO estas en entriesMap. Saltar TODO legacy alias.
     _dedupDet.forEach((val) => {
       const kk = `${val.ciclo}|${val.turno}|${val.grado}|${val.seccion}`;
@@ -25234,6 +25257,17 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
   const seccCfgRaw = (cfg.secciones || []).filter(Boolean);
   const seccCfgBase = (seccCfgRaw.length > 0) ? seccCfgRaw.slice() : ['A','B','C','D'];
   const seccCfg = [...new Set(seccCfgBase.map(s => String(s||'').trim().toUpperCase()).filter(Boolean))];
+  // ======================================================================
+  // ✅ FIX 2026-08-24 FINAL: Garantizar A · B · C · D SIEMPRE en el dropdown,
+  // incluso si el docente no tiene alumnos en 1B (por mala importación BD)
+  // o el cache de usuarios no traía los detalladas. El Excel canon CEBA
+  // siempre tiene 1A/1B/1C y 4A/4B/4C por modalidad. NUNCA dropdown solo A.
+  // ======================================================================
+  const _seccionesMinimas = new Set(['A','B','C','D']);
+  _seccionesMinimas.forEach(sMin => {
+    const sUp = sMin.toUpperCase();
+    if (seccCfg.indexOf(sUp) === -1) seccCfg.push(sUp);
+  });
   let secciones = seccCfg.slice();
   // Safety: agregar secciones que existan en alumnos (o asignadas docente) y cfg no tenga (ej: E, F...)
   seccionesDeAlumnos.forEach(s => {
