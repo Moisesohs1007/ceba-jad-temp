@@ -21075,6 +21075,34 @@ function toggleTutorFields(prefill) {
 function _asignacionesObjToAulasList(asigObj) {
   const out = [];
   if(!asigObj || typeof asigObj !== 'object') return out;
+  // ==================================================================
+  // ✅ FIX 2026-08-25 A _asignacionesObjToAulasList CICLO DEFAULT:
+  // Si key del obj NO TIENE SUFIJO ciclo (caso tempAsignaciones plano
+  // {1:["A"]} después checkbox marks de Soledad INI/INT), inferir ciclo
+  // POR FUENTES EN ORDEN DE PRIORIDAD:
+  //   1) window.__FORCE_NIVEL_HINT (fijado por cargarCheckboxesPrivilegios
+  //      si cargo=Docente Inicial Intermedio).
+  //   2) window.__legacyCicloUnicoHint.
+  //   3) editingUsuarioCargoActual o uDataOverride cargo.
+  //   NUNCA más default AVZ Gold Rule para docentes INI/INT.
+  // ==================================================================
+  let _forceCicloDefault = '';
+  try {
+    const f = String(window.__FORCE_NIVEL_HINT || '').trim();
+    if (f) _forceCicloDefault = _canonCicloJS(f) || '';
+    if (!_forceCicloDefault) {
+      const f2 = String(window.__legacyCicloUnicoHint || '').trim();
+      if (f2) _forceCicloDefault = _canonCicloJS(f2) || '';
+    }
+    if (!_forceCicloDefault) {
+      const cg = String(window.editingUsuarioCargoActual || '').trim().toUpperCase();
+      if (/INICIAL|INTERMEDIO|JORNADA|INICIO/.test(cg) && !/AVANZ|SECUNDARIA|HUMANIDADES|CIENCIAS/.test(cg)) {
+        _forceCicloDefault = 'INICIAL/INTERMEDIO';
+      } else if (/AVANZ|SECUNDARIA|HUMANIDADES|CIENCIAS/.test(cg)) {
+        _forceCicloDefault = 'AVANZADO';
+      }
+    }
+  } catch(_eHintGlobal){}
   Object.entries(asigObj).forEach(([grado, secs]) => {
     const secList = Array.isArray(secs) ? secs.map(s=>String(s||'').trim().toUpperCase()).filter(Boolean) : [];
     if(!secList.length) return;
@@ -21090,7 +21118,9 @@ function _asignacionesObjToAulasList(asigObj) {
           gStr = String(m[1] || '').trim();
           ciclo = _canonCicloJS(m[2] || '');
         }
-        // Legacy fallback: si no hay sufijo, pero el grado numérico infiere ciclo desde cfg
+        // Legacy fallback 1: FORCE_NIVEL_HINT window
+        if (!ciclo && _forceCicloDefault) ciclo = _forceCicloDefault;
+        // Legacy fallback 2: si no hay sufijo, pero el grado numérico infiere ciclo desde cfg
         if (!ciclo && gStr && !isNaN(Number(String(gStr).replace(/\D/g,'')))) {
           try {
             if (typeof _agendaInferNivelByGrado === 'function') {
@@ -21479,14 +21509,23 @@ async function saveUsuario() {
       ? gradosAsignadosJson.some(a => _canonCicloJS(a?.ciclo || '') === 'AVANZADO')
       : false;
     const _cargoString = String(cargo || '').toUpperCase();
-    const _cargoIniHint = /INICIAL|INTERMEDIO/.test(_cargoString);
+    const _cargoIniHint = /INICIAL|INTERMEDIO|JORNADA|INICIO|PRIMARIA/.test(_cargoString)
+                      && !/AVANZ|SECUNDARIA|HUMANIDADES|CIENCIAS/.test(_cargoString);
+    const _cargoAvzHint = /AVANZ|SECUNDARIA|HUMANIDADES|CIENCIAS/.test(_cargoString);
+    // ==================================================================
+    // ✅ FIX 2026-08-25 B saveUsuario DEFAULT CICLO POR CARGO (siempre):
+    // Si entry NO TIENE ciclo (tempAsignaciones plano sin sufijo):
+    //   - CARGO INI/INT → CICLO=INI/INTERMEDIO (SIEMPRE, sin importar
+    //     _hasAnyAvanzado=true de guardados fantasma legacy AVZ).
+    //   - CARGO AVZ → CICLO=AVANZADO.
+    // Esto rompe el loop en el q data legacy AVZ previamente guardada
+    // hacia q hasAnyAvanzado=true → default AVZ → siempre label 🔥 AVZ.
+    // ==================================================================
     const _detalladasFinalFix = (Array.isArray(gradosAsignadosJson) ? gradosAsignadosJson.slice() : []).map(a => {
       const cc = _canonCicloJS(a?.ciclo || '') || '';
       if (cc) return { ...(a||{}), ciclo: cc };
-      // Si entry NO tiene ciclo (asignaciones plano {1:[A]} sin sufijo):
-      if (_cargoIniHint && !_hasAnyAvanzado) {
-        return { ...(a||{}), ciclo: 'INICIAL/INTERMEDIO' };
-      }
+      if (_cargoIniHint) return { ...(a||{}), ciclo: 'INICIAL/INTERMEDIO' };
+      if (_cargoAvzHint) return { ...(a||{}), ciclo: 'AVANZADO' };
       return { ...(a||{}), ciclo: 'AVANZADO' };
     }).filter(a => a && String(a.grado||'').trim() && String(a.seccion||'').trim());
     const _aliasDet9 = _detalladasFinalFix.length ? _detalladasFinalFix.slice() : [];
@@ -23575,7 +23614,37 @@ async function savePrivilegios() {
   _detalladas.forEach(d => {
     let cc = String(d.ciclo || '').trim();
     if (typeof _canonCicloJS === 'function' && cc) cc = (_canonCicloJS(cc) || cc);
-    // Gold Rule default SOLO si Admin no marca nada:
+    // ================================================================
+    // ✅ FIX 2026-08-25 C savePrivilegios DEFAULT CICLO POR CARGO:
+    // Si el checkbox marcado NO TIENE data-ciclo por algún bug, NUNCA
+    // más default AVZ hardcode "Gold Rule Excel". Excel hoy no tiene
+    // alumnos INI/INT, PERO Admin Moises sí asigna a docentes INI/INT.
+    // Default: INFERIR desde 1) window.__FORCE_NIVEL_HINT 2) cargo
+    // editingUsuarioCargoActual 3) uDataOverride cargo.
+    // ================================================================
+    if (!cc) {
+      try {
+        const f1 = String(window.__FORCE_NIVEL_HINT || '').trim();
+        if (f1) cc = _canonCicloJS(f1) || '';
+      } catch(_c1){}
+      if (!cc) {
+        try {
+          const f2 = String(window.__legacyCicloUnicoHint || '').trim();
+          if (f2) cc = _canonCicloJS(f2) || '';
+        } catch(_c2){}
+      }
+      if (!cc) {
+        try {
+          const cg = String(window.editingUsuarioCargoActual || '').trim().toUpperCase();
+          if (/INICIAL|INTERMEDIO|JORNADA|INICIO|PRIMARIA/.test(cg) && !/AVANZ|SECUNDARIA|HUMANIDADES|CIENCIAS/.test(cg)) {
+            cc = 'INICIAL/INTERMEDIO';
+          } else if (/AVANZ|SECUNDARIA|HUMANIDADES|CIENCIAS/.test(cg)) {
+            cc = 'AVANZADO';
+          }
+        } catch(_c3){}
+      }
+    }
+    // Gold Rule default SOLO si ni siquiera pudimos infer por cargo:
     if (!cc) cc = 'AVANZADO';
     let tt = String(d.turno || '').trim();
     if (typeof _normModAtencion === 'function') tt = (_normModAtencion(tt) || tt || 'PRESENCIAL');
