@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=133"></script>
-<script src="db_supabase.js?v=133"></script>
+<script src="compat.js?v=134"></script>
+<script src="db_supabase.js?v=134"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -21841,6 +21841,34 @@ function openModalPermisosEspeciales() {
     const el = document.getElementById('pe-sec-' + k);
     if(el) el.checked = !!secs[k];
   });
+
+  // ================================================================
+  // Visibilidad condicional checkbox Chat Interno:
+  // REQUISITO FUNCIONAL #1: "Vincularlo EXCLUSIVAMENTE al perfil de docente".
+  // - Admin/Director/Coord ya lo tienen por rol por defecto (canAccessSection chat)
+  //   → NO necesitan asignarlo manualmente; lo OCULTAMOS para evitar cluttering.
+  // - Psicólogo/Auxiliar = rol no-docente (sin scope aulas) → NO se le ofrece.
+  // - Solo si el usuario editando tiene ROL = PROFESOR → MOSTRAR check Chat.
+  // ================================================================
+  const rolRaw = document.getElementById('u-rol')?.value || '';
+  const rolEditando = _normRol(rolRaw);
+  const lblChatWrap = (() => {
+    const el = document.getElementById('pe-sec-chat');
+    if (!el) return null;
+    // Subir hasta el <label> padre contenedor (2 niveles: label que contiene input + texto)
+    let n = el; for(let i=0;i<3 && n && n.tagName!=='LABEL';i++) n = n.parentElement;
+    return n;
+  })();
+  if (lblChatWrap) {
+    const mostrar = (rolEditando === 'profesor');
+    lblChatWrap.style.display = mostrar ? '' : 'none';
+    // Si no corresponde el perfil, desmarcar por seguridad para no guardarlo en sections.
+    if (!mostrar) {
+      const chk = document.getElementById('pe-sec-chat');
+      if (chk) chk.checked = false;
+    }
+  }
+
   const m = document.getElementById('modal-permisos-especiales');
   if(m) {
     m.style.display = '';
