@@ -13778,6 +13778,36 @@ let _comSendB64 = '';
 let _comSendName = '';
 let _comSendType = 'image';
 
+/**
+ * Normaliza un ciclo/nivel desde cualquier valor legacy (PRIMARIA, EBR,
+ * SECUNDARIA, BASICA ALTERNATIVA, JARDIN, etc.) hacia SOLO 2 tokens:
+ *   "AVANZADO"         -> grados 1..6 (EBR, Primaria, Secundaria, BA)
+ *   "INICIAL/INTERMEDIO"-> Inicial, Intermedio, Jardín, Preescolar, CEBA
+ *
+ * Si gNum se pasa, es la fuente de verdad prioritaria (canon CEBA).
+ * Valores nulos o no reconocidos devuelven "".
+ */
+function _normCicloScope(rawCiclo, gNum) {
+  if (typeof gNum !== 'undefined' && Number.isFinite(gNum) && gNum >= 1 && gNum <= 12) {
+    if (gNum >= 1 && gNum <= 6) return 'AVANZADO';
+    // 7..12 -> secundaria/CEBA: también AVANZADO por defecto
+    return 'AVANZADO';
+  }
+  const s = String(rawCiclo || '').trim().toUpperCase();
+  if (!s) return '';
+  // Palabras clave nivel "INICIAL/INTERMEDIO" (solo si no hay grado 1..6)
+  const iniIntKW = ['INICIAL','INTERMEDIO','JARDIN','JARDÍN','PREESCOLAR','PRE-ESCOLAR','PRE ESCOLAR','INFANTIL'];
+  for (let i=0;i<iniIntKW.length;i++) {
+    if (s.includes(iniIntKW[i])) return 'INICIAL/INTERMEDIO';
+  }
+  // Palabras clave nivel "AVANZADO" (EBR, Primaria, Secundaria, BA, etc.)
+  const avanKW = ['AVANZADO','PRIMARIA','SECUNDARIA','EBR','BASICA','BÁSICA','BA ','BA.','ALTERNATIVA','ESCOLAR','GRADO','PRIMERO','SEGUNDO','TERCERO','CUARTO','QUINTO','SEXTO'];
+  for (let i=0;i<avanKW.length;i++) {
+    if (s.includes(avanKW[i])) return 'AVANZADO';
+  }
+  return '';
+}
+
 async function initComunicado() {
   const r = _normRol(currentRol);
   const rolRaw = r;
@@ -13863,11 +13893,8 @@ async function initComunicado() {
       const s = String(aula.seccion).trim().toUpperCase();
       if (!g || !/^[A-D]$/.test(s)) return;
       const gNum = parseInt(g, 10);
-      let ciclo = '';
-      if (aula.ciclo) ciclo = String(aula.ciclo).trim().toUpperCase();
-      if (!ciclo && gNum >= 1 && gNum <= 6) ciclo = 'AVANZADO';
+      const ciclo = _normCicloScope(aula.ciclo || (aula.nivel ? aula.nivel : ''), gNum);
       if (!ciclo) return;
-      if (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO') ciclo = 'INICIAL/INTERMEDIO';
       setNiveles.add(ciclo);
       if (!setGradosPorNivel[ciclo]) setGradosPorNivel[ciclo] = new Set();
       setGradosPorNivel[ciclo].add(g);
@@ -13911,14 +13938,33 @@ async function initComunicado() {
     // PASO 3) AUTO-SELECCIONAR NIVEL si solo hay 1 nivel disponible
     // (sin contar Todos). Luego disparar onComNivelChange para llenar
     // cascada de Grado → Sección.
+    // EXTRA: si después de onComNivelChange, Grado se queda con 1 sola
+    // opción → auto-seleccionarlo y disparar onComGradoChange para
+    // llenar las secciones. Si Sección tiene 1 sola opción también
+    // auto-seleccionarla. (Llerena: 1 nivel → 1 grado → 2 secciones)
     // ================================================================
     if (nivelSel && arrNiveles.length === 1) {
       nivelSel.value = arrNiveles[0]; // Ej: Llerena → 'AVANZADO'
-      // Disparar evento de cambio (manual porque la cascada lee value)
+    }
+    if (nivelSel && nivelSel.value) {
       try { onComNivelChange(); } catch(_) {}
-    } else if (nivelSel && nivelSel.value) {
-      // Si ya había un nivel seleccionado (usuario navega de regreso)
-      try { onComNivelChange(); } catch(_) {}
+      // Después de la cascada: si Grado tiene SOLO 1 option (no Todos) → auto-seleccionar
+      if (gSel && gSel.options) {
+        const gOpts = Array.from(gSel.options).map(o => o.value).filter(Boolean);
+        if (gOpts.length === 1) {
+          gSel.value = gOpts[0];
+          try { onComGradoChange(); } catch(_) {}
+          // Si Sección tiene SOLO 1 option → auto-seleccionarla
+          if (sSel && sSel.options) {
+            const sOpts = Array.from(sSel.options).map(o => o.value).filter(Boolean);
+            if (sOpts.length === 1) sSel.value = sOpts[0];
+          }
+        } else if (gOpts.length > 1 && gSel.value) {
+          // Aunque haya varias opciones, si había value (por ejemplo tras
+          // volver a esta pantalla), disparar cascada de sección
+          try { onComGradoChange(); } catch(_) {}
+        }
+      }
     }
   }
   if (sSel) {
@@ -14040,11 +14086,8 @@ function onComNivelChange() {
       const g = String(aula.grado).replace(/\D/g,'').trim();
       if (!g) return;
       const gNum = parseInt(g, 10);
-      let ciclo = '';
-      if (aula.ciclo) ciclo = String(aula.ciclo).trim().toUpperCase();
-      if (!ciclo && gNum >= 1 && gNum <= 6) ciclo = 'AVANZADO';
+      const ciclo = _normCicloScope(aula.ciclo || (aula.nivel ? aula.nivel : ''), gNum);
       if (!ciclo) return;
-      if (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO') ciclo = 'INICIAL/INTERMEDIO';
       // Match contra el nivel seleccionado (admite sub-match INICIAL vs INICIAL/INTERMEDIO)
       const match = (ciclo === nivel) ||
         ((nivel === 'INICIAL/INTERMEDIO') && (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO'));
@@ -14109,11 +14152,8 @@ function onComGradoChange() {
       if (!g || !/^[A-D]$/.test(s)) return;
       if (g !== String(grado).replace(/\D/g,'').trim()) return;
       const gNum = parseInt(g, 10);
-      let ciclo = '';
-      if (aula.ciclo) ciclo = String(aula.ciclo).trim().toUpperCase();
-      if (!ciclo && gNum >= 1 && gNum <= 6) ciclo = 'AVANZADO';
+      const ciclo = _normCicloScope(aula.ciclo || (aula.nivel ? aula.nivel : ''), gNum);
       if (!ciclo) return;
-      if (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO') ciclo = 'INICIAL/INTERMEDIO';
       const matchCiclo = (ciclo === nivel) ||
         ((nivel === 'INICIAL/INTERMEDIO') && (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO'));
       if (matchCiclo) setS.add(s);
