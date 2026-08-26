@@ -35,8 +35,46 @@ window.SUPABASE_URL     = SUPABASE_URL;
 window.SUPABASE_ANON_KEY = SUPABASE_ANON_KEY;
 
 // ── Inicializar cliente Supabase ─────────────────────────────
+// ✅ FIX 2026-08-26 Hard refresh logout:
+//   (a) Forzar STORAGE localStorage (no IndexedDB) para persistir la
+//       sesión Supabase a través de CTRL+SHIFT+R. IndexedDB se reinicia
+//       a veces en hard-refresh (navegador limpia storage transitorio).
+//   (b) Añadir BACKUP MANUAL en localStorage con la session JSON (4096).
+//       Si Supabase getSession() retorna null, intentamos restaurar desde
+//       el backup antes de declarar "no hay sesión" (tapa race condition).
+const _asmqrSBStorage = {
+  getItem: (key) => {
+    try {
+      const v = window.localStorage.getItem(key);
+      return (v == null) ? null : v;
+    } catch(e) { return null; }
+  },
+  setItem: (key, value) => {
+    try { window.localStorage.setItem(key, value); } catch(e) {}
+    try {
+      // BACKUP MANUAL adicional (si key es session)
+      if (String(key||'').startsWith('asmqr_auth_')) {
+        window.localStorage.setItem(key + '::backup', String(value || ''));
+      }
+    } catch(e) {}
+  },
+  removeItem: (key) => {
+    try { window.localStorage.removeItem(key); } catch(e) {}
+    try {
+      if (String(key||'').startsWith('asmqr_auth_')) {
+        window.localStorage.removeItem(key + '::backup');
+      }
+    } catch(e) {}
+  },
+};
 const _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: true, storageKey: 'asmqr_auth_' + COLEGIO_ID }
+  auth: {
+    persistSession: true,
+    storageKey: 'asmqr_auth_' + COLEGIO_ID,
+    storage: _asmqrSBStorage,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  }
 });
 window._sb = _sb; // disponible para db_supabase.js
 
@@ -727,8 +765,33 @@ const auth = {
   },
 
   onAuthStateChanged(callback) {
+    // ✅ FIX 2026-08-26 Hard refresh: intentar restaurar desde BACKUP MANUAL
+    //    si _sb.auth.getSession() retorna null por race condition / IndexedDB
+    //    no inicializado tras CTRL+SHIFT+R.
+    const _tryBackup = async () => {
+      const BK = 'asmqr_auth_' + COLEGIO_ID + '::backup';
+      try {
+        const raw = window.localStorage.getItem(BK);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && parsed.session && parsed.session.user && parsed.session.access_token) {
+          try {
+            const r = await _sb.auth.setSession({
+              access_token:  parsed.session.access_token,
+              refresh_token: parsed.session.refresh_token || '',
+            });
+            if (r?.data?.session) return r.data.session;
+            return parsed.session;
+          } catch(_e) {
+            return parsed.session;
+          }
+        }
+      } catch(_) {}
+      return null;
+    };
     // Llamar con sesión actual si existe
-    _sb.auth.getSession().then(({ data: { session } }) => {
+    _sb.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) try { const b = await _tryBackup(); if (b) session = b; } catch(_) {}
       if (session) {
         _currentAuthUser = _mapUser(session.user);
         auth.currentUser = _currentAuthUser;
@@ -752,6 +815,13 @@ const auth = {
         // Ya estaba autenticado — solo actualizar token silenciosamente
         if (session) { _currentAuthUser = _mapUser(session.user); auth.currentUser = _currentAuthUser; }
         return;
+      }
+      if (_event === 'SIGNED_OUT') {
+        // Borrar backup manual para no restaurar una sesión que ya expiró
+        try {
+          const BK = 'asmqr_auth_' + COLEGIO_ID + '::backup';
+          window.localStorage.removeItem(BK);
+        } catch(_) {}
       }
       if (session) {
         _currentAuthUser = _mapUser(session.user);
