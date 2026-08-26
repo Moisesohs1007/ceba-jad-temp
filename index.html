@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=131"></script>
-<script src="db_supabase.js?v=131"></script>
+<script src="compat.js?v=132"></script>
+<script src="db_supabase.js?v=132"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -4970,26 +4970,47 @@
 
   <!-- Modal: nueva conversación staff -->
   <div class="modal-bg" id="modal-nuevo-chat-staff">
-    <div class="modal" onclick="event.stopPropagation()" style="max-width:520px;">
+    <div class="modal" onclick="event.stopPropagation()" style="max-width:560px;">
       <div class="modal-header">
         <div class="modal-title">✉️ Nueva conversación</div>
         <button class="modal-close" onclick="closeModal('modal-nuevo-chat-staff')">✕</button>
       </div>
       <div class="modal-body">
-        <div class="form-group">
-          <label>Buscar alumno (para chatear con su apoderado)</label>
-          <input type="text" id="chat-nuevo-buscar" placeholder="Buscar por nombre, DNI, código..." oninput="renderChatNuevoAlumnos()">
+        <!-- TABS -->
+        <div id="chat-nuevo-tabs" style="display:flex;gap:6px;margin-bottom:14px;padding:4px;background:var(--surface);border:1px solid var(--border);border-radius:10px;">
+          <div id="chat-tab-alumno" onclick="chatNuevoSetTab('alumno')" style="flex:1;cursor:pointer;padding:8px 10px;text-align:center;font-size:0.82rem;font-weight:700;border-radius:8px;background:var(--accent);color:#fff;">👨‍🎓 Con Alumno / Apoderado</div>
+          <div id="chat-tab-staff" onclick="chatNuevoSetTab('staff')" style="flex:1;cursor:pointer;padding:8px 10px;text-align:center;font-size:0.82rem;font-weight:700;border-radius:8px;color:var(--muted);">👥 Staff ↔ Staff</div>
         </div>
-        <div class="form-group">
-          <label>Tipo</label>
-          <select id="chat-nuevo-scope">
-            <option value="TUTOR_ALUMNO">Sobre el alumno (Tutor / Profesor)</option>
-            <option value="ALUMNO_GENERAL">General con apoderado</option>
-            <option value="ADMIN_APOD" id="chat-nuevo-opt-admin">Canal directo (Admin/Director/Coord)</option>
-          </select>
+
+        <!-- PANEL: ALUMNO / APODERADO (actual) -->
+        <div id="chat-panel-alumno" style="display:block;">
+          <div class="form-group">
+            <label>Buscar alumno (para chatear con su apoderado)</label>
+            <input type="text" id="chat-nuevo-buscar" placeholder="Buscar por nombre, DNI, código..." oninput="renderChatNuevoAlumnos()">
+          </div>
+          <div class="form-group">
+            <label>Tipo</label>
+            <select id="chat-nuevo-scope">
+              <option value="TUTOR_ALUMNO">Sobre el alumno (Tutor / Profesor)</option>
+              <option value="ALUMNO_GENERAL">General con apoderado</option>
+              <option value="ADMIN_APOD" id="chat-nuevo-opt-admin">Canal directo (Admin/Director/Coord)</option>
+            </select>
+          </div>
+          <div id="chat-nuevo-lista" style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:6px;">
+            <div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">Escribe para buscar...</div>
+          </div>
         </div>
-        <div id="chat-nuevo-lista" style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:6px;">
-          <div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">Escribe para buscar...</div>
+
+        <!-- PANEL: STAFF ↔ STAFF (nuevo) -->
+        <div id="chat-panel-staff" style="display:none;">
+          <div class="form-group">
+            <label>Buscar personal del colegio (Admin, Director, Docente, Psicólogo...)</label>
+            <input type="text" id="chat-staff-buscar-nuevo" placeholder="Buscar por nombre, cargo, rol..." oninput="renderChatNuevoStaff()">
+          </div>
+          <div id="chat-nuevo-staff-lista" style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:6px;">
+            <div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">Cargando personal...</div>
+          </div>
+          <div style="margin-top:10px;font-size:0.72rem;color:var(--muted);">💡 Se inicia un canal directo entre tú y el personal seleccionado. Solo lo verán ustedes dos.</div>
         </div>
       </div>
     </div>
@@ -31494,6 +31515,19 @@ async function chatStaffHidratarNombres(convList) {
   }
 }
 
+function _chatStaffEsStaff2Yo(conv) {
+  // True = yo soy el staff2 (almacenado en apoderado_auth_uid). False = staff_user_id = YO.
+  if (!conv || !CHAT_STAFF.uid) return false;
+  return (conv.scope_type === 'STAFF_STAFF') && (conv.apoderado_auth_uid === CHAT_STAFF.uid);
+}
+function _chatStaffGetOtroStaffUid(conv) {
+  if (!conv || !CHAT_STAFF.uid) return '';
+  if (conv.scope_type !== 'STAFF_STAFF') return '';
+  if (conv.staff_user_id === CHAT_STAFF.uid) return conv.apoderado_auth_uid || '';
+  if (conv.apoderado_auth_uid === CHAT_STAFF.uid) return conv.staff_user_id || '';
+  return '';
+}
+
 function chatStaffNombreStaff(uid) {
   const u = CHAT_STAFF.usuariosCache.get(uid);
   if (!u) return 'Personal';
@@ -31501,6 +31535,11 @@ function chatStaffNombreStaff(uid) {
 }
 
 function chatStaffNombreApoderado(conv) {
+  // STAFF_STAFF: mostrar nombre del OTRO staff, no "Apoderado"
+  if (conv && conv.scope_type === 'STAFF_STAFF') {
+    const otroUid = _chatStaffGetOtroStaffUid(conv);
+    if (otroUid) return chatStaffNombreStaff(otroUid);
+  }
   if (conv && conv.alumno_id) {
     const a = CHAT_STAFF.apoderadosCache.get('_alumno_' + conv.alumno_id);
     if (a) {
@@ -31512,7 +31551,21 @@ function chatStaffNombreApoderado(conv) {
 }
 
 function chatStaffAlumnoLabel(conv) {
-  if (!conv || !conv.alumno_id) return '';
+  if (!conv) return '';
+  if (conv.scope_type === 'STAFF_STAFF') {
+    // Mostrar cargo/rol del OTRO staff como subtítulo
+    const otroUid = _chatStaffGetOtroStaffUid(conv);
+    if (otroUid) {
+      const u = CHAT_STAFF.usuariosCache.get(otroUid);
+      if (u) {
+        const tag = _chatStaffFmtRolTag(u.rol, u.cargo);
+        const cargo = u.cargo && u.cargo !== u.rol ? ` · ${String(u.cargo)}` : '';
+        return `👥 Staff · ${tag}${cargo}`;
+      }
+    }
+    return '👥 Staff';
+  }
+  if (!conv.alumno_id) return '';
   const a = CHAT_STAFF.apoderadosCache.get('_alumno_' + conv.alumno_id);
   if (!a) return conv.alumno_id;
   return [a.nombres, a.apellidos].filter(Boolean).join(' ') + (a.grado ? ` · ${a.grado}${a.seccion ? ' '+a.seccion : ''}` : '');
@@ -31541,7 +31594,14 @@ function renderChatStaffBandeja() {
   const r = _normRol(currentRol);
   const adminVerTodas = _isAdminDirectorOrCoord();
   let lista = (CHAT_STAFF.bandeja || []).filter(c => {
-    if (!adminVerTodas && c.staff_user_id !== CHAT_STAFF.uid) return false;
+    // Visibilidad: Admin ve todas; otros SOLO las conversaciones donde PARTICIPA:
+    //   - soy staff_user_id (todos los scopes)
+    //   - O soy apoderado_auth_uid Y (soy scope=STAFF_STAFF, O soy scope normal staff->apoderado pero no aplica para staff users)
+    if (!adminVerTodas) {
+      const participa = (c.staff_user_id === CHAT_STAFF.uid) ||
+        (c.scope_type === 'STAFF_STAFF' && c.apoderado_auth_uid === CHAT_STAFF.uid);
+      if (!participa) return false;
+    }
     if (q) {
       const nomApo = chatStaffNombreApoderado(c).toLowerCase();
       const nomAl = chatStaffAlumnoLabel(c).toLowerCase();
@@ -31557,22 +31617,40 @@ function renderChatStaffBandeja() {
     return;
   }
   const parts = lista.map(c => {
-    const unread = (c.read_by_staff === false) ? 1 : 0;
+    // Unread bidireccional:
+    //   Si yo soy staff1 (staff_user_id=uid):  unread = c.read_by_staff   === false
+    //   Si yo soy staff2 (scope STAFF_STAFF y apoderado_auth_uid=uid):   unread = c.read_by_apoderado === false
+    //   Si yo soy apoderado normal (fuera del chat staff, no aplica aquí; default = read_by_staff false para mostrar en staff side)
+    const soyStaff2 = _chatStaffEsStaff2Yo(c);
+    const unread = soyStaff2 ? (c.read_by_apoderado === false) : (c.read_by_staff === false);
     const nom = chatStaffNombreApoderado(c);
     const al = chatStaffAlumnoLabel(c);
     const convId = c.id;
     const active = (convId === CHAT_STAFF.convActualId) ? ' style="background:var(--surface2);border-left:3px solid var(--accent);"' : '';
+    // Color avatar: si es STAFF_STAFF, usar color por rol del otro staff
+    let avatarBg = '#C9A84C';
+    if (c.scope_type === 'STAFF_STAFF') {
+      const otroUid = _chatStaffGetOtroStaffUid(c);
+      if (otroUid) {
+        const u = CHAT_STAFF.usuariosCache.get(otroUid);
+        if (u && u.rol) {
+          avatarBg = (_normRol(u.rol) === 'admin') ? '#ef4444' :
+                    ((_normRol(u.rol) === 'director' || _normRol(u.rol) === 'coordinador')) ? '#F59E0B' :
+                    (_normRol(u.rol) === 'psicologo') ? '#8B5CF6' : '#185FA5';
+        }
+      }
+    }
     return `<div class="chat-row-item" data-conv="${convId}" onclick="abrirConversacionStaff('${convId}')" style="padding:11px 12px;border-bottom:1px solid var(--border);cursor:pointer;${unread ? 'font-weight:700;' : ''}${active ? 'background:var(--surface2);border-left:3px solid var(--accent);' : ''}" onmouseover="this.style.background='var(--surface2)'" onmouseout="${active ? 'this.style.background=\'var(--surface2)\'' : 'this.style.background=\'\''}">
       <div style="display:flex;align-items:center;gap:10px;">
-        <div style="width:38px;height:38px;border-radius:50%;background:#C9A84C;color:#0D1A3A;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">${chatStaffIniciales(nom)}</div>
+        <div style="width:38px;height:38px;border-radius:50%;background:${avatarBg};color:${c.scope_type === 'STAFF_STAFF' ? '#fff' : '#0D1A3A'};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">${chatStaffIniciales(nom)}</div>
         <div style="flex:1;min-width:0;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
             <div style="font-size:0.85rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nom}</div>
             <div style="font-size:0.7rem;color:var(--muted);white-space:nowrap;flex-shrink:0;">${chatStaffFmtHora(c.last_message_at)}</div>
           </div>
-          <div style="font-size:0.72rem;color:#185FA5;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${al || 'Sin alumno'}</div>
+          <div style="font-size:0.72rem;color:${c.scope_type === 'STAFF_STAFF' ? '#6366F1' : '#185FA5'};margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${al || (c.scope_type === 'STAFF_STAFF' ? '👥 Staff' : 'Sin alumno')}</div>
           <div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
-            <div style="flex:1;font-size:0.78rem;color:var(--muted);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.last_message ? (c.last_sender_type==='staff' ? 'Tú: ' : '') + c.last_message : 'Sin mensajes'}</div>
+            <div style="flex:1;font-size:0.78rem;color:var(--muted);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.last_message ? ((c.last_sender_uid && c.last_sender_uid !== CHAT_STAFF.uid) ? '' : (c.last_sender_type==='staff' ? 'Tú: ' : '')) + c.last_message : 'Sin mensajes'}</div>
             ${unread ? `<span style="background:var(--accent2,#ef4444);color:#fff;font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;">!</span>` : ''}
           </div>
         </div>
@@ -31585,7 +31663,15 @@ function renderChatStaffBandeja() {
 function chatBadgeUpdateStaff() {
   const r = _normRol(currentRol);
   const adminVerTodas = _isAdminDirectorOrCoord();
-  const count = (CHAT_STAFF.bandeja || []).filter(c => c.read_by_staff === false && (adminVerTodas || c.staff_user_id === CHAT_STAFF.uid)).length;
+  const count = (CHAT_STAFF.bandeja || []).filter(c => {
+    const soyStaff2 = _chatStaffEsStaff2Yo(c);
+    const unread = soyStaff2 ? (c.read_by_apoderado === false) : (c.read_by_staff === false);
+    if (!unread) return false;
+    if (adminVerTodas) return true;
+    const participa = (c.staff_user_id === CHAT_STAFF.uid) ||
+      (c.scope_type === 'STAFF_STAFF' && c.apoderado_auth_uid === CHAT_STAFF.uid);
+    return participa;
+  }).length;
   const nb = document.getElementById('nav-chat-badge');
   if (nb) {
     nb.style.display = count > 0 ? '' : 'none';
@@ -31629,9 +31715,16 @@ function chatStaffSuscribirBandeja() {
                 CHAT_STAFF.convActual = newR;
                 chatStaffMarcarLeido();
               }
-              // Toast si no es el emisor staff y hay nuevo mensaje no leído
-              if (ev === 'UPDATE' && newR.read_by_staff === false && newR.last_sender_type === 'apoderado' && newR.staff_user_id === CHAT_STAFF.uid && CHAT_STAFF.convActualId !== newR.id) {
-                toast('Nuevo mensaje de ' + chatStaffNombreApoderado(newR), 'info');
+              // Toast si no es el emisor YO y hay nuevo mensaje no leído
+              if (ev === 'UPDATE' && CHAT_STAFF.convActualId !== newR.id) {
+                const soyStaff2 = _chatStaffEsStaff2Yo(newR);
+                const unreadParaMi = soyStaff2 ? (newR.read_by_apoderado === false) : (newR.read_by_staff === false);
+                const elOtroMeEnvio = (newR.last_sender_uid && newR.last_sender_uid !== CHAT_STAFF.uid);
+                const scopeOkParticipa = (newR.staff_user_id === CHAT_STAFF.uid) ||
+                  (newR.scope_type === 'STAFF_STAFF' && newR.apoderado_auth_uid === CHAT_STAFF.uid);
+                if (unreadParaMi && elOtroMeEnvio && scopeOkParticipa) {
+                  toast('Nuevo mensaje de ' + chatStaffNombreApoderado(newR), 'info');
+                }
               }
             });
           } else {
@@ -31653,9 +31746,27 @@ async function abrirConversacionStaff(convId) {
   if (hdr && conv) {
     const nomApo = chatStaffNombreApoderado(conv);
     const al = chatStaffAlumnoLabel(conv);
-    const scopeLabel = conv.scope_type === 'ADMIN_APOD' ? 'Canal directo' : conv.scope_type === 'ALUMNO_GENERAL' ? 'General' : 'Tutoría';
+    let scopeLabel = 'Tutoría';
+    if (conv.scope_type === 'ADMIN_APOD') scopeLabel = 'Canal directo';
+    else if (conv.scope_type === 'ALUMNO_GENERAL') scopeLabel = 'General';
+    else if (conv.scope_type === 'STAFF_STAFF') scopeLabel = '👥 Staff interno';
+    // Avatar color por rol si es STAFF_STAFF
+    let avatarBg = '#C9A84C';
+    let avatarColor = '#0D1A3A';
+    if (conv.scope_type === 'STAFF_STAFF') {
+      const otroUid = _chatStaffGetOtroStaffUid(conv);
+      if (otroUid) {
+        const u = CHAT_STAFF.usuariosCache.get(otroUid);
+        if (u && u.rol) {
+          avatarBg = (_normRol(u.rol) === 'admin') ? '#ef4444' :
+                    ((_normRol(u.rol) === 'director' || _normRol(u.rol) === 'coordinador')) ? '#F59E0B' :
+                    (_normRol(u.rol) === 'psicologo') ? '#8B5CF6' : '#185FA5';
+          avatarColor = '#fff';
+        }
+      }
+    }
     hdr.innerHTML = `<div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
-      <div style="width:38px;height:38px;border-radius:50%;background:#C9A84C;color:#0D1A3A;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">${chatStaffIniciales(nomApo)}</div>
+      <div style="width:38px;height:38px;border-radius:50%;background:${avatarBg};color:${avatarColor};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">${chatStaffIniciales(nomApo)}</div>
       <div style="min-width:0;flex:1;">
         <div style="font-size:0.9rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nomApo}</div>
         <div style="font-size:0.72rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${scopeLabel}${al ? ' · '+al : ''}</div>
@@ -31712,13 +31823,23 @@ function renderChatStaffMensajes() {
       lastDay = day;
       parts.push(`<div style="text-align:center;margin:10px 0;"><span style="background:var(--surface);border:1px solid var(--border);padding:2px 12px;border-radius:999px;font-size:0.7rem;color:var(--muted);">${day}</span></div>`);
     }
-    const mios = m.sender_type === 'staff';
+    const mios = (m.sender_id === CHAT_STAFF.uid) || (!m.sender_id && m.sender_type === 'staff');
     const bubbleBg = mios ? 'background:var(--accent);color:#fff;' : 'background:var(--surface);color:var(--text);border:1px solid var(--border);';
     const align = mios ? 'margin-left:auto;' : 'margin-right:auto;';
     let statusHtml = '';
     if (mios && CHAT_STAFF.convActual) {
-      // NIVEL 1: visto por conversación (read_by_apoderado = true => el otro lo abrió)
-      const visto = CHAT_STAFF.convActual.read_by_apoderado === true;
+      // Visto: para conv STAFF_STAFF, "yo" envié → el OTRO staff lo leyó (columna contraria).
+      // Si soy staff_user_id (staff1) → lo leyó staff2 = apoderado → read_by_apoderado=true
+      // Si soy apoderado_auth_uid (staff2) → lo leyó staff1 → read_by_staff=true
+      // Para conv Staff↔Apoderado normal: read_by_apoderado=true (igual que antes)
+      const soyStaff2 = _chatStaffEsStaff2Yo(CHAT_STAFF.convActual);
+      const conv = CHAT_STAFF.convActual;
+      let visto = false;
+      if (conv.scope_type === 'STAFF_STAFF') {
+        visto = soyStaff2 ? (conv.read_by_staff === true) : (conv.read_by_apoderado === true);
+      } else {
+        visto = (conv.read_by_apoderado === true);
+      }
       if (visto) {
         statusHtml = `<span style="margin-left:4px;color:#60a5fa;font-weight:700;font-family:var(--font-body);" title="Visto">✓✓</span>`;
       } else {
@@ -31756,9 +31877,12 @@ function chatStaffSuscribirMensajes(convId) {
           if (!CHAT_STAFF.mensajes.find(x => x.id === m.id)) {
             CHAT_STAFF.mensajes.push(m);
             renderChatStaffMensajes();
-            // Si enviaron apoderado, ya la conversación se actualiza via bandeja listener y marca no-leido;
-            // forzamos marca leido porque estamos dentro de la conversación.
-            if (m.sender_type === 'apoderado') chatStaffMarcarLeido();
+            // Si enviaron OTRO (no yo), forzamos marca leido PORQUE ESTAMOS DENTRO de la conversación:
+            // - Si es apoderado normal → igual que antes
+            // - Si es STAFF_STAFF y m.sender_id !== CHAT_STAFF.uid → otro staff me envió
+            const loEnvioOtro = !(m.sender_id === CHAT_STAFF.uid) && !(m.sender_type === 'staff' && m.sender_id === undefined && CHAT_STAFF.convActual && CHAT_STAFF.convActual.scope_type !== 'STAFF_STAFF');
+            const senderNoYo = (m.sender_id && m.sender_id !== CHAT_STAFF.uid) || (!m.sender_id && m.sender_type === 'apoderado');
+            if (senderNoYo) chatStaffMarcarLeido();
           }
         })
       .subscribe();
@@ -31767,19 +31891,26 @@ function chatStaffSuscribirMensajes(convId) {
 
 async function chatStaffMarcarLeido() {
   const conv = CHAT_STAFF.convActual;
-  if (!conv || conv.read_by_staff === true) return;
+  if (!conv) return;
+  const soyStaff2 = _chatStaffEsStaff2Yo(conv);
+  // Determinar qué flags están "ya marcados" para no updatear en vano
+  const yaMarcado = soyStaff2 ? (conv.read_by_apoderado === true) : (conv.read_by_staff === true);
+  if (yaMarcado) return;
   const sb = chatStaffGetSB();
   if (!sb) return;
   try {
+    const update = {};
+    if (soyStaff2) update.read_by_apoderado = true;
+    else update.read_by_staff = true;
     const { error } = await sb
       .from('chat_conversaciones')
-      .update({ read_by_staff: true })
+      .update(update)
       .eq('id', conv.id)
       .eq('colegio_id', chatStaffColegioId());
     if (!error) {
-      conv.read_by_staff = true;
+      Object.assign(conv, update);
       const i = CHAT_STAFF.bandeja.findIndex(c => c.id === conv.id);
-      if (i >= 0) CHAT_STAFF.bandeja[i].read_by_staff = true;
+      if (i >= 0) Object.assign(CHAT_STAFF.bandeja[i], update);
       renderChatStaffBandeja();
       chatBadgeUpdateStaff();
     }
@@ -31820,13 +31951,181 @@ async function enviarChatStaffMsg() {
 }
 
 // ------------- Nuevo chat (buscar alumno y crear conversación) -------------
+function chatNuevoSetTab(tab) {
+  const tAlu = document.getElementById('chat-tab-alumno');
+  const tSta = document.getElementById('chat-tab-staff');
+  const pAlu = document.getElementById('chat-panel-alumno');
+  const pSta = document.getElementById('chat-panel-staff');
+  if (tab === 'staff') {
+    if (tAlu) { tAlu.style.background = ''; tAlu.style.color = 'var(--muted)'; }
+    if (tSta) { tSta.style.background = 'var(--accent)'; tSta.style.color = '#fff'; }
+    if (pAlu) pAlu.style.display = 'none';
+    if (pSta) pSta.style.display = 'block';
+    chatStaffPrecargarListaStaff().then(renderChatNuevoStaff);
+  } else {
+    if (tSta) { tSta.style.background = ''; tSta.style.color = 'var(--muted)'; }
+    if (tAlu) { tAlu.style.background = 'var(--accent)'; tAlu.style.color = '#fff'; }
+    if (pSta) pSta.style.display = 'none';
+    if (pAlu) pAlu.style.display = 'block';
+  }
+}
+
 function abrirModalNuevoChatStaff() {
   const modal = document.getElementById('modal-nuevo-chat-staff');
   if (!modal) return;
+  // Reset tab a Alumno
+  try { chatNuevoSetTab('alumno'); } catch(_){}
   document.getElementById('chat-nuevo-buscar').value = '';
+  const bsn = document.getElementById('chat-staff-buscar-nuevo'); if (bsn) bsn.value = '';
   document.getElementById('chat-nuevo-lista').innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">Cargando alumnos...</div>`;
+  const nsl = document.getElementById('chat-nuevo-staff-lista'); if (nsl) nsl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">Cargando personal...</div>`;
   modal.style.display = 'flex';
   chatStaffPrecargarAlumnos().then(renderChatNuevoAlumnos);
+}
+
+async function chatStaffPrecargarListaStaff() {
+  if (CHAT_STAFF.staffCache && CHAT_STAFF.staffCache.length) return;
+  const sb = chatStaffGetSB();
+  if (!sb) { CHAT_STAFF.staffCache = []; return; }
+  try {
+    const colegio = chatStaffColegioId();
+    const { data, error } = await sb
+      .from('usuarios')
+      .select('id,nombre,nombres,apellidos,cargo,rol,correo,email')
+      .eq('colegio_id', colegio)
+      .order('apellidos', { ascending: true })
+      .order('nombres', { ascending: true })
+      .limit(400);
+    if (error) throw error;
+    CHAT_STAFF.staffCache = ((data || []).filter(u => {
+      if (!u || !u.id) return false;
+      if (u.id === CHAT_STAFF.uid) return false;  // no mostrarse a sí mismo
+      const r = _normRol(u.rol);
+      return ['admin','director','coordinador','profesor','psicologo','auxiliar'].includes(r);
+    }) || []);
+    // Hidratar cache de usuarios para chatStaffNombreStaff
+    CHAT_STAFF.staffCache.forEach(u => CHAT_STAFF.usuariosCache.set(u.id, u));
+  } catch(e) {
+    console.error('chatStaffPrecargarListaStaff', e);
+    CHAT_STAFF.staffCache = [];
+  }
+}
+
+function _chatStaffFmtRolTag(rolRaw, cargo) {
+  const r = _normRol(rolRaw);
+  const map = { admin:'ADMIN', director:'DIRECTOR', coordinador:'COORD.', profesor:'PROFESOR', psicologo:'PSICÓLOGO', auxiliar:'AUXILIAR' };
+  const tag = map[r] || (cargo ? String(cargo).toUpperCase().slice(0,12) : 'PERSONAL');
+  return tag;
+}
+
+function renderChatNuevoStaff() {
+  const el = document.getElementById('chat-nuevo-staff-lista');
+  if (!el) return;
+  const q = String(document.getElementById('chat-staff-buscar-nuevo')?.value || '').toLowerCase().trim();
+  const list = (CHAT_STAFF.staffCache || []).filter(u => {
+    if (!q) return true;
+    const nombreFull = [(u.nombres||''),(u.apellidos||''),(u.nombre||''),(u.cargo||''),(u.rol||''),(u.correo||''),(u.email||'')].filter(Boolean).join(' ').toLowerCase();
+    return nombreFull.includes(q);
+  }).slice(0, 80);
+  if (!list.length) {
+    el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">${q ? 'Sin coincidencias' : 'No hay otros usuarios del personal registrados.'}</div>`;
+    return;
+  }
+  const parts = list.map(u => {
+    const nom = (u.nombre || [u.nombres, u.apellidos].filter(Boolean).join(' ')).trim() || 'Usuario';
+    const tag = _chatStaffFmtRolTag(u.rol, u.cargo);
+    const tagColor = (u.rol && _normRol(u.rol) === 'admin') ? '#ef4444' :
+                     (u.rol && (_normRol(u.rol) === 'director' || _normRol(u.rol) === 'coordinador')) ? '#F59E0B' :
+                     (u.rol && _normRol(u.rol) === 'psicologo') ? '#8B5CF6' : '#185FA5';
+    return `<div onclick="iniciarChatStaffConStaff('${u.id}')" style="padding:10px 12px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:10px;margin-bottom:4px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      <div style="width:38px;height:38px;border-radius:50%;background:${tagColor};color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">${chatStaffIniciales(nom)}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:0.85rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nom}</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
+          <span style="font-size:0.68rem;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--surface2);color:${tagColor};">${tag}</span>
+          ${u.cargo && u.cargo !== u.rol ? `<span style="font-size:0.7rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${String(u.cargo)}</span>` : ''}
+        </div>
+      </div>
+      <div style="color:var(--accent);font-size:1.1rem;">›</div>
+    </div>`;
+  });
+  el.innerHTML = parts.join('');
+}
+
+async function iniciarChatStaffConStaff(targetStaffUid) {
+  if (!targetStaffUid) return;
+  if (targetStaffUid === CHAT_STAFF.uid) { toast('No puedes iniciar un chat contigo mismo', 'warning'); return; }
+  const sb = chatStaffGetSB();
+  if (!sb) return;
+  const targetStaff = (CHAT_STAFF.staffCache || []).find(u => u.id === targetStaffUid) || CHAT_STAFF.usuariosCache.get(targetStaffUid);
+  if (!targetStaff) { toast('Usuario no encontrado', 'error'); return; }
+  try {
+    const colegio = chatStaffColegioId();
+    const scope = 'STAFF_STAFF';
+    // Upsert: staff_user_id = YO, apoderado_auth_uid = OTRO STAFF.
+    // Para búsqueda bidireccional luego buscamos por (staff=YO OR apoderado=OTRO) AND (staff=OTRO OR apoderado=YO)
+    const insertData = {
+      colegio_id: colegio,
+      scope_type: scope,
+      staff_user_id: CHAT_STAFF.uid,
+      apoderado_auth_uid: targetStaffUid,
+      alumno_id: '',
+      grado: '',
+      seccion: '',
+      ciclo: '',
+    };
+    try {
+      const { error: errI } = await sb.from('chat_conversaciones').insert(insertData);
+      if (errI && errI.code !== '23505') throw errI;
+    } catch(e1) {
+      // Intentar el orden inverso (puede que exista con staff/target invertidos)
+      if (String(e1.message || '').includes('23505') === false && !/unique/i.test(String(e1.message||''))) throw e1;
+    }
+    // Buscar conversación existente en AMBOS sentidos
+    let conv = null;
+    const { data: listC } = await sb
+      .from('chat_conversaciones')
+      .select('*')
+      .eq('colegio_id', colegio)
+      .eq('scope_type', scope)
+      .limit(500);
+    const rows = listC || [];
+    conv = rows.find(c =>
+      (c.staff_user_id === CHAT_STAFF.uid && c.apoderado_auth_uid === targetStaffUid) ||
+      (c.staff_user_id === targetStaffUid && c.apoderado_auth_uid === CHAT_STAFF.uid)
+    ) || null;
+    if (!conv) {
+      // Fallback: reintento INSERT orden inverso (target->yo)
+      try {
+        const { error: errI2 } = await sb.from('chat_conversaciones').insert({
+          ...insertData,
+          staff_user_id: targetStaffUid,
+          apoderado_auth_uid: CHAT_STAFF.uid,
+        });
+        if (errI2 && errI2.code !== '23505') throw errI2;
+        const { data: listC2 } = await sb.from('chat_conversaciones').select('*').eq('colegio_id', colegio).eq('scope_type', scope).limit(500);
+        conv = (listC2 || []).find(c =>
+          (c.staff_user_id === CHAT_STAFF.uid && c.apoderado_auth_uid === targetStaffUid) ||
+          (c.staff_user_id === targetStaffUid && c.apoderado_auth_uid === CHAT_STAFF.uid)
+        ) || null;
+      } catch(e2) { /* ignore */ }
+    }
+    closeModal('modal-nuevo-chat-staff');
+    if (conv) {
+      if (!CHAT_STAFF.bandeja.find(c => c.id === conv.id)) {
+        CHAT_STAFF.bandeja.unshift(conv);
+        CHAT_STAFF.bandeja.sort((a,b) => new Date(b.last_message_at||0) - new Date(a.last_message_at||0));
+      }
+      await chatStaffHidratarNombres([conv]);
+      renderChatStaffBandeja();
+      abrirConversacionStaff(conv.id);
+    } else {
+      toast('No se pudo iniciar la conversación', 'error');
+    }
+  } catch(e) {
+    console.error(e);
+    toast('Error: ' + e.message, 'error');
+  }
 }
 
 async function chatStaffPrecargarAlumnos() {
