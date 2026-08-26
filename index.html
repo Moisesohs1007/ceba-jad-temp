@@ -10109,7 +10109,17 @@ function _labelNivelLargoAlumno(a, cfg) {
 }
 
 function _badgeModalidadAlumno(a) {
-  const modAt = _normModAtencion((a||{}).turno || '');
+  // ✅ FIX 2026-08-26 Orlando 4B Presencial vs Semipresencial:
+  // PRIMERO intentamos CANÓN CEBA DIRECTO desde sección (A/D=Pres, B=Semi, C=Vir).
+  // Si la sección es canon (A/B/C/D), el badge MUESTRA el canon (no el turno sucio
+  // de la BD). El canon define la MODALIDAD REAL DEL AULA, no el turno raw guardado.
+  // Solo si la sección NO es canon (E, F, vacía) usamos a.turno / _normModAtencion.
+  const sRaw = String((a && (a.seccion || a.SECCION || '')) || '').trim().toUpperCase();
+  const mapaCanonSec2Mod = { A: 'PRESENCIAL', B: 'SEMIPRESENCIAL', C: 'VIRTUAL', D: 'PRESENCIAL' };
+  let modAt = mapaCanonSec2Mod[sRaw] || '';
+  if (!modAt) {
+    modAt = _normModAtencion((a||{}).turno || '') || '';
+  }
   if(!modAt) return `<span style="color:#94a3b8;font-size:0.75rem;">(Sin modalidad)</span>`;
   const mapCls = {
     'PRESENCIAL': 'style="display:inline-block;padding:2px 8px;border-radius:999px;font-weight:700;font-size:0.75rem;background:#dcfce7;color:#166534;border:1px solid #bbf7d0;"',
