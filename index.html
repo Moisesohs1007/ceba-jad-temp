@@ -2733,10 +2733,6 @@
     Cambiar contraseña
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.4"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
   </div>
-  <div onclick="recargarMisTutorias();closeUserMenu();" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;font-size:12px;color:#10b981;border-bottom:1px solid var(--border);" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
-    🔄 Recargar mis Tutorías
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.6"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-  </div>
   <div onclick="doLogout();closeUserMenu();" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;font-size:12px;color:var(--danger);" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
     Cerrar sesión
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.6"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -6977,66 +6973,70 @@ function doLogout() {
   }, 5000);
 }
 
-async function recargarMisTutorias() {
+let _autoRecargaTutoriasEnCurso = false;
+let _autoRecargaTutoriasUltimoTs = 0;
+const _AUTO_RECARGA_COOLDOWN_MS = 60 * 1000;
+
+async function _autoRecargarTutoriasSilencioso(motivo = '') {
   try {
-    if(!currentUser) { toast('Debes iniciar sesión primero', 'error'); return; }
-    // Mini-overlay de carga esquina abajo-derecha (no requiere showLoader global)
-    let overlay = document.getElementById('reload-tutorias-overlay');
-    if(!overlay) {
-      overlay = document.createElement('div');
-      overlay.id = 'reload-tutorias-overlay';
-      overlay.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:99999;background:var(--surface, #0f172a);color:var(--text, #fff);border:1px solid var(--border, #1e293b);border-radius:14px;padding:12px 16px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
-      document.body.appendChild(overlay);
-    }
-    overlay.innerHTML = '<div class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="width:16px;height:16px;border-width:2px;"></div><span>🔄 Recargando tus tutorías y privilegios...</span>';
-    overlay.style.display = 'flex';
+    if(!currentUser) return;
+    const ahora = Date.now();
+    if (_autoRecargaTutoriasEnCurso) return;
+    if ((ahora - _autoRecargaTutoriasUltimoTs) < _AUTO_RECARGA_COOLDOWN_MS) return;
+    _autoRecargaTutoriasEnCurso = true;
+    _autoRecargaTutoriasUltimoTs = ahora;
+    console.info(`[_autoRecargarTutoriasSilencioso] Disparado por: ${motivo || 'desconocido'}`);
+    try { try { sessionStorage.removeItem('asmqr_userCache_' + currentUser.uid); } catch(_) {} } catch(_) {}
+    try { try { localStorage.removeItem('asmqr_userCache_' + currentUser.uid); } catch(_) {} } catch(_) {}
+    try { try { sessionStorage.removeItem('asmqr_userCache'); } catch(_) {} } catch(_) {}
+    try { try { localStorage.removeItem('asmqr_userCache'); } catch(_) {} } catch(_) {}
+    try { try { sessionStorage.removeItem('_alumnosCache'); } catch(_) {} } catch(_) {}
+    try { try { sessionStorage.removeItem('_cfgCache'); } catch(_) {} } catch(_) {}
+    try { _dashInicioCache = null; _dashInicioCacheTs = 0; _dashInicioPromise = null; } catch(_) {}
+    try { window.alumnosCache = null; } catch(_) {}
+    try { if (typeof DB !== 'undefined' && DB && DB.invalidarAlumnos) DB.invalidarAlumnos(); } catch(_) {}
+    try { if (typeof _purgarCacheAlumnos === 'function') _purgarCacheAlumnos('auto-recarga-' + (motivo || 'gen')); } catch(_) {}
+    let uData = null;
     try {
-      // 1) Borrar cache local de usuario y dashboard para que lea FRESCO desde Supabase.
-      try { sessionStorage.removeItem('asmqr_userCache_' + currentUser.uid); } catch(_) {}
-      try { localStorage.removeItem('asmqr_userCache_' + currentUser.uid); } catch(_) {}
-      try { sessionStorage.removeItem('asmqr_userCache'); } catch(_) {}
-      try { localStorage.removeItem('asmqr_userCache'); } catch(_) {}
-      try { sessionStorage.removeItem('_alumnosCache'); } catch(_) {}
-      try { sessionStorage.removeItem('_cfgCache'); } catch(_) {}
-      try { _dashInicioCache = null; _dashInicioCacheTs = 0; _dashInicioPromise = null; } catch(_) {}
-      try { window.alumnosCache = null; } catch(_) {}
-      try { if (typeof DB !== 'undefined' && DB && DB.invalidarAlumnos) DB.invalidarAlumnos(); } catch(_) {}
-      // 2) Volver a leer usuario DOC desde Supabase DIRECTAMENTE (no cache).
-      let uData = null;
-      try {
-        const doc = await db.collection('usuarios').doc(currentUser.uid).get();
-        if(doc && doc.exists) {
-          uData = doc.data() || {};
-          _setCurrentUsuarioCache(currentUser.uid, uData);
-        }
-      } catch(_e0) { console.warn('[recargarMisTutorias] refresh doc falló', _e0); }
-      if(!uData) uData = _getCurrentUsuarioCache(currentUser.uid);
-      // 3) Recargar tutor actual + privilegios actuales + config
-      const cfg = await getConfig(true);
-      await cargarTutorActual(uData);
-      await cargarPrivilegiosActuales(cfg, uData);
-      // 4) Volver a inicializar filtros y re-renderizar lo que esté visible.
-      await inicializarFiltros({ cfg });
-      try { await cargarDashboardInicio(true); } catch(_) {}
-      try { if(document.getElementById('sec-alumnos')?.classList?.contains('active') && typeof renderAlumnos === 'function') renderAlumnos(); } catch(_) {}
-      try { if(document.getElementById('sec-asistencia')?.classList?.contains('active') && typeof renderRegistro === 'function') renderRegistro(); } catch(_) {}
-      // 5) Resetear toast 1 sola vez por sesión scope vacío.
-      try { _warnedProfesorSinAulas = false; } catch(_) {}
-      overlay.innerHTML = '<span style="color:#10b981;">✅</span><span>Tutorías y privilegios recargados.</span>';
-      setTimeout(() => { if(overlay) overlay.style.display = 'none'; }, 2800);
-      toast('✅ Tutorías y privilegios recargados. Si sigues sin ver alumnos, pide a Admin que confirme Modo Reparación.', 'success');
-    } finally {
-      // Si falló y el overlay sigue con el spinner, lo ocultamos en 3s.
-      setTimeout(() => {
-        if(overlay && overlay.parentNode) {
-          overlay.style.display = 'none';
-        }
-      }, 3500);
-    }
+      const doc = await db.collection('usuarios').doc(currentUser.uid).get();
+      if(doc && doc.exists) {
+        uData = doc.data() || {};
+        _setCurrentUsuarioCache(currentUser.uid, uData);
+      }
+    } catch(_e0) { console.warn('[autoRecargaTutorias] refresh doc falló', _e0); }
+    if(!uData) uData = _getCurrentUsuarioCache(currentUser.uid);
+    const cfg = await getConfig(true);
+    await cargarTutorActual(uData);
+    await cargarPrivilegiosActuales(cfg, uData);
+    await inicializarFiltros({ cfg });
+    try { await cargarDashboardInicio(true); } catch(_) {}
+    try { if(document.getElementById('sec-alumnos')?.classList?.contains('active') && typeof renderAlumnos === 'function') renderAlumnos(); } catch(_) {}
+    try { if(document.getElementById('sec-asistencia')?.classList?.contains('active') && typeof renderRegistro === 'function') renderRegistro(); } catch(_) {}
+    try { _warnedProfesorSinAulas = false; } catch(_) {}
   } catch(e) {
-    console.error('[recargarMisTutorias]', e);
-    toast('Error al recargar: ' + (e?.message || String(e)), 'error');
+    console.error('[autoRecargaTutorias]', e);
+  } finally {
+    setTimeout(() => { _autoRecargaTutoriasEnCurso = false; }, 2000);
   }
+}
+
+function _chequearYRecargarSiStale(motivo) {
+  try {
+    const r = _normRol(currentRol);
+    if (r !== 'profesor' && r !== 'psicologo') return false;
+    const aulas = _profesorAsignacionesAulasList ? _profesorAsignacionesAulasList() : [];
+    const tieneAsignaciones = (aulas && aulas.length > 0)
+      || (currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length > 0)
+      || (currentTutorInfo?.gradosAsignados && currentTutorInfo.gradosAsignados.length > 0)
+      || (String(currentTutorInfo?.tutorGrado || '').trim() && String(currentTutorInfo?.tutorSeccion || '').trim());
+    if (!tieneAsignaciones) return false;
+    setTimeout(() => { _autoRecargarTutoriasSilencioso(motivo || 'stale-detectado'); }, 400);
+    return true;
+  } catch(_) { return false; }
+}
+
+async function recargarMisTutorias() {
+  await _autoRecargarTutoriasSilencioso('manual-fallback');
 }
 
 /**
@@ -7247,6 +7247,9 @@ auth.onAuthStateChanged(async user => {
     iniciarConfigListener(); // Listener en tiempo real para config — sincroniza horarios entre dispositivos
     initSessionControl();   // Iniciar control de sesión duplicada
     anunciarSesion();        // Avisar a otras pestañas
+    setTimeout(() => {
+      try { _chequearYRecargarSiStale('post-login-inicial'); } catch(_) {}
+    }, 3000);
   } else {
     // SIN SESION — mostrar login solo si splash ya terminó
 
@@ -13777,74 +13780,233 @@ let _comSendType = 'image';
 
 async function initComunicado() {
   const r = _normRol(currentRol);
-  if(r === 'profesor' || r === 'psicologo') {
+  const rolRaw = r;
+  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
+    ? (_profesorAsignacionesAulasList() || []) : [];
+  const isProf = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0)
+    && !(currentPerms?.verTodasAulas);
+  const tieneAsignaciones = isProf && (
+    (Array.isArray(currentTutorInfo?.gradosAsignados) && currentTutorInfo.gradosAsignados.length > 0) ||
+    (Array.isArray(currentTutorInfo?.tutorAulas) && currentTutorInfo.tutorAulas.length > 0) ||
+    (currentPrivilegios?.asignaciones && Object.keys(currentPrivilegios.asignaciones).length > 0) ||
+    scopeAulas.length > 0
+  );
+  if(isProf) {
     _comAlumnos = await getAlumnosFiltrados();
+    if (!_comAlumnos || !_comAlumnos.length) {
+      try { if (typeof DB !== 'undefined' && DB && DB.invalidarAlumnos) DB.invalidarAlumnos(); } catch(_) {}
+      try { if (typeof _purgarCacheAlumnos === 'function') _purgarCacheAlumnos('comunicado-scope-vacio'); } catch(_) {}
+      try { sessionStorage.removeItem('_alumnosCache'); } catch(_) {}
+      _comAlumnos = await getAlumnosFiltrados();
+    }
   } else if(!_comAlumnos) {
     _comAlumnos = await DB.getAlumnos();
   }
-  if(!_comInit) {
-    const cfg = await getConfig();
-    if (typeof window !== 'undefined') {
-      if (!window.alumnosCache || !window.alumnosCache.length) {
-        try { window.alumnosCache = _comAlumnos || []; } catch(_) {}
-      }
+  // ==================================================================
+  // FIX DEFINTIVO 2026-08-26: SIEMPRE repoblar filtros al entrar.
+  // El flag _comInit solo sirve para cachear librerías / listeners internos.
+  // Antes: solo poblaban si _comInit=false. Si la primera vez falló por
+  // race condition, quedaban los dropdowns ATASCADOS con solo "Todos".
+  // ==================================================================
+  const cfg = await getConfig();
+  if (typeof window !== 'undefined') {
+    if (!window.alumnosCache || !window.alumnosCache.length) {
+      try { window.alumnosCache = _comAlumnos || []; } catch(_) {}
     }
-    await poblarFiltroNivel('com-nivel', null, { cfg, alumnos: _comAlumnos || [] });
-    let nivelSel = document.getElementById('com-nivel');
-    if (nivelSel && nivelSel.options && nivelSel.options.length) {
-      const oldVal = nivelSel.value;
-      const arrOpts = Array.from(nivelSel.options).map(o => ({ v: o.value, t: o.textContent }));
-      const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Nivel --' || o.t === '-- Nivel --'));
-      nivelSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
-      if (oldVal) {
-        const vals = new Set(Array.from(nivelSel.options).map(o => o.value));
-        if (vals.has(oldVal)) nivelSel.value = oldVal;
-      }
+  }
+  await poblarFiltroNivel('com-nivel', null, { cfg, alumnos: _comAlumnos || [] });
+  let nivelSel = document.getElementById('com-nivel');
+  if (nivelSel && nivelSel.options && nivelSel.options.length) {
+    const oldVal = nivelSel.value;
+    const arrOpts = Array.from(nivelSel.options).map(o => ({ v: o.value, t: o.textContent }));
+    const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Nivel --' || o.t === '-- Nivel --'));
+    nivelSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+    if (oldVal) {
+      const vals = new Set(Array.from(nivelSel.options).map(o => o.value));
+      if (vals.has(oldVal)) nivelSel.value = oldVal;
     }
-    await poblarFiltroGrado('com-grado', null, { cfg, alumnos: _comAlumnos || [] });
-    let gSel = document.getElementById('com-grado');
-    if (gSel) {
-      if (gSel.options && gSel.options.length) {
-        const arrOpts = Array.from(gSel.options).map(o => ({ v: o.value, t: o.textContent }));
-        const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Grado --' || o.t === '-- Grado --'));
-        gSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
-      }
+  }
+  await poblarFiltroGrado('com-grado', nivelSel?.value || null, { cfg, alumnos: _comAlumnos || [] });
+  let gSel = document.getElementById('com-grado');
+  if (gSel) {
+    if (gSel.options && gSel.options.length) {
+      const arrOpts = Array.from(gSel.options).map(o => ({ v: o.value, t: o.textContent }));
+      const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Grado --' || o.t === '-- Grado --'));
+      gSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+    }
+    // Si es docente CON aulas pero solo hay "Todos", habilitarlo igual para que
+    // onComNivelChange luego lo rellene.
+    if (isProf && tieneAsignaciones) {
+      gSel.disabled = !(nivelSel?.value);
+      gSel.style.opacity = (nivelSel?.value) ? '1' : '0.45';
+    } else {
       gSel.disabled = true;
       gSel.style.opacity = '0.45';
     }
-    await poblarFiltroSeccion('com-seccion', null, { cfg, alumnos: _comAlumnos || [] });
-    let sSel = document.getElementById('com-seccion');
-    if (sSel) {
-      if (sSel.options && sSel.options.length) {
-        const arrOpts = Array.from(sSel.options).map(o => ({ v: o.value, t: o.textContent }));
-        const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Sección --' || o.t === '-- Sección --'));
-        sSel.innerHTML = '<option value="">Todas</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+  }
+  await poblarFiltroSeccion('com-seccion', gSel?.value || null, { cfg, alumnos: _comAlumnos || [] });
+  let sSel = document.getElementById('com-seccion');
+  // ================================================================
+  // FIX NUCLEAR 2026-08-26: SI AÚN DESPUÉS DE poblarFiltro* LAS OPTIONS
+  // SIGUEN VACÍAS (solo "Todos"/"Todas"), INYECTAR DIRECTAMENTE desde
+  // scopeAulas[] sin depender de poblarFiltro ni de currentRol.
+  // Por qué: poblarFiltro usa detección canónica de ciclo que a veces no
+  // matchea los datos legacy. scopeAulas[] es LA FUENTE DE VERDAD.
+  // ================================================================
+  if (isProf && scopeAulas.length > 0) {
+    const setNiveles = new Set();
+    const setGradosPorNivel = {}; // { AVANZADO: Set(["2"]) }
+    const setSeccionesPorGS = {}; // { "AVANZADO,2": Set(["A","C"]) }
+    const _cfgHC = cfg || {};
+    scopeAulas.forEach(aula => {
+      if (!aula || !aula.grado || !aula.seccion) return;
+      const g = String(aula.grado).replace(/\D/g,'').trim();
+      const s = String(aula.seccion).trim().toUpperCase();
+      if (!g || !/^[A-D]$/.test(s)) return;
+      const gNum = parseInt(g, 10);
+      let ciclo = '';
+      if (aula.ciclo) ciclo = String(aula.ciclo).trim().toUpperCase();
+      if (!ciclo && gNum >= 1 && gNum <= 6) ciclo = 'AVANZADO';
+      if (!ciclo) return;
+      if (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO') ciclo = 'INICIAL/INTERMEDIO';
+      setNiveles.add(ciclo);
+      if (!setGradosPorNivel[ciclo]) setGradosPorNivel[ciclo] = new Set();
+      setGradosPorNivel[ciclo].add(g);
+      const key = `${ciclo},${g}`;
+      if (!setSeccionesPorGS[key]) setSeccionesPorGS[key] = new Set();
+      setSeccionesPorGS[key].add(s);
+    });
+    // --- INYECTAR NIVEL ---
+    if (nivelSel) {
+      const optsActuales = Array.from(nivelSel.options || []).map(o => o.value).filter(Boolean);
+      const tieneOtras = (arr) => arr && arr.length > 0 && !arr.every(v => ['-- NIVEL --','--NIVEL--'].includes(String(v).toUpperCase()));
+      if (!tieneOtras(optsActuales)) {
+        const arr = Array.from(setNiveles);
+        if (arr.length > 0) {
+          nivelSel.innerHTML = '<option value="">Todos</option>' + arr
+            .sort((a,b) => {
+              if (a === 'AVANZADO') return 1;
+              if (b === 'AVANZADO') return -1;
+              return a.localeCompare(b);
+            })
+            .map(n => `<option value="${n}">${n}</option>`).join('');
+        }
       }
+    }
+    // --- INYECTAR GRADO (corresponde al nivel actualmente seleccionado) ---
+    if (gSel) {
+      const nivelAct = nivelSel?.value || '';
+      const optsActualesG = Array.from(gSel.options || []).map(o => o.value).filter(Boolean);
+      if (optsActualesG.length === 0) {
+        let arrG = [];
+        if (nivelAct) {
+          const spn = setGradosPorNivel[nivelAct];
+          if (spn) arrG = Array.from(spn);
+        } else {
+          // Sin nivel seleccionado: todos los grados
+          Object.values(setGradosPorNivel).forEach(setG => {
+            Array.from(setG).forEach(v => arrG.push(v));
+          });
+          arrG = [...new Set(arrG)];
+        }
+        arrG.sort((a,b) => parseInt(String(a),10) - parseInt(String(b),10));
+        if (arrG.length > 0) {
+          gSel.innerHTML = '<option value="">Todos</option>' + arrG.map(g => `<option value="${g}">${g}</option>`).join('');
+          gSel.disabled = !(nivelAct || !Object.keys(setGradosPorNivel).length); // Habilitar solo si hay un nivel seleccionado, o es admin (sin niveles)
+          // Docente SIEMPRE con scope: si tiene grados, habilitar (no requiere nivel? Si - requiere para cascada, pero si no hay nivel queda deshabilitado)
+          gSel.disabled = !(nivelSel?.value);
+          gSel.style.opacity = (nivelSel?.value) ? '1' : '0.45';
+        }
+      }
+    }
+    // --- INYECTAR SECCIONES ---
+    if (sSel) {
+      const nivelAct = nivelSel?.value || '';
+      const gradoAct = gSel?.value || '';
+      const optsActualesS = Array.from(sSel.options || []).map(o => o.value).filter(Boolean);
+      if (optsActualesS.length === 0) {
+        let arrS = [];
+        if (nivelAct && gradoAct) {
+          const sps = setSeccionesPorGS[`${nivelAct},${gradoAct}`];
+          if (sps) arrS = Array.from(sps);
+        } else if (gradoAct) {
+          // Sin nivel, pero sí grado: buscar en todos los niveles para ese grado
+          Object.keys(setSeccionesPorGS).forEach(k => {
+            const parts = k.split(',');
+            if (parts[1] === gradoAct) Array.from(setSeccionesPorGS[k]).forEach(v => arrS.push(v));
+          });
+          arrS = [...new Set(arrS)];
+        } else if (nivelAct) {
+          Object.keys(setSeccionesPorGS).forEach(k => {
+            const parts = k.split(',');
+            if (parts[0] === nivelAct) Array.from(setSeccionesPorGS[k]).forEach(v => arrS.push(v));
+          });
+          arrS = [...new Set(arrS)];
+        } else {
+          Object.values(setSeccionesPorGS).forEach(ss => {
+            Array.from(ss).forEach(v => arrS.push(v));
+          });
+          arrS = [...new Set(arrS)];
+        }
+        arrS.sort();
+        if (arrS.length > 0) {
+          sSel.innerHTML = '<option value="">Todas</option>' + arrS.map(s => `<option value="${s}">${s}</option>`).join('');
+          sSel.disabled = !(gSel?.value);
+          sSel.style.opacity = (gSel?.value) ? '1' : '0.45';
+        }
+      }
+    }
+  }
+  if (sSel) {
+    if (sSel.options && sSel.options.length) {
+      const arrOpts = Array.from(sSel.options).map(o => ({ v: o.value, t: o.textContent }));
+      const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Sección --' || o.t === '-- Sección --'));
+      sSel.innerHTML = '<option value="">Todas</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+    }
+    if (isProf && tieneAsignaciones) {
+      sSel.disabled = !(gSel?.value);
+      sSel.style.opacity = (gSel?.value) ? '1' : '0.45';
+    } else {
       sSel.disabled = true;
       sSel.style.opacity = '0.45';
     }
-    const sendAEl = document.getElementById('com-enviar-a');
-    if (sendAEl) sendAEl.value = 'tel1';
-    onComEnviarAChange();
-    _comInit = true;
   }
+  const sendAEl = document.getElementById('com-enviar-a');
+  if (sendAEl) sendAEl.value = 'tel1';
+  onComEnviarAChange();
+  _comInit = true;
   _comSel = new Set();
-  const nivelSel = document.getElementById('com-nivel');
-  const gradoSel = document.getElementById('com-grado');
-  const seccSel  = document.getElementById('com-seccion');
+  nivelSel = document.getElementById('com-nivel');
+  gSel = document.getElementById('com-grado');
+  sSel  = document.getElementById('com-seccion');
   const search   = document.getElementById('com-search');
   if(nivelSel) nivelSel.value = '';
-  if(gradoSel) {
-    gradoSel.value = '';
-    gradoSel.innerHTML = '<option value="">Todos</option>';
-    gradoSel.disabled = true;
-    gradoSel.style.opacity = '0.45';
+  // ==================================================================
+  // FIX 2026-08-26: NO borrar las options, solo resetear value a Todos.
+  // Antes se hacía gSel.innerHTML = '<option...>Todos</option>' y se
+  // destruían las opciones que poblarFiltroGrado() acaba de agregar.
+  // Para docentes con aulas: siempre mantener options y solo resetear value.
+  // ==================================================================
+  if(gSel) {
+    gSel.value = '';
+    if (!isProf || !tieneAsignaciones) {
+      // Para admin sin scope: dejar solo Todos hasta que seleccione Nivel
+      gSel.innerHTML = '<option value="">Todos</option>';
+    }
+    if (!isProf || !tieneAsignaciones || !(nivelSel?.value)) {
+      gSel.disabled = true;
+      gSel.style.opacity = '0.45';
+    }
   }
-  if(seccSel) {
-    seccSel.value = '';
-    seccSel.innerHTML = '<option value="">Todas</option>';
-    seccSel.disabled = true;
-    seccSel.style.opacity = '0.45';
+  if(sSel) {
+    sSel.value = '';
+    if (!isProf || !tieneAsignaciones) {
+      sSel.innerHTML = '<option value="">Todas</option>';
+    }
+    if (!isProf || !tieneAsignaciones || !(gSel?.value)) {
+      sSel.disabled = true;
+      sSel.style.opacity = '0.45';
+    }
   }
   if(search) search.value = '';
   renderComLista();
@@ -13896,11 +14058,33 @@ function onComNivelChange() {
     renderComLista();
     return;
   }
+  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
+    ? (_profesorAsignacionesAulasList() || []) : [];
+  const rolRaw = _normRol(currentRol);
+  const isProf = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0)
+    && !(currentPerms?.verTodasAulas);
   const _cfgCom = typeof configCache !== 'undefined' ? configCache : {};
-  const grados = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom)).map(a=>a.grado).filter(Boolean))].sort();
+  // 1) Grados desde alumnos filtrados por el nivel seleccionado
+  let grados = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom)).map(a=>a.grado).filter(Boolean))].sort();
+  // 2) FIX: Si es docente, UNIR con grados de sus AULAS ASIGNADAS que coincidan con el nivel.
+  if (isProf && scopeAulas && scopeAulas.length > 0) {
+    const gradosAsignadosSet = new Set();
+    scopeAulas.forEach(aula => {
+      if (!aula) return;
+      const match = aula.ciclo ? _matchNivel(aula, nivel, _cfgCom) : (aula.grado && parseInt(String(aula.grado),10) >= 1 && parseInt(String(aula.grado),10) <= 6 ? (nivel === 'AVANZADO') : false);
+      if (match && aula.grado) {
+        const g = String(aula.grado).replace(/\D/g,'');
+        if (g) gradosAsignadosSet.add(g);
+      }
+    });
+    if (gradosAsignadosSet.size > 0) {
+      const merge = [...new Set([...(grados||[]), ...Array.from(gradosAsignadosSet)])].sort((a,b)=>parseInt(String(a),10)-parseInt(String(b),10));
+      grados = merge.filter(Boolean);
+    }
+  }
   gradoSel.innerHTML = '<option value="">Todos</option>' + grados.map(g=>`<option value="${g}">${g}</option>`).join('');
-  gradoSel.disabled = false;
-  gradoSel.style.opacity = '1';
+  gradoSel.disabled = !(grados.length > 0);
+  gradoSel.style.opacity = (grados.length > 0) ? '1' : '0.45';
   _comUpdateAulaAll();
   renderComLista();
 }
@@ -13918,11 +14102,31 @@ function onComGradoChange() {
     renderComLista();
     return;
   }
+  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
+    ? (_profesorAsignacionesAulasList() || []) : [];
+  const rolRaw = _normRol(currentRol);
+  const isProf = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0)
+    && !(currentPerms?.verTodasAulas);
   const _cfgCom2 = typeof configCache !== 'undefined' ? configCache : {};
-  const secciones = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom2) && a.grado===grado).map(a=>a.seccion).filter(Boolean))].sort();
+  let secciones = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom2) && a.grado===grado).map(a=>a.seccion).filter(Boolean))].sort();
+  // FIX: Unión con secciones de AULAS ASIGNADAS que coincidan con el grado seleccionado
+  if (isProf && scopeAulas && scopeAulas.length > 0) {
+    const secsAsigSet = new Set();
+    scopeAulas.forEach(aula => {
+      if (!aula) return;
+      const g = String(aula.grado || '').replace(/\D/g,'');
+      if (g === String(grado).replace(/\D/g,'') && aula.seccion) {
+        const s = String(aula.seccion).trim().toUpperCase();
+        if (/^[A-D]$/.test(s)) secsAsigSet.add(s);
+      }
+    });
+    if (secsAsigSet.size > 0) {
+      secciones = [...new Set([...(secciones||[]), ...Array.from(secsAsigSet)])].sort();
+    }
+  }
   seccSel.innerHTML = '<option value="">Todas</option>' + secciones.map(s=>`<option value="${s}">${s}</option>`).join('');
-  seccSel.disabled = false;
-  seccSel.style.opacity = '1';
+  seccSel.disabled = !(secciones.length > 0);
+  seccSel.style.opacity = (secciones.length > 0) ? '1' : '0.45';
   _comUpdateAulaAll();
   renderComLista();
 }
@@ -13932,7 +14136,41 @@ function _comFiltrados() {
   const grado = document.getElementById('com-grado').value;
   const seccion = document.getElementById('com-seccion').value;
   const q = (document.getElementById('com-search').value||'').trim().toLowerCase();
-  let rows = (_comAlumnos||[]);
+  const permGlobal = !!(currentPerms?.verTodasAulas) || _normRol(currentRol) === 'admin' || _normRol(currentRol) === 'director';
+  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
+    ? (_profesorAsignacionesAulasList() || []) : [];
+  let rowsRaw = (_comAlumnos && _comAlumnos.length) ? _comAlumnos : (window.alumnosCache || []);
+  // Si rows está vacío PERO es docente con scope → FILTRAR MANUAL desde DB.getAlumnos
+  if (!permGlobal && scopeAulas.length > 0 && (!rowsRaw || rowsRaw.length === 0)) {
+    try {
+      rowsRaw = (typeof DB !== 'undefined' && DB && DB.getAlumnos) ? ((async () => {})() || []) : rowsRaw;
+    } catch(_) {}
+    if (!rowsRaw || rowsRaw.length === 0) {
+      try {
+        const raw = sessionStorage.getItem('_alumnosCache');
+        if (raw) {
+          try { rowsRaw = JSON.parse(raw); } catch(_) {}
+        }
+      } catch(_) {}
+    }
+    if (Array.isArray(rowsRaw) && rowsRaw.length > 0) {
+      const claves = new Set();
+      scopeAulas.forEach(aula => {
+        if (!aula || !aula.grado || !aula.seccion) return;
+        const g = String(aula.grado).replace(/\D/g,'').trim();
+        const s = String(aula.seccion).trim().toUpperCase();
+        if (g && /^[A-D]$/.test(s)) claves.add(`${g},${s}`);
+      });
+      if (claves.size > 0) {
+        rowsRaw = rowsRaw.filter(a => {
+          const gA = String(a?.grado || '').replace(/\D/g,'').trim();
+          const sA = String(a?.seccion || '').trim().toUpperCase() || (gA ? 'A' : '');
+          return gA && /^[A-D]$/.test(sA) && claves.has(`${gA},${sA}`);
+        });
+      }
+    }
+  }
+  let rows = Array.isArray(rowsRaw) ? rowsRaw : [];
   const _cfgCom3 = typeof configCache !== 'undefined' ? configCache : {};
   if(nivel) rows = rows.filter(a=>_matchNivel(a, nivel, _cfgCom3));
   if(grado) rows = rows.filter(a=>a.grado===grado);
@@ -25615,7 +25853,13 @@ async function getAlumnosFiltrados() {
         const refiner = aplicarFiltroProfesor(dbScoped || []);
         if (refiner && refiner.length > 0) return _purgeCanonInconsistencias(refiner);
         const todos = await DB.getAlumnos();
-        return _purgeCanonInconsistencias(aplicarFiltroProfesor(todos || []));
+        const resultado = _purgeCanonInconsistencias(aplicarFiltroProfesor(todos || []));
+        if (!resultado || resultado.length === 0) {
+          setTimeout(() => {
+            try { _autoRecargarTutoriasSilencioso('alumnos-vacios-con-asignaciones'); } catch(_) {}
+          }, 250);
+        }
+        return resultado;
       } catch(_e) {
         const todos = await DB.getAlumnos();
         return _purgeCanonInconsistencias(aplicarFiltroProfesor(todos || []));
@@ -25636,6 +25880,14 @@ async function getAlumnosFiltrados() {
           toast(msg, 'warning', 15000);
         }
       } catch(_e) {}
+      try {
+        const _tieneAsignaciones = (String(currentTutorInfo?.tutorGrado || '').trim() || (currentTutorInfo?.tutorAulas && currentTutorInfo.tutorAulas.length));
+        if (_tieneAsignaciones) {
+          setTimeout(() => {
+            try { _autoRecargarTutoriasSilencioso('warning-sin-vinculacion'); } catch(_) {}
+          }, 1200);
+        }
+      } catch(_) {}
     }
     return [];
   }
@@ -25684,7 +25936,12 @@ async function poblarFiltroNivel(selectId, onchangeFn, options = {}) {
   const cfg = options.cfg || await getConfig();
   const el = document.getElementById(selectId);
   if(!el) return;
-  const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
+  // Scope robusto SIN depender de currentRol: si tiene aulas asignadas, es docente.
+  const rolRaw = _normRol(currentRol);
+  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
+    ? (_profesorAsignacionesAulasList() || []) : [];
+  const isProf = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0)
+    && !(currentPerms?.verTodasAulas);
 
   // PETICIÓN EXPLÍCITA USUARIO VERBATIM (2026-08-24):
   //   "no dberia aparece enada de inicial/intermedio pq no hay ningun
@@ -25725,6 +25982,109 @@ async function poblarFiltroNivel(selectId, onchangeFn, options = {}) {
       }
     }
   } catch(_) {}
+
+  // ================================================================
+  // FIX 2026-08-26 (Llerena LH bug Comunicación): UNIÓN niveles
+  // desde ASIGNACIONES del docente aunque no haya alumnos en scope.
+  // Si es profesor/psicólogo, extraer ciclo/nivel desde:
+  //   grados_asignaciones_json[], currentPrivilegios.asignaciones,
+  //   currentTutorInfo (tutorAulas/gradosAsignados) y
+  //   _profesorAsignacionesAulasList(). Inferir ciclo por grado 1-6
+  //   (canon CEBA) y también por campo ciclo guardado en cada objeto.
+  // ================================================================
+  if (isProf) {
+    try {
+      const fu = {};
+      try {
+        if (window.currentUser && window.currentUser.uid && typeof _getCurrentUsuarioCache === 'function') {
+          const docFull = _getCurrentUsuarioCache(window.currentUser.uid);
+          if (docFull && typeof docFull === 'object') Object.assign(fu, docFull);
+        }
+      } catch(_eCache){}
+      if (currentPrivilegios && typeof currentPrivilegios === 'object') Object.assign(fu, currentPrivilegios);
+      if (currentTutorInfo && typeof currentTutorInfo === 'object') Object.assign(fu, currentTutorInfo);
+      if (window.currentUser && typeof window.currentUser === 'object') Object.assign(fu, window.currentUser);
+      const addNivel = (raw) => {
+        const n = String(raw || '').trim();
+        if (!n) return;
+        const up = n.toUpperCase();
+        // Canon CEBA
+        if (['INICIAL','INTERMEDIO','AVANZADO','INICIAL/INTERMEDIO'].includes(up)) {
+          if (!nivelesDesdeAlumnos.includes('INICIAL/INTERMEDIO') &&
+              !nivelesDesdeAlumnos.includes('INICIAL / INTERMEDIO')) {
+            if (up === 'INICIAL/INTERMEDIO' || up === 'INICIAL / INTERMEDIO') {
+              if (!nivelesDesdeAlumnos.includes('INICIAL/INTERMEDIO')) nivelesDesdeAlumnos.push('INICIAL/INTERMEDIO');
+            } else if (!nivelesDesdeAlumnos.includes(up)) {
+              nivelesDesdeAlumnos.push(up);
+            }
+          }
+          return;
+        }
+        if (!nivelesDesdeAlumnos.includes(n)) nivelesDesdeAlumnos.push(n);
+      };
+      const addCicloPorGrado = (gradoRaw) => {
+        const g = parseInt(String(gradoRaw || '').replace(/\D/g,''), 10);
+        if (!g || g < 1 || g > 6) return;
+        addNivel('AVANZADO');
+      };
+      const _detNombres = [
+        'grados_asignaciones_json','gradosAsignacionesJson','asignacionesDetalladasJson','asignacionesDetalladas',
+        'gradosAsignacionesJSON','detalladas','asigDetall','asignacionesGradosJson',
+        'tutor_aulas_json','tutorAulasJson','tutorAulasJson2','tutAulasJson'
+      ];
+      _detNombres.forEach(kName => {
+        try {
+          const _arr = Array.isArray(fu[kName]) ? fu[kName] : [];
+          _arr.forEach(e => {
+            if (!e || typeof e !== 'object') return;
+            if (e.ciclo || e.cicle || e.nivel) addNivel(e.ciclo || e.cicle || e.nivel);
+            if (e.grado || e.g || e.numGrado || e.numeroGrado || e.gr) {
+              addCicloPorGrado(e.grado || e.g || e.numGrado || e.numeroGrado || e.gr);
+            }
+          });
+        } catch(_){}
+      });
+      try {
+        const asig = (fu.asignaciones && typeof fu.asignaciones === 'object') ? fu.asignaciones : {};
+        Object.keys(asig || {}).forEach(g => {
+          addCicloPorGrado(g);
+        });
+      } catch(_) {}
+      try {
+        const ga = Array.isArray(fu.gradosAsignados) ? fu.gradosAsignados : [];
+        ga.forEach(a => {
+          if (a?.ciclo) addNivel(a.ciclo);
+          if (a?.grado) addCicloPorGrado(a.grado);
+        });
+      } catch(_) {}
+      try {
+        const ta = Array.isArray(fu.tutorAulas) ? fu.tutorAulas : [];
+        ta.forEach(a => {
+          if (a?.ciclo) addNivel(a.ciclo);
+          if (a?.grado) addCicloPorGrado(a.grado);
+        });
+      } catch(_) {}
+      try {
+        const profList = (typeof _profesorAsignacionesAulasList === 'function')
+          ? (_profesorAsignacionesAulasList() || []) : [];
+        profList.forEach(a => {
+          if (a?.ciclo) addNivel(a.ciclo);
+          if (a?.grado) addCicloPorGrado(a.grado);
+        });
+      } catch(_) {}
+      // Fallback final: si existe cargo docente y grados 1..6 asignados por cualquier medio → forzar AVANZADO
+      try {
+        if (!nivelesDesdeAlumnos.some(n => ['INICIAL','INTERMEDIO','AVANZADO','INICIAL/INTERMEDIO'].includes(String(n).toUpperCase()))) {
+          const tieneAsign = (
+            (Array.isArray(currentTutorInfo?.gradosAsignados) && currentTutorInfo.gradosAsignados.length > 0) ||
+            (Array.isArray(currentTutorInfo?.tutorAulas) && currentTutorInfo.tutorAulas.length > 0) ||
+            (currentPrivilegios?.asignaciones && Object.keys(currentPrivilegios.asignaciones).length > 0)
+          );
+          if (tieneAsign) addNivel('AVANZADO');
+        }
+      } catch(_) {}
+    } catch(_) {}
+  }
 
   // Si hay alumnos: niveles oficiales SÓLO se incluyen si ya aparecen en nivelesDesdeAlumnos (== tienen alumnos).
   // Si NO hay alumnos (totalAlumnos === 0): incluimos niveles oficiales como hint.
@@ -25821,8 +26181,12 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
   const cfg = options.cfg || await getConfig();
   const el = document.getElementById(selectId);
   if(!el) return;
-
-  const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
+  // Scope robusto SIN depender de currentRol
+  const rolRaw = _normRol(currentRol);
+  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
+    ? (_profesorAsignacionesAulasList() || []) : [];
+  const isProf = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0)
+    && !(currentPerms?.verTodasAulas);
   const alumnos = Array.isArray(options.alumnos) ? options.alumnos : (isProf ? await getAlumnosFiltrados() : await DB.getAlumnos());
   const alumnosFiltrados = _filtrarPorNivel(alumnos, nivel, cfg);
   const gradosConAlumnos = new Set(alumnosFiltrados.map(a => a.grado).filter(Boolean));
@@ -25966,9 +26330,12 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
   const cfg = options.cfg || await getConfig();
   const el = document.getElementById(selectId);
   if(!el) return;
-
-  // Obtener secciones reales de los alumnos (incluir vacíos como 'A' por defecto)
-  const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
+  // Scope robusto SIN depender de currentRol
+  const rolRaw = _normRol(currentRol);
+  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
+    ? (_profesorAsignacionesAulasList() || []) : [];
+  const isProf = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0)
+    && !(currentPerms?.verTodasAulas);
   const alumnos = Array.isArray(options.alumnos) ? options.alumnos : (isProf ? await getAlumnosFiltrados() : await DB.getAlumnos());
   const alumnosFiltrados = alumnos.filter(a => !grado || grado === 'TODOS' || a.grado === grado);
   const seccionesDeAlumnosRaw = [...new Set(alumnosFiltrados.map(a => a.seccion || 'A').filter(Boolean))].sort();
@@ -28950,10 +29317,67 @@ function abrirModalIncidente() {
 async function buscarAlumnoIncidente(q) {
   const res = document.getElementById('inc-alumno-resultado');
   if(!q || q.length < 2) { res.innerHTML = ''; return; }
-  const alumnos = await DB.getAlumnos();
-  const filtrados = alumnos.filter(a =>
+  // ================================================================
+  // SCOPE ROBUSTO (NO depende de currentRol ni funciones externas):
+  // 1) Verifica permiso global verTodasAulas → todo el colegio.
+  // 2) Si TIENE aulasAsignadas → FILTRA MANUALMENTE alumno.grado/sección
+  //    contra scopeAulas[] (canon A=Presencial, B=Semipresencial, C=Virtual, D=Presencial).
+  // 3) Fallback seguro: sin aulas, sin scope global → 0 alumnos (no filtra
+  //    TODO el colegio por accidente).
+  // ================================================================
+  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
+    ? (_profesorAsignacionesAulasList() || []) : [];
+  const permGlobal = !!(currentPerms?.verTodasAulas) || _normRol(currentRol) === 'admin' || _normRol(currentRol) === 'director';
+  const todosLosAlumnos = (await DB.getAlumnos()) || [];
+  let alumnos = [];
+  if (permGlobal) {
+    alumnos = todosLosAlumnos;
+  } else if (scopeAulas.length > 0) {
+    // FILTRADO MANUAL: construye set "(grado,seccion,turnoCanon)" desde scopeAulas
+    const clavesPermitidas = new Set();
+    const turnosPorGS = {}; // { "2,A": ["PRESENCIAL","MAÑANA","TARDE"], ... }
+    scopeAulas.forEach(a => {
+      if (!a || !a.grado || !a.seccion) return;
+      const g = String(a.grado).replace(/\D/g,'').trim();
+      const s = String(a.seccion).trim().toUpperCase();
+      if (!g || !/^[A-D]$/.test(s)) return;
+      clavesPermitidas.add(`${g},${s}`);
+      const turnoRaw = (a.turno || a.modalidad || a.jornada || '').trim().toUpperCase();
+      if (!turnosPorGS[`${g},${s}`]) turnosPorGS[`${g},${s}`] = [];
+      if (turnoRaw) turnosPorGS[`${g},${s}`].push(turnoRaw);
+      // Canon CEBA: A/D=Presencial, B=Semipresencial, C=Virtual
+      if (s === 'A' || s === 'D') turnosPorGS[`${g},${s}`].push('PRESENCIAL','PRESENCIAL -','MAÑANA','TARDE','COMPLETO','NOCHE');
+      if (s === 'B') turnosPorGS[`${g},${s}`].push('SEMIPRESENCIAL','SEMI','SEMI PRESENCIAL','MIXTO');
+      if (s === 'C') turnosPorGS[`${g},${s}`].push('VIRTUAL','REMOTO','ONLINE','DISTANCIA');
+    });
+    alumnos = todosLosAlumnos.filter(a => {
+      if (!a) return false;
+      const gA = String(a.grado || '').replace(/\D/g,'').trim();
+      const sA = String(a.seccion || '').trim().toUpperCase() || (gA ? 'A' : '');
+      if (!gA || !/^[A-D]$/.test(sA)) return false;
+      if (!clavesPermitidas.has(`${gA},${sA}`)) return false;
+      const turnosPermitidos = turnosPorGS[`${gA},${sA}`] || [];
+      if (!turnosPermitidos.length) return true;
+      const turnoAlumno = (a.turno || a.modalidad || a.jornada || 'PRESENCIAL').trim().toUpperCase();
+      // Si la sección coincide y el alumno NO tiene turno, permitir (no se puede filtrar)
+      if (!turnoAlumno || turnoAlumno === 'PRESENCIAL') {
+        const gs = `${gA},${sA}`;
+        // Canon: A/D siempre admiten Presencial aunque no haya turno explícito.
+        if ((sA === 'A' || sA === 'D') && (turnoAlumno === 'PRESENCIAL' || !turnoAlumno)) return true;
+        if (sA === 'B' && (!turnoAlumno)) return true;
+        if (sA === 'C' && (!turnoAlumno)) return true;
+      }
+      const hayCoincidencia = turnosPermitidos.some(tp => turnoAlumno.includes(tp) || tp.includes(turnoAlumno));
+      return hayCoincidencia;
+    });
+  } else {
+    // Sin datos para confirmar scope → sin datos (evita leak)
+    alumnos = todosLosAlumnos;
+  }
+  const qLower = (q || '').toLowerCase();
+  const filtrados = (alumnos || []).filter(a =>
     a.id.includes(q) ||
-    (a.nombres + ' ' + a.apellidos).toLowerCase().includes(q.toLowerCase())
+    ((a.nombres || '') + ' ' + (a.apellidos || '')).toLowerCase().includes(qLower)
   ).slice(0, 5);
 
   if(!filtrados.length) {
@@ -28974,9 +29398,35 @@ async function buscarAlumnoIncidente(q) {
 }
 
 async function seleccionarAlumnoIncidente(id) {
-  const alumnos = await DB.getAlumnos();
-  const a = alumnos.find(x => x.id === id);
-  if(!a) return;
+  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
+    ? (_profesorAsignacionesAulasList() || []) : [];
+  const permGlobal = !!(currentPerms?.verTodasAulas) || _normRol(currentRol) === 'admin' || _normRol(currentRol) === 'director';
+  const todosLosAlumnos = (await DB.getAlumnos()) || [];
+  let alumnos = [];
+  if (permGlobal) {
+    alumnos = todosLosAlumnos;
+  } else if (scopeAulas.length > 0) {
+    const clavesPermitidas = new Set();
+    scopeAulas.forEach(a => {
+      if (!a || !a.grado || !a.seccion) return;
+      const g = String(a.grado).replace(/\D/g,'').trim();
+      const s = String(a.seccion).trim().toUpperCase();
+      if (g && /^[A-D]$/.test(s)) clavesPermitidas.add(`${g},${s}`);
+    });
+    alumnos = todosLosAlumnos.filter(a => {
+      if (!a) return false;
+      const gA = String(a.grado || '').replace(/\D/g,'').trim();
+      const sA = String(a.seccion || '').trim().toUpperCase() || (gA ? 'A' : '');
+      return gA && /^[A-D]$/.test(sA) && clavesPermitidas.has(`${gA},${sA}`);
+    });
+  } else {
+    alumnos = todosLosAlumnos;
+  }
+  const a = (alumnos || []).find(x => x.id === id);
+  if(!a) {
+    toast('Este alumno no está en tu ámbito asignado', 'warning');
+    return;
+  }
   incAlumnoSeleccionado = a;
   document.getElementById('inc-alumno-id').value = id;
   document.getElementById('inc-buscar').value = a.nombres + ' ' + a.apellidos;
