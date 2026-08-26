@@ -6243,9 +6243,13 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
     // 6. LIMPIADORES DE SEGURIDAD ASÍNCRONOS (para cualquier race condition
     //    de poblarFiltro/promises que se ejecutan después):
     //    100ms, 300ms, 500ms y 1200ms → re-limpia values y re-aplica cascada disabled.
-    //    CONDICIÓN: SOLO si NO ha habido interacción MANUAL del docente
+    //    CONDICIÓN 1: SOLO si NO ha habido interacción MANUAL del docente
     //    (window._tutoriaInteraccionManual = false). Si Orlando ya tocó el select,
     //    NO limpiamos para no perder su selección.
+    //    CONDICIÓN 2 (EXTRA NUEVA 2026-08-26 Moises): TODOS los selects deben
+    //    estar ACTUALMENTE en '' o placeholder. Si CUALQUIERA de los 4 tiene
+    //    un valor real (ej: nivel='Avanzado') → NO limpiamos NADA. Esto evita
+    //    que a los 1200ms se borre una selección hecha por el usuario.
     //    Casos especiales que también limpiamos (si !interaccionManual):
     //    • value === 'TODOS' → bug browser auto-selecciona la opción después
     //      de recargar innerHTML options → volvemos a placeholder ''.
@@ -6257,7 +6261,22 @@ async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
           const gE = document.getElementById(gradoId);
           const sE = document.getElementById(seccionId);
           const mE = document.getElementById('fa-modalidad');
-          if (nE && (String(nE.value||'') === '' || String(nE.value||'').toUpperCase() === 'TODOS')) {
+          const _selOk = v => {
+            v = String(v||'').trim();
+            if (!v) return false;
+            if (v === 'TODOS') return true; // 'TODOS' = selección explícita → no limpiar
+            if (v === '--') return false;
+            if (v.startsWith('-- ') || v.endsWith(' --')) return false;
+            if (/Seleccionar/i.test(v)) return false;
+            return true;
+          };
+          // CONDICIÓN 2: si CUALQUIER select ya tiene valor real → ABORTAR limpieza total.
+          const nVal = nE ? String(nE.value||'').trim() : '';
+          const gVal = gE ? String(gE.value||'').trim() : '';
+          const sVal = sE ? String(sE.value||'').trim() : '';
+          const mVal = mE ? String(mE.value||'').trim() : '';
+          if (_selOk(nVal) || _selOk(gVal) || _selOk(sVal) || _selOk(mVal)) return;
+          if (nE && (nVal === '' || nVal.toUpperCase() === 'TODOS')) {
             try { nE.value = ''; } catch(_) {}
             try { nE.disabled = false; _enableSelect(nivelId); } catch(_) {}
           }
@@ -9529,47 +9548,19 @@ async function renderAlumnos() {
     const prep = _getPreparedAlumnosView(alumnosBase);
 
     // ------------------------------------------------------------------
-    // POBLAR FA-GRADO / FA-SECCION CON OPCIONES REALES (SOLO UNA VEZ POR
-    // CAMBIO DE DATOS): si el valor actual NO está en las nuevas opciones
-    // válidas → lo reemplazamos por '' (no auto-seleccionar lo que exista
-    // si NO era el seleccionado).
+    // ¡¡¡BLOQUE ELIMINADO 2026-08-26 (Moises bug Orlando 4B+4C):!!!
+    // El render de alumnos NO debe nunca volver a escribir las options de
+    // fa-grado / fa-seccion. Eso provocaba:
+    //   • Paso 1: usuario Nivel=Avanzado, se renderizan 4C (10 alumnos OK).
+    //   • Paso 2: aquí se reescribía fa-grado.innerHTML = [--Grado--, 4] y
+    //     fa-seccion.innerHTML = [--Seccion--, C].
+    //   • Paso 3: las options "4, B" (existentes por poblarFiltroGrado/Seccion
+    //     antes del render) eran ELIMINADAS → usuario ya NO puede elegir B.
+    // La población correcta de dropdowns LA HACEN (y deben seguir haciendo):
+    //   poblarFiltroGrado / poblarFiltroSeccion (onNivelChangeAlumnos)
+    //   poblarFiltroSeccion (onGradoChangeAlumnos)
+    //   onSeccionChangeAlumnos (rewrite fa-modalidad según scope).
     // ------------------------------------------------------------------
-    try {
-      if (_esDocenteOProf && totalDB > 0) {
-        const gSel = document.getElementById('fa-grado');
-        const sSel = document.getElementById('fa-seccion');
-        const setGs = new Set(), setSs = new Set();
-        (prep.sorted || []).forEach(a => {
-          const g = String(a.grado || '').trim();
-          const s = String(a.seccion || '').trim();
-          if (g) setGs.add(g);
-          if (s) setSs.add(s);
-        });
-        const arrGs = [...setGs].sort();
-        const arrSs = [...setSs].sort();
-        if (gSel && arrGs.length > 0) {
-          const curG = String(gSel.value||'').trim();
-          const tienePlace = [...(gSel.options||[])].some(o => String(o.value||'') === '');
-          let html = '';
-          if (tienePlace) html += '<option value="">-- Grado --</option>';
-          arrGs.forEach(g => { html += `<option value="${g}">${g}</option>`; });
-          gSel.innerHTML = html;
-          // SOLO mantener curG si EXISTÍA en arrGs. Si placeholder '' → mantener.
-          if (arrGs.includes(curG) || curG === '') gSel.value = curG;
-          else gSel.value = '';
-        }
-        if (sSel && arrSs.length > 0) {
-          const curS = String(sSel.value||'').trim();
-          const tienePlace = [...(sSel.options||[])].some(o => String(o.value||'') === '');
-          let html = '';
-          if (tienePlace) html += '<option value="">-- Sección --</option>';
-          arrSs.forEach(s => { html += `<option value="${s}">${s}</option>`; });
-          sSel.innerHTML = html;
-          if (arrSs.includes(curS) || curS === '') sSel.value = curS;
-          else sSel.value = '';
-        }
-      }
-    } catch (_) { console.warn('[renderAlumnos] poblar filtros falló:', _); }
 
     // ------------------------------------------------------------------
     // APLICAR FILTROS UI (SI existen valores reales, si no → ignora)
@@ -26288,6 +26279,9 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
   // Antes: solo mostraba grados si aparecían en scope alumnos →
   //   bug captura usuario: dropdown Grado = [--Grado--, Todos] sin nums.
   // Ahora: union (gradosConAlumnos ∪ gradosAsignadosDocente).
+  // FIX 2026-08-26 Moises Orlando: scopeAulas recorre con ciclo normalizado
+  // via _normCicloScope y filtra por el nivel seleccionado (si lo hay) →
+  // el grado 4 con ciclo PRIMARIA legacy se mapea a AVANZADO correctamente.
   // ================================================================
   if (isProf) {
     try {
@@ -26316,7 +26310,20 @@ async function poblarFiltroGrado(selectId, nivel, options = {}) {
       const profList = (typeof _profesorAsignacionesAulasList === 'function')
         ? (_profesorAsignacionesAulasList() || []) : [];
       profList.forEach(a => {
-        const gClean = String(a?.grado||'').trim();
+        if (!a?.grado) return;
+        const gClean = String(a.grado||'').trim().replace(/\D/g,'');
+        if (!gClean) return;
+        // ✅ FILTRAR POR NIVEL SELECCIONADO (si existe) ciclo normalizado.
+        // Si no hay nivel seleccionado → agregar todos.
+        if (nivel && nivel !== 'TODOS') {
+          const gNum = parseInt(gClean, 10);
+          const ciclo = _normCicloScope(a.ciclo || (a.nivel ? a.nivel : ''), Number.isFinite(gNum) ? gNum : undefined);
+          // Si el scope trae PRIMARIA/EBR legacy → mapea a AVANZADO → coincide
+          if (!ciclo) return;
+          const coincide = (ciclo === nivel) ||
+            ((nivel === 'INICIAL/INTERMEDIO') && (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO'));
+          if (!coincide) return;
+        }
         if (gClean) gradosConAlumnos.add(gClean);
       });
     } catch(_) {}
@@ -26515,13 +26522,26 @@ async function poblarFiltroSeccion(selectId, grado, options = {}) {
       });
     } catch(_) {}
     try {
+      const nivelSel = document.getElementById('fa-nivel') ? document.getElementById('fa-nivel').value : '';
       const profList = (typeof _profesorAsignacionesAulasList === 'function')
         ? (_profesorAsignacionesAulasList() || []) : [];
       profList.forEach(a => {
-        const gC = String(a?.grado||'').trim();
-        if (grado && grado !== 'TODOS' && gC !== String(grado||'').trim()) return;
-        const sC = String(a?.seccion||'').trim().toUpperCase();
-        if (sC && sC !== 'TODAS') seccionesSet.add(sC);
+        if (!a?.grado || !a?.seccion) return;
+        const gC = String(a.grado||'').trim().replace(/\D/g,'');
+        if (!gC) return;
+        if (grado && grado !== 'TODOS' && gC !== String(grado||'').trim().replace(/\D/g,'')) return;
+        const sC = String(a.seccion||'').trim().toUpperCase();
+        if (!sC || !/^[A-D]$/.test(sC) || sC === 'TODAS') return;
+        // Filtrar por NIVEL seleccionado (ciclo normalizado).
+        if (nivelSel && nivelSel !== 'TODOS') {
+          const gNum = parseInt(gC, 10);
+          const ciclo = _normCicloScope(a.ciclo || (a.nivel ? a.nivel : ''), Number.isFinite(gNum) ? gNum : undefined);
+          if (!ciclo) return;
+          const coincide = (ciclo === nivelSel) ||
+            ((nivelSel === 'INICIAL/INTERMEDIO') && (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO'));
+          if (!coincide) return;
+        }
+        seccionesSet.add(sC);
       });
     } catch(_) {}
   }
