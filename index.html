@@ -6111,6 +6111,21 @@ function _nivelesCortosScopeDocente() {
  *   que el DOM seleccione "Avanzado" por defecto por ser la primera opcion no-disabled.
  */
 async function _autoSelectTutoria(nivelId, gradoId, seccionId, options = {}) {
+  // ✅ FIX 2026-08-26 (Orlando lista desaparece): Si el usuario YA interactuó
+  // manualmente con los selects (cambió Nivel/Grado/Seccion/Mod) → NO TOCAR NADA.
+  // Esta flag se setea en onNivelChangeAlumnos L26954 y en onSearchAlumnos.
+  // Esto previene que:
+  //   1. _autoRecargarTutoriasSilencioso (L7030) → inicializarFiltros →
+  //      _autoSelectTutoria → L6190 borre fa-nivel.value ("Avanzado") → ''
+  //   2. Los setTimeout 100/300/500/1200ms L6256 reseteen selects cuando
+  //      el usuario ya eligió algo (más guardia redundante L6259).
+  try {
+    if (window._tutoriaInteraccionManual === true) {
+      // Aún así: intentar attach listeners (por si innerHTML reciente los mató)
+      try { if (typeof _attachCascadaListenersAlumnos === 'function') _attachCascadaListenersAlumnos(); } catch(_) {}
+      return;
+    }
+  } catch(_) {}
   const nEl = document.getElementById(nivelId);
   const gEl = document.getElementById(gradoId);
   const sEl = document.getElementById(seccionId);
@@ -7027,10 +7042,23 @@ async function _autoRecargarTutoriasSilencioso(motivo = '') {
     const cfg = await getConfig(true);
     await cargarTutorActual(uData);
     await cargarPrivilegiosActuales(cfg, uData);
-    await inicializarFiltros({ cfg });
+    // ✅ FIX 2026-08-26 (Orlando lista desaparece a los 1200ms):
+    // SOLO repoblar dropdowns via inicializarFiltros SI el usuario AÚN NO
+    // ha interactuado manualmente. Si ya tocó Nivel/Grado → la lista está
+    // mostrando sus alumnos; NO REINICIAR selects a '' (desaparece lista).
+    let _skipReinicioSelects = false;
+    try { _skipReinicioSelects = (window._tutoriaInteraccionManual === true); } catch(_) {}
+    if (!_skipReinicioSelects) {
+      await inicializarFiltros({ cfg });
+      try { if(document.getElementById('sec-alumnos')?.classList?.contains('active') && typeof renderAlumnos === 'function') renderAlumnos(); } catch(_) {}
+      try { if(document.getElementById('sec-asistencia')?.classList?.contains('active') && typeof renderRegistro === 'function') renderRegistro(); } catch(_) {}
+    } else {
+      // Solo attach listeners (por si los listeners se perdieron por innerHTML rewrite)
+      try { if (typeof _attachCascadaListenersAlumnos === 'function') _attachCascadaListenersAlumnos(); } catch(_) {}
+      // Y re-render ALUMNOS (con los filtros intactos del usuario) para refrescar datos
+      try { if(document.getElementById('sec-alumnos')?.classList?.contains('active') && typeof renderAlumnos === 'function') renderAlumnos(); } catch(_) {}
+    }
     try { await cargarDashboardInicio(true); } catch(_) {}
-    try { if(document.getElementById('sec-alumnos')?.classList?.contains('active') && typeof renderAlumnos === 'function') renderAlumnos(); } catch(_) {}
-    try { if(document.getElementById('sec-asistencia')?.classList?.contains('active') && typeof renderRegistro === 'function') renderRegistro(); } catch(_) {}
     try { _warnedProfesorSinAulas = false; } catch(_) {}
   } catch(e) {
     console.error('[autoRecargaTutorias]', e);
@@ -9661,9 +9689,52 @@ async function renderAlumnos() {
         return false;
       }
       const countAntes = alumnos.length;
+      // ✅ FIX 2026-08-26 RC#3 Orlando 4B SEMIPRES: Filtro modalidad SCOPE-AWARE.
+      // Si DOCENTE y alumno (g,s) ∈ scopeAulas[] → SALTAR filtro turno/modalidad.
+      // Igual que RC#1 en _purgeCanonInconsistencias: scope docente = fuente verdad,
+      // no importa si BD tiene turno PRESENCIAL en vez de SEMIPRESENCIAL (dato sucio).
+      let _filtroModEsDocente = false;
+      const _filtroModClavesScope = new Set();
+      try {
+        const rM = (typeof _normRol === 'function') ? _normRol(currentRol) : String(currentRol||'');
+        _filtroModEsDocente = (rM === 'profesor' || rM === 'psicologo') && !(currentPerms?.verTodasAulas);
+        if (_filtroModEsDocente && typeof _profesorAsignacionesAulasList === 'function') {
+          const sAM = _profesorAsignacionesAulasList() || [];
+          sAM.forEach(a => {
+            const gR = String(a?.grado || '').trim();
+            const gN = (gR.match(/\d+/) || [])[0] || gR;
+            const sR = String(a?.seccion || '').trim().toUpperCase();
+            if (gN && sR) _filtroModClavesScope.add(`${gN},${sR}`);
+          });
+        }
+      } catch(_) {}
       // Debug array debugEstrats tabla console.groupCollapsed console.table
       const _dbgMatchArr = [];
       alumnos = alumnos.filter(a => {
+        // RC#3 scope-aware: saltar filtro mod si alumno scope asignado
+        if (_filtroModEsDocente && _filtroModClavesScope.size > 0) {
+          const gRA = String(a.grado || '').trim();
+          const gNA = (gRA.match(/\d+/) || [])[0] || gRA;
+          const sRA = String(a.seccion || '').trim().toUpperCase();
+          if (gNA && sRA && _filtroModClavesScope.has(`${gNA},${sRA}`)) {
+            // Marcar en debug que pasó por scope skip
+            try { _matchMod._lastDebug = { ...(_matchMod._lastDebug||{}), scopeSkip: true }; } catch(_) {}
+            const info = {
+              id: String(a?.id||''),
+            };
+            info.apellidos = String(a?.apellidos||'').slice(0,20);
+            info.nombres = String(a?.nombres||'').slice(0,15);
+            info.grado = String(a?.grado||'');
+            info.seccion = String(a?.seccion||'');
+            info['turnoRaw'] = JSON.stringify(a?.turno||'');
+            info.modTarget = JSON.stringify(modNorm);
+            info.E1 = 'SCOPE'; info.E2 = 'SCOPE'; info.E3 = 'SCOPE'; info.E4 = 'SCOPE'; info.E5 = 'SCOPE';
+            info.match = true;
+            info.tokens = 'SCOPE DOCENTE';
+            _dbgMatchArr.push(info);
+            return true;
+          }
+        }
         const match = _matchMod(a.turno, modNorm);
         const info = {
           id: String(a?.id||''),
@@ -25991,10 +26062,38 @@ async function getAlumnosFiltrados() {
  */
 function _purgeCanonInconsistencias(alumnosArr) {
   if (!(alumnosArr && Array.isArray(alumnosArr) && alumnosArr.length)) return [];
+  // ✅ FIX 2026-08-26 (Orlando solo ve 4C): SCOPE-AWARE PURGE.
+  // Si el usuario es DOCENTE (profesor/psicólogo) y el alumno (grado,sección)
+  // ESTÁ dentro de sus scopeAulas[] → NO APLICAR purge. El scope docente
+  // es fuente de verdad (G+S asignado en admin). El canon CEBA (A/D=Pres,
+  // B=Semi, C=Vir) define MODALIDAD DEL AULA, NO sirve para borrar alumnos
+  // que tienen turno erróneo en BD (importación vieja). El admin corregirá
+  // los turnos en el Excel; mientras tanto, el docente VE a sus alumnos.
+  let esDocentePurge = false;
+  const clavesScope = new Set();
+  try {
+    const r = (typeof _normRol === 'function') ? _normRol(currentRol) : String(currentRol||'');
+    esDocentePurge = (r === 'profesor' || r === 'psicologo') && !(currentPerms?.verTodasAulas);
+    if (esDocentePurge && typeof _profesorAsignacionesAulasList === 'function') {
+      const sA = _profesorAsignacionesAulasList() || [];
+      sA.forEach(a => {
+        const gRaw = String(a?.grado || '').trim();
+        const gNum = (gRaw.match(/\d+/) || [])[0] || gRaw;
+        const sRaw = String(a?.seccion || '').trim().toUpperCase();
+        if (gNum && sRaw) clavesScope.add(`${gNum},${sRaw}`);
+      });
+    }
+  } catch(_) { esDocentePurge = false; clavesScope.clear(); }
   return alumnosArr.filter(a => {
     try {
       if (!a || typeof a !== 'object') return false;
       const sK = String((a && (a.seccion || a.SECCION || '')) || '').trim().toUpperCase();
+      // DOCENTE + (grado,seccion) en scope → saltar purge (aceptar aunque turno no canon)
+      if (esDocentePurge && clavesScope.size > 0) {
+        const gRawA = String(a.grado || '').trim();
+        const gNumA = (gRawA.match(/\d+/) || [])[0] || gRawA;
+        if (gNumA && sK && clavesScope.has(`${gNumA},${sK}`)) return true;
+      }
       if (sK !== 'A' && sK !== 'B' && sK !== 'C') return true;
       let turnoRaw = String((a && (a.turno || a.modalidad || a.mod_atencion || a.MODALIDAD || a.ATENCION || '')) || '').trim();
       if (!turnoRaw) return true;
@@ -27038,6 +27137,9 @@ function _attachCascadaListenersAlumnos() {
 }
 
 async function onGradoChangeAlumnos() {
+  // Interacción MANUAL docente → no permitir que _autoSelectTutoria o
+  // _autoRecargarTutoriasSilencioso reinicien selects a '' (desaparece lista).
+  try { window._tutoriaInteraccionManual = true; } catch(_) {}
   try { if (window._asmqrSinAutoTut === true) return; } catch(_) {}
   document.getElementById('fa-seccion').value = '';
   document.getElementById('search-alumnos').value = '';
@@ -27137,6 +27239,7 @@ async function onGradoChangeAlumnos() {
 }
 
 function onSeccionChangeAlumnos() {
+  try { window._tutoriaInteraccionManual = true; } catch(_) {}
   try { if (window._asmqrSinAutoTut === true) return; } catch(_) {}
   document.getElementById('search-alumnos').value = '';
   const _selOk = v => { v = String(v||'').trim(); return !!v && v !== '--' && !v.startsWith('-- ') && !v.endsWith(' --') && !/Seleccionar/i.test(v); };
@@ -27205,12 +27308,14 @@ function onSeccionChangeAlumnos() {
 }
 
 function onModalidadChangeAlumnos() {
+  try { window._tutoriaInteraccionManual = true; } catch(_) {}
   try { if (window._asmqrSinAutoTut === true) return; } catch(_) {}
   document.getElementById('search-alumnos').value = '';
   renderAlumnos();
 }
 
 function onSearchAlumnos() {
+  try { window._tutoriaInteraccionManual = true; } catch(_) {}
   const q = document.getElementById('search-alumnos').value;
   // Helper: selección UI válida (TODOS cuenta, placeholder no)
   const _selOk = v => { v = String(v||'').trim(); return !!v && v !== '--' && !v.startsWith('-- ') && !v.endsWith(' --') && !/Seleccionar/i.test(v); };
