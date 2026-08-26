@@ -765,72 +765,122 @@ const auth = {
   },
 
   onAuthStateChanged(callback) {
-    // ✅ FIX 2026-08-26 Hard refresh: intentar restaurar desde BACKUP MANUAL
-    //    si _sb.auth.getSession() retorna null por race condition / IndexedDB
-    //    no inicializado tras CTRL+SHIFT+R.
+    // ✅ FIX 2026-08-26 Hard refresh CTRL+SHIFT+R:
+    //   (a) Guardar backup EXPLÍCITO formato fijo {session:{...}} cada vez que
+    //       Supabase dispara SIGNED_IN o tenemos session válida (no dependemos
+    //       de lo que Supabase pase al storage adapter).
+    //   (b) Try backup acepta tanto formato fijo {session: {...}} como objetos
+    //       session sin wrapper (retrocompat).
+    const BK = 'asmqr_auth_' + COLEGIO_ID + '::backup';
+    const _guardarBackup = (session) => {
+      try {
+        if (!session || !session.user || !session.access_token) {
+          try { window.localStorage.removeItem(BK); } catch(_) {}
+          return;
+        }
+        const snap = {
+          _v: 1,
+          ts: Date.now(),
+          session: {
+            access_token:  session.access_token,
+            refresh_token: session.refresh_token || '',
+            expires_at:    session.expires_at || 0,
+            expires_in:    session.expires_in || 0,
+            token_type:    session.token_type || 'bearer',
+            user:          session.user
+          }
+        };
+        window.localStorage.setItem(BK, JSON.stringify(snap));
+      } catch(_) {}
+    };
     const _tryBackup = async () => {
-      const BK = 'asmqr_auth_' + COLEGIO_ID + '::backup';
       try {
         const raw = window.localStorage.getItem(BK);
         if (!raw) return null;
         const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object' && parsed.session && parsed.session.user && parsed.session.access_token) {
-          try {
-            const r = await _sb.auth.setSession({
-              access_token:  parsed.session.access_token,
-              refresh_token: parsed.session.refresh_token || '',
-            });
-            if (r?.data?.session) return r.data.session;
-            return parsed.session;
-          } catch(_e) {
-            return parsed.session;
-          }
+        if (!parsed || typeof parsed !== 'object') return null;
+        // Caso 1: formato fijo con wrapper .session (nuestro backup)
+        let s = parsed.session && typeof parsed.session === 'object' ? parsed.session : null;
+        // Caso 2: objeto session directo sin wrapper
+        if (!s && parsed.access_token && parsed.user) s = parsed;
+        if (!s || !s.user || !s.access_token) return null;
+        // Expirado? expires_at segundos
+        if (s.expires_at && Number.isFinite(s.expires_at)) {
+          const now = Math.floor(Date.now() / 1000);
+          if (now > s.expires_at + 120) return null;
+        }
+        try {
+          const r = await _sb.auth.setSession({
+            access_token:  s.access_token,
+            refresh_token: s.refresh_token || '',
+          });
+          if (r?.data?.session) return r.data.session;
+          return s;
+        } catch(_e) {
+          return s;
         }
       } catch(_) {}
       return null;
     };
-    // Llamar con sesión actual si existe
-    _sb.auth.getSession().then(async ({ data: { session } }) => {
+    // Llamar con sesión actual si existe + 2 reintentos (IndexedDB / localStorage
+    // a veces no inicializa en tick 0 del hard reload: 300ms y 900ms).
+    let _callbackCalled = false;
+    const _safeCall = (u) => {
+      if (_callbackCalled) return;
+      _callbackCalled = true;
+      callback(u);
+    };
+    const _tryInit = async (pass) => {
+      let session = null;
+      try { session = (await _sb.auth.getSession())?.data?.session || null; }
+      catch(_) { session = null; }
       if (!session) try { const b = await _tryBackup(); if (b) session = b; } catch(_) {}
       if (session) {
         _currentAuthUser = _mapUser(session.user);
         auth.currentUser = _currentAuthUser;
-        callback(_currentAuthUser);
-      } else {
+        _guardarBackup(session);
+        _safeCall(_currentAuthUser);
+      } else if (pass >= 2) {
         _currentAuthUser = null;
         auth.currentUser = null;
-        callback(null);
+        _safeCall(null);
       }
-    });
+    };
+    _tryInit(0);
+    setTimeout(() => { if (!_callbackCalled) _tryInit(1); }, 350);
+    setTimeout(() => { if (!_callbackCalled) _tryInit(2); }, 1000);
 
     // Suscribirse a cambios de sesión
     const { data: { subscription } } = _sb.auth.onAuthStateChange((_event, session) => {
-      // TOKEN_REFRESHED y SIGNED_IN repetidos: Supabase refresca el JWT al volver
-      // el foco a la pestaña. Solo actualizar en memoria, NO re-inicializar la app.
+      // Guardar backup en cada evento positivo
+      if (session) _guardarBackup(session);
+      // TOKEN_REFRESHED: actualizar solo en memoria, NO disparar callback (evita re-init app)
       if (_event === 'TOKEN_REFRESHED') {
         if (session) { _currentAuthUser = _mapUser(session.user); auth.currentUser = _currentAuthUser; }
         return;
       }
+      // SIGNED_IN repetido (ya teníamos user): actualizar en memoria, no re-init
       if (_event === 'SIGNED_IN' && _currentAuthUser) {
-        // Ya estaba autenticado — solo actualizar token silenciosamente
         if (session) { _currentAuthUser = _mapUser(session.user); auth.currentUser = _currentAuthUser; }
         return;
       }
       if (_event === 'SIGNED_OUT') {
-        // Borrar backup manual para no restaurar una sesión que ya expiró
-        try {
-          const BK = 'asmqr_auth_' + COLEGIO_ID + '::backup';
-          window.localStorage.removeItem(BK);
-        } catch(_) {}
+        try { window.localStorage.removeItem(BK); } catch(_) {}
+        _currentAuthUser = null;
+        auth.currentUser = null;
+        _callbackCalled = true; // no disparar reintento
+        callback(null);
+        return;
       }
       if (session) {
         _currentAuthUser = _mapUser(session.user);
         auth.currentUser = _currentAuthUser;
+        if (!_callbackCalled) { _callbackCalled = true; }
         callback(_currentAuthUser);
       } else {
         _currentAuthUser = null;
         auth.currentUser = null;
-        callback(null);
+        if (!_callbackCalled) { _callbackCalled = true; callback(null); }
       }
     });
 

@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=127"></script>
-<script src="db_supabase.js?v=127"></script>
+<script src="compat.js?v=128"></script>
+<script src="db_supabase.js?v=128"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -27694,19 +27694,41 @@ function _nivelesDesdeAlumnos(alumnosArr, cfg) {
   catch(_) { modalidad = String(((cfg||{}).modalidadEducativa || (cfg||{}).modalidad_educativa || '')).toUpperCase(); }
   const usaCiclo = (modalidad === 'CEBA' || modalidad === 'EBA');
   const f = _nivelFieldName(cfg, alumnos);
-  // Para CEBA/EBA: agrupar TODO en INICIAL/INTERMEDIO (no buscar INICIAL ni INTERMEDIO separados).
-  // Modelo confirmado: 2 niveles CEBA. NUNCA 3.
+  // ✅ FIX 2026-08-26 Moises Admin:
+  //   Normalizar TODOS los valores ciclo/raw combo como "INICIAL|PRESENCIAL",
+  //   "AVANZADO|SEMIPRESENCIAL", "EBR 1A" etc. a solo 2 tokens CEBA:
+  //   INICIAL/INTERMEDIO o AVANZADO. No insertar NIGUN valor combo con
+  //   modalidad/turno en el dropdown.
+  const _normNivelRaw = (raw, aRow) => {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    const gNum = parseInt(String((aRow && (aRow.grado || aRow.numGrado || aRow.numeroGrado || '')) || '').replace(/\D/g,''), 10) || 0;
+    const byHelper = (typeof _normCicloScope === 'function') ? _normCicloScope(s, (gNum >= 1 && gNum <= 12) ? gNum : undefined) : '';
+    if (byHelper) return byHelper;
+    const up = s.toUpperCase();
+    if (['INICIAL','INTERMEDIO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO'].some(k => up.includes(k))) return 'INICIAL/INTERMEDIO';
+    if (['AVANZADO','PRIMARIA','SECUNDARIA','EBR','BASICA','BÁSICA','ESCOLAR'].some(k => up.includes(k))) return 'AVANZADO';
+    // Si no matchea nada pero hay grado 1..6 → AVANZADO
+    if (gNum >= 1 && gNum <= 12) return 'AVANZADO';
+    return '';
+  };
   if (usaCiclo) {
-    const setRaw = new Set(alumnos.map(a => String(a[f] || a.ciclo || '').trim().toUpperCase().replace(/[ /]+/g,'/')).filter(Boolean));
-    const out = new Set();
-    if (setRaw.has('INICIAL/INTERMEDIO') || setRaw.has('INICIAL') || setRaw.has('INTERMEDIO')) out.add('INICIAL/INTERMEDIO');
-    if (setRaw.has('AVANZADO')) out.add('AVANZADO');
-    setRaw.forEach(v => { if(v && v !== 'INICIAL/INTERMEDIO' && v !== 'INICIAL' && v !== 'INTERMEDIO' && v !== 'AVANZADO') out.add(v); });
+    const setRaw = new Set();
+    alumnos.forEach(a => {
+      const raw = String(a[f] || a.ciclo || '').trim();
+      const n = _normNivelRaw(raw, a);
+      if (n) setRaw.add(n);
+    });
     const orden = ['INICIAL/INTERMEDIO','AVANZADO'];
-    return orden.filter(c => out.has(c)).concat([...out].filter(v => !orden.includes(v)));
+    return orden.filter(c => setRaw.has(c)).concat([...setRaw].filter(v => !orden.includes(v)));
   }
-  const set = new Set(alumnos.map(a => String(a[f] || '').trim()).filter(Boolean));
-  const ordenCEBA = ['INICIAL','INTERMEDIO','AVANZADO'];
+  const set = new Set();
+  alumnos.forEach(a => {
+    const raw = String(a[f] || '').trim();
+    const n = _normNivelRaw(raw, a);
+    if (n) set.add(n);
+  });
+  const ordenCEBA = ['INICIAL/INTERMEDIO','AVANZADO'];
   if (ordenCEBA.some(c => set.has(c))) {
     return ordenCEBA.filter(c => set.has(c)).concat([...set].filter(v => !ordenCEBA.includes(v)));
   }
@@ -27725,29 +27747,22 @@ function _filtrarPorNivel(arr, nivelSel, cfg) {
   catch(_) { modalidad = String(((cfg||{}).modalidadEducativa || (cfg||{}).modalidad_educativa || '')).toUpperCase(); }
   const usaCiclo = (modalidad === 'CEBA' || modalidad === 'EBA');
   const f = usaCiclo ? 'ciclo' : _nivelFieldName(cfg, arr);
-  const nSnorm = (usaCiclo && typeof _normModalidadCEBA === 'function') ? _normModalidadCEBA(nivelSel) : String(nivelSel).trim();
-  if (usaCiclo && nSnorm === 'INICIAL/INTERMEDIO') {
-    // Filtrar alumnos con ciclo INICIAL/INTERMEDIO (canon único).
-    // Aceptar variantes escritas diferentes (INICIAL, INTERMEDIO, INICIAL / INTERMEDIO, etc.)
-    // que _dbNormCiclo normalizó a INICIAL/INTERMEDIO.
-    return arr.filter(o => {
-      const cRaw = String(o && o.ciclo ? o.ciclo : (o && o[f] ? o[f] : '')).trim();
-      const cUp = cRaw.toUpperCase().replace(/[ \/]+/g,'/').replace(/\/+/g,'/');
-      return (
-        cUp === 'INICIAL/INTERMEDIO' ||
-        cUp === 'INICIAL' ||
-        cUp === 'INTERMEDIO'
-      );
-    });
-  }
-  if (usaCiclo && nSnorm === 'AVANZADO') {
-    return arr.filter(o => {
-      const c = String(o && o.ciclo ? o.ciclo : (o && o[f] ? o[f] : '')).trim().toUpperCase();
-      return c === 'AVANZADO';
-    });
-  }
-  const nS = String(nivelSel).trim();
-  return arr.filter(o => String(o && o[f] || '').trim() === nS);
+  const nSnormRaw = (usaCiclo && typeof _normModalidadCEBA === 'function') ? _normModalidadCEBA(nivelSel) : String(nivelSel).trim();
+  const nSnorm = (typeof _normCicloScope === 'function') ? (_normCicloScope(nSnormRaw) || nSnormRaw) : nSnormRaw;
+  return arr.filter(o => {
+    const cRaw = String(o && o.ciclo ? o.ciclo : (o && o[f] ? o[f] : '')).trim();
+    const cNorm = (typeof _normCicloScope === 'function') ? _normCicloScope(cRaw) : cRaw;
+    if (!cNorm) return false;
+    if (nSnorm === cNorm) return true;
+    // Normalizar strings separados slash / pipes
+    const cUp = cNorm.toUpperCase().replace(/[ |/]+/g,'/');
+    const tUp = String(nSnorm||'').toUpperCase().replace(/[ |/]+/g,'/');
+    if (cUp === tUp) return true;
+    if (tUp === 'INICIAL/INTERMEDIO') {
+      return ['INICIAL/INTERMEDIO','INICIAL','INTERMEDIO'].includes(cUp);
+    }
+    return false;
+  });
 }
 async function getConfig(force = false) {
   if(force) { try { invalidateConfig && invalidateConfig(); } catch(_) {} }
