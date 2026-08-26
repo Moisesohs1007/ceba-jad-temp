@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=128"></script>
-<script src="db_supabase.js?v=128"></script>
+<script src="compat.js?v=129"></script>
+<script src="db_supabase.js?v=129"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -14382,8 +14382,14 @@ function renderComLista() {
   const grado = (document.getElementById('com-grado')?.value || '');
   const seccion = (document.getElementById('com-seccion')?.value || '');
   const q = (document.getElementById('com-search')?.value || '').trim();
+  const permGlobal = !!(currentPerms?.verTodasAulas) || _normRol(currentRol) === 'admin' || _normRol(currentRol) === 'director';
+  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function') ? (_profesorAsignacionesAulasList()||[]) : [];
+  const esDocenteScope = !permGlobal && scopeAulas.length > 0;
   const hayInteraccion = !!(nivel || grado || seccion || q);
-  if(!hayInteraccion) {
+  // Admin / Director + docente con scope asignado: mostrar alumnos aunque N=Todos G=Todos S=Todas
+  // (no obligar a seleccionar Nivel para empezar). Solo placeholder si no tiene permiso global y
+  // no tiene scope docente definido (debe buscar o filtrar).
+  if(!hayInteraccion && !permGlobal && !esDocenteScope) {
     tbody.innerHTML = '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Usa los filtros o busca un alumno para mostrar destinatarios</td></tr>';
     document.getElementById('com-count').textContent = String(_comSel.size);
     return;
@@ -27675,15 +27681,21 @@ function _matchNivel(obj, nivelSel, cfg, alumnosArr) {
   if (!nivelSel || nivelSel === 'TODOS') return true;
   const f = _nivelFieldName(cfg, alumnosArr);
   const valObj = String(obj && obj[f] || '').trim();
+  const cicloRaw = String(obj && obj.ciclo ? obj.ciclo : '').trim();
   const nivel = String(nivelSel).trim();
-  // CEBA: INICIAL/INTERMEDIO agrupado incluye alumnos con ciclo INICIAL/INTERMEDIO (exacto el valor canon).
-  // NUNCA busca INICIAL o INTERMEDIO separados (CEBA son 2 niveles, no 3). Modelo confirmado por user.
-  if (nivel === 'INICIAL/INTERMEDIO' || nivel === 'INICIAL / INTERMEDIO') {
+  const gNum = parseInt(String(obj && (obj.grado || obj.numGrado || obj.numeroGrado || '') || '').replace(/\D/g,''), 10) || 0;
+  const normObj = (typeof _normCicloScope === 'function') ? (_normCicloScope(valObj || cicloRaw, (gNum>=1&&gNum<=12)?gNum:undefined) || '') : '';
+  const normSel = (typeof _normCicloScope === 'function') ? (_normCicloScope(nivel) || nivel) : nivel;
+  // CEBA: INICIAL/INTERMEDIO agrupado incluye alumnos con ciclo INICIAL/INTERMEDIO (exacto el valor canon)
+  // o normalizados desde valores legacy INICIAL|PRESENCIAL etc.
+  if (normSel === 'INICIAL/INTERMEDIO') {
+    if (normObj === 'INICIAL/INTERMEDIO' || normObj === 'INICIAL' || normObj === 'INTERMEDIO') return true;
     const c = String((obj||{}).ciclo || '').trim().toUpperCase().replace(/[ /]+/g,'/');
-    if (c === 'INICIAL/INTERMEDIO') return true;
-    return false;
+    if (c === 'INICIAL/INTERMEDIO' || c.startsWith('INICIAL|') || c.startsWith('INTERMEDIO|') || c === 'INICIAL' || c === 'INTERMEDIO') return true;
   }
+  if (normObj && normSel && (normObj === normSel)) return true;
   if (valObj === nivel) return true;
+  if (cicloRaw && cicloRaw === nivel) return true;
   if (nivel.startsWith('EBR ') && (valObj.replace('EBR ','').trim() === nivel.replace('EBR ','').trim())) return true;
   return false;
 }
