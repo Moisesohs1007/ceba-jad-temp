@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=129"></script>
-<script src="db_supabase.js?v=129"></script>
+<script src="compat.js?v=130"></script>
+<script src="db_supabase.js?v=130"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -13894,6 +13894,21 @@ function _normCicloScope(rawCiclo, gNum) {
 }
 
 async function initComunicado() {
+  // ================================================================
+  // RESET INICIAL (solo values, NUNCA innerHTML ni disabled).
+  // El resto del init (poblarFiltro* + PASO2/3 cascada) llenará las
+  // options y configurará disabled automáticamente.
+  // ESTE BLOQUE ESTA ANTES DE TODO PARA NO ROMPER NADA DESPUES.
+  // ================================================================
+  const _nivelSelEarly = document.getElementById('com-nivel');
+  const _gSelEarly     = document.getElementById('com-grado');
+  const _sSelEarly     = document.getElementById('com-seccion');
+  const _searchEarly   = document.getElementById('com-search');
+  if (_nivelSelEarly) _nivelSelEarly.value = '';
+  if (_gSelEarly)     _gSelEarly.value     = '';
+  if (_sSelEarly)     _sSelEarly.value     = '';
+  if (_searchEarly)   _searchEarly.value   = '';
+
   const r = _normRol(currentRol);
   const rolRaw = r;
   const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
@@ -14071,39 +14086,6 @@ async function initComunicado() {
   onComEnviarAChange();
   _comInit = true;
   _comSel = new Set();
-  nivelSel = document.getElementById('com-nivel');
-  gSel = document.getElementById('com-grado');
-  sSel  = document.getElementById('com-seccion');
-  const search   = document.getElementById('com-search');
-  if(nivelSel) nivelSel.value = '';
-  // ==================================================================
-  // FIX 2026-08-26: NO borrar las options, solo resetear value a Todos.
-  // Antes se hacía gSel.innerHTML = '<option...>Todos</option>' y se
-  // destruían las opciones que poblarFiltroGrado() acaba de agregar.
-  // Para docentes con aulas: siempre mantener options y solo resetear value.
-  // ==================================================================
-  if(gSel) {
-    gSel.value = '';
-    if (!isProf || !tieneAsignaciones) {
-      // Para admin sin scope: dejar solo Todos hasta que seleccione Nivel
-      gSel.innerHTML = '<option value="">Todos</option>';
-    }
-    if (!isProf || !tieneAsignaciones || !(nivelSel?.value)) {
-      gSel.disabled = true;
-      gSel.style.opacity = '0.45';
-    }
-  }
-  if(sSel) {
-    sSel.value = '';
-    if (!isProf || !tieneAsignaciones) {
-      sSel.innerHTML = '<option value="">Todas</option>';
-    }
-    if (!isProf || !tieneAsignaciones || !(gSel?.value)) {
-      sSel.disabled = true;
-      sSel.style.opacity = '0.45';
-    }
-  }
-  if(search) search.value = '';
   renderComLista();
 }
 
@@ -14184,7 +14166,10 @@ function onComNivelChange() {
     const rolRaw = _normRol(currentRol);
     const isProfScope = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0) && !permGlobal;
     const _cfgCom = typeof configCache !== 'undefined' ? configCache : {};
-    grados = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom)).map(a=>a.grado).filter(Boolean))].sort();
+    grados = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom)).map(a=>{
+      const g = String(a.grado||'').replace(/\D/g,'').trim();
+      return g;
+    }).filter(Boolean))].sort((a,b)=>parseInt(String(a),10)-parseInt(String(b),10));
     if (isProfScope && scopeAulas && scopeAulas.length > 0) {
       const gradosAsignadosSet = new Set();
       scopeAulas.forEach(aula => {
@@ -14249,13 +14234,21 @@ function onComGradoChange() {
     const rolRaw = _normRol(currentRol);
     const isProfScope = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0) && !permGlobal;
     const _cfgCom2 = typeof configCache !== 'undefined' ? configCache : {};
-    secciones = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom2) && a.grado===grado).map(a=>a.seccion).filter(Boolean))].sort();
+    const gNorm = String(grado||'').replace(/\D/g,'').trim();
+    secciones = [...new Set((_comAlumnos||[]).filter(a=>{
+      if (!_matchNivel(a, nivel, _cfgCom2)) return false;
+      const gA = String(a.grado||'').replace(/\D/g,'').trim();
+      return gA && gNorm && gA === gNorm;
+    }).map(a=>{
+      const s = String(a.seccion||'').trim().toUpperCase();
+      return /^[A-D]$/.test(s) ? s : '';
+    }).filter(Boolean))].sort();
     if (isProfScope && scopeAulas && scopeAulas.length > 0) {
       const secsAsigSet = new Set();
       scopeAulas.forEach(aula => {
         if (!aula) return;
         const g = String(aula.grado || '').replace(/\D/g,'');
-        if (g === String(grado).replace(/\D/g,'') && aula.seccion) {
+        if (g === gNorm && aula.seccion) {
           const s = String(aula.seccion).trim().toUpperCase();
           if (/^[A-D]$/.test(s)) secsAsigSet.add(s);
         }
@@ -14382,15 +14375,9 @@ function renderComLista() {
   const grado = (document.getElementById('com-grado')?.value || '');
   const seccion = (document.getElementById('com-seccion')?.value || '');
   const q = (document.getElementById('com-search')?.value || '').trim();
-  const permGlobal = !!(currentPerms?.verTodasAulas) || _normRol(currentRol) === 'admin' || _normRol(currentRol) === 'director';
-  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function') ? (_profesorAsignacionesAulasList()||[]) : [];
-  const esDocenteScope = !permGlobal && scopeAulas.length > 0;
   const hayInteraccion = !!(nivel || grado || seccion || q);
-  // Admin / Director + docente con scope asignado: mostrar alumnos aunque N=Todos G=Todos S=Todas
-  // (no obligar a seleccionar Nivel para empezar). Solo placeholder si no tiene permiso global y
-  // no tiene scope docente definido (debe buscar o filtrar).
-  if(!hayInteraccion && !permGlobal && !esDocenteScope) {
-    tbody.innerHTML = '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Usa los filtros o busca un alumno para mostrar destinatarios</td></tr>';
+  if(!hayInteraccion) {
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Selecciona un Nivel/Grado/Sección o busca un alumno para mostrar destinatarios</td></tr>';
     document.getElementById('com-count').textContent = String(_comSel.size);
     return;
   }
