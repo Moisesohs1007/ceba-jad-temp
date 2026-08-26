@@ -22402,22 +22402,31 @@ function _mapUsuarioCacheRow(row) {
 }
 
 async function _cargarUsuariosCache() {
-  if(_usuariosCacheData) return _usuariosCacheData;
-  // ✅ STALE CACHE DETECTION: si el LS cache no trae los 4 arrays legacy
-  // (deploy 052864b+) → invalidamos para re-fetchear todos los fields.
-  let lsUsr = LSC.get('usuarios');
+  if(Array.isArray(_usuariosCacheData) && _usuariosCacheData.length > 0) return _usuariosCacheData;
+  let lsUsr = null;
+  try { lsUsr = LSC.get('usuarios'); } catch(_dummyLSC) { lsUsr = null; }
   if (lsUsr && Array.isArray(lsUsr) && lsUsr.length > 0) {
-    const sample = lsUsr[0] || {};
-    const isStale = !(Array.isArray(sample.grados_asignados_json)
-                    && Array.isArray(sample.tutor_aulas_json)
-                    && Array.isArray(sample.tutorAulas)
-                    && Array.isArray(sample.tutorGradosAsignados));
+    let staleCount = 0;
+    const checkSample = lsUsr.slice(0, Math.min(8, lsUsr.length));
+    checkSample.forEach(sample => {
+      const s = sample || {};
+      const missing = !(Array.isArray(s.grados_asignados_json)
+                    && Array.isArray(s.tutor_aulas_json)
+                    && Array.isArray(s.tutorAulas)
+                    && Array.isArray(s.tutorGradosAsignados));
+      if (missing) staleCount++;
+    });
+    const isStale = (checkSample.length > 0) && (staleCount >= Math.max(2, Math.ceil(checkSample.length * 0.6)));
     if (isStale) {
       try { LSC.del('usuarios'); } catch(_dummy){}
       lsUsr = null; _usuariosCacheData = null;
+    } else {
+      _usuariosCacheData = lsUsr; return lsUsr;
     }
   }
   if(lsUsr) { _usuariosCacheData = lsUsr; return lsUsr; }
+  let _sbOK = false;
+  let _arrSB = [];
   try {
     // =================================================================
     // ✅ FIX 2026-08-24 FINAL: AÑADIR ALIAS NOMBRES DETALLADAS (9 alias + D).
@@ -22436,16 +22445,34 @@ async function _cargarUsuariosCache() {
       .eq('colegio_id', COLEGIO_ID)
       .order('nombre');
     if(error) throw error;
-    _usuariosCacheData = (data || []).map(_mapUsuarioCacheRow).filter(Boolean);
+    _arrSB = (data || []).map(_mapUsuarioCacheRow).filter(Boolean);
+    _sbOK = true;
   } catch(e0) {
-    const snap = await db.collection('usuarios').get();
-    _usuariosCacheData = snap.docs.map(d => {
-      const raw = { id: d.id, ...d.data() };
-      return _mapUsuarioCacheRow(raw);
-    });
+    try { console.warn('[usuarios] Supabase fetch falló → usar Firestore fallback', e0 && e0.message || e0); } catch(_){}
+    _sbOK = false;
+    _arrSB = [];
   }
-  LSC.set('usuarios', _usuariosCacheData, LSC.TTL_USUARIOS);
-  return _usuariosCacheData;
+  if (_sbOK && Array.isArray(_arrSB) && _arrSB.length > 0) {
+    _usuariosCacheData = _arrSB;
+  } else {
+    try {
+      const snap = await db.collection('usuarios').get();
+      const arrFS = snap.docs.map(d => {
+        const raw = { id: d.id, ...d.data() };
+        return _mapUsuarioCacheRow(raw);
+      }).filter(Boolean);
+      _usuariosCacheData = arrFS;
+    } catch(e1) {
+      try { console.warn('[usuarios] Firestore fallback también falló', e1 && e1.message || e1); } catch(_){}
+      _usuariosCacheData = _arrSB || [];
+    }
+  }
+  try {
+    if (Array.isArray(_usuariosCacheData) && _usuariosCacheData.length > 0) {
+      LSC.set('usuarios', _usuariosCacheData, LSC.TTL_USUARIOS);
+    }
+  } catch(_set){}
+  return Array.isArray(_usuariosCacheData) ? _usuariosCacheData : [];
 }
 function _invalidarUsuarios() {
   _usuariosCacheData = null;
