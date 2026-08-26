@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=126"></script>
-<script src="db_supabase.js?v=126"></script>
+<script src="compat.js?v=127"></script>
+<script src="db_supabase.js?v=127"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -9735,7 +9735,19 @@ async function renderAlumnos() {
             return true;
           }
         }
-        const match = _matchMod(a.turno, modNorm);
+        // ✅ FIX 2026-08-26 Admin SEMIPRESENCIAL: Usar turno efectivo canon CEBA,
+        //    no turno raw BD (import sucio: B=Semipresencial vs turno PRESENCIAL).
+        //    1°) a._turnoEfectivo seteado por _purgeCanonInconsistencias,
+        //    2°) canon sección A/D=Pres B=Semi C=Vir inline,
+        //    3°) fallback turno raw.
+        let _tUsar = String(a.turno || '').trim();
+        try {
+          const sK = String(a.seccion || '').trim().toUpperCase();
+          const canonBySec = { A:'PRESENCIAL', D:'PRESENCIAL', B:'SEMIPRESENCIAL', C:'VIRTUAL' }[sK];
+          if (canonBySec) _tUsar = canonBySec;
+          if (a._turnoEfectivo) _tUsar = String(a._turnoEfectivo || '').trim() || _tUsar;
+        } catch(_) {}
+        const match = _matchMod(_tUsar, modNorm);
         const info = {
           id: String(a?.id||''),
         };
@@ -9744,6 +9756,7 @@ async function renderAlumnos() {
         info.grado = String(a?.grado||'');
         info.seccion = String(a?.seccion||'');
         info['turnoRaw'] = JSON.stringify(a?.turno||'');
+        info['turnoEfectivo'] = JSON.stringify(_tUsar||'');
         info.modTarget = JSON.stringify(modNorm);
         info.E1 = !!(_matchMod._lastDebug||{}).E1 || false;
         info.E2 = !!(_matchMod._lastDebug||{}).E2 || false;
@@ -9755,7 +9768,7 @@ async function renderAlumnos() {
         _dbgMatchArr.push(info);
         // Debug 1·B siempre
         if (a && (String(a.grado||'').trim() === '1') && (String(a.seccion||'').trim().toUpperCase() === 'B')) {
-          try { console.debug('[1·B debug] alumno=', a.apellidos, a.nombres, 'turnoRaw=', JSON.stringify(a.turno||''), 'modTarget=', JSON.stringify(modNorm), 'match=', match, 'E1=', info.E1, 'E2=', info.E2, 'E3=', info.E3, 'E4=', info.E4, 'E5=', info.E5, 'tokens=', info.tokens); } catch(_) {}
+          try { console.debug('[1·B debug] alumno=', a.apellidos, a.nombres, 'turnoRaw=', JSON.stringify(a.turno||''), 'turnoEfectivo=', JSON.stringify(_tUsar||''), 'modTarget=', JSON.stringify(modNorm), 'match=', match, 'E1=', info.E1, 'E2=', info.E2, 'E3=', info.E3, 'E4=', info.E4, 'E5=', info.E5, 'tokens=', info.tokens); } catch(_) {}
         }
         return match;
       });
@@ -26136,13 +26149,18 @@ async function getAlumnosFiltrados() {
  */
 function _purgeCanonInconsistencias(alumnosArr) {
   if (!(alumnosArr && Array.isArray(alumnosArr) && alumnosArr.length)) return [];
-  // ✅ FIX 2026-08-26 (Orlando solo ve 4C): SCOPE-AWARE PURGE.
+  // ✅ FIX 2026-08-26 (Orlando solo ve 4C + Admin Secc B): SCOPE-AWARE PURGE.
   // Si el usuario es DOCENTE (profesor/psicólogo) y el alumno (grado,sección)
   // ESTÁ dentro de sus scopeAulas[] → NO APLICAR purge. El scope docente
-  // es fuente de verdad (G+S asignado en admin). El canon CEBA (A/D=Pres,
-  // B=Semi, C=Vir) define MODALIDAD DEL AULA, NO sirve para borrar alumnos
-  // que tienen turno erróneo en BD (importación vieja). El admin corregirá
-  // los turnos en el Excel; mientras tanto, el docente VE a sus alumnos.
+  // es fuente de verdad (G+S asignado en admin).
+  //
+  // ✅ FIX ADMIN 2026-08-26: Incluso para ADMIN (sin scope docente), NUNCA
+  //    PURGAR alumnos por turno inconsistente. El canon CEBA (A/D=Pres,
+  //    B=Semi, C=Vir) DEFINE modalidad UI/dropdown, NO sirve para ocultar
+  //    alumnos que tienen turno erróneo en BD (importación vieja). En vez
+  //    de purgar, anotamos a._turnoEfectivo = canon sección (si es A/B/C/D)
+  //    para que los filtros posteriores (renderAlumnos filtroMod E1-E5) lo
+  //    usen en vez de a.turno raw sucio.
   let esDocentePurge = false;
   const clavesScope = new Set();
   try {
@@ -26166,17 +26184,18 @@ function _purgeCanonInconsistencias(alumnosArr) {
       if (esDocentePurge && clavesScope.size > 0) {
         const gRawA = String(a.grado || '').trim();
         const gNumA = (gRawA.match(/\d+/) || [])[0] || gRawA;
-        if (gNumA && sK && clavesScope.has(`${gNumA},${sK}`)) return true;
+        if (gNumA && sK && clavesScope.has(`${gNumA},${sK}`)) {
+          // Anotar turno efectivo igual (por consistencia filtroMod renderAlumnos)
+          const _canon = { A:'PRESENCIAL', D:'PRESENCIAL', B:'SEMIPRESENCIAL', C:'VIRTUAL' }[sK];
+          if (_canon) a._turnoEfectivo = _canon;
+          return true;
+        }
       }
-      if (sK !== 'A' && sK !== 'B' && sK !== 'C') return true;
-      let turnoRaw = String((a && (a.turno || a.modalidad || a.mod_atencion || a.MODALIDAD || a.ATENCION || '')) || '').trim();
-      if (!turnoRaw) return true;
-      let tNorm = (typeof _normModAtencion === 'function') ? (_normModAtencion(turnoRaw) || turnoRaw) : turnoRaw;
-      if (typeof tNorm === 'string') tNorm = tNorm.trim().toUpperCase().replace(/\s+/g, '');
-      else tNorm = String(tNorm || '').toUpperCase().replace(/\s+/g, '');
-      if (!tNorm) return true;
-      const canonMod = { A: 'PRESENCIAL', B: 'SEMIPRESENCIAL', C: 'VIRTUAL' }[sK];
-      if (tNorm !== canonMod) return false;
+      // Seccion no canon → aceptar sin cambiar nada
+      if (sK !== 'A' && sK !== 'B' && sK !== 'C' && sK !== 'D') return true;
+      // ✅ FIX ADMIN: NO purgar por mismatch turno. Anotar a._turnoEfectivo = canon sección.
+      const _canon = { A:'PRESENCIAL', D:'PRESENCIAL', B:'SEMIPRESENCIAL', C:'VIRTUAL' }[sK];
+      if (_canon) a._turnoEfectivo = _canon;
       return true;
     } catch(_purgeErr) { return true; }
   });
