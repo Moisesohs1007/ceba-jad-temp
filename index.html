@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=130"></script>
-<script src="db_supabase.js?v=130"></script>
+<script src="compat.js?v=131"></script>
+<script src="db_supabase.js?v=131"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -13946,47 +13946,103 @@ async function initComunicado() {
   }
   await poblarFiltroNivel('com-nivel', null, { cfg, alumnos: _comAlumnos || [] });
   let nivelSel = document.getElementById('com-nivel');
-  if (nivelSel && nivelSel.options && nivelSel.options.length) {
-    const oldVal = nivelSel.value;
-    const arrOpts = Array.from(nivelSel.options).map(o => ({ v: o.value, t: o.textContent }));
-    const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Nivel --' || o.t === '-- Nivel --'));
-    nivelSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
-    if (oldVal) {
-      const vals = new Set(Array.from(nivelSel.options).map(o => o.value));
-      if (vals.has(oldVal)) nivelSel.value = oldVal;
-    }
-  }
-  await poblarFiltroGrado('com-grado', nivelSel?.value || null, { cfg, alumnos: _comAlumnos || [] });
   let gSel = document.getElementById('com-grado');
-  if (gSel) {
-    if (gSel.options && gSel.options.length) {
-      const arrOpts = Array.from(gSel.options).map(o => ({ v: o.value, t: o.textContent }));
-      const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Grado --' || o.t === '-- Grado --'));
-      gSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
-    }
-    // Si es docente CON aulas pero solo hay "Todos", habilitarlo igual para que
-    // onComNivelChange luego lo rellene.
-    if (isProf && tieneAsignaciones) {
-      gSel.disabled = !(nivelSel?.value);
-      gSel.style.opacity = (nivelSel?.value) ? '1' : '0.45';
-    } else {
-      gSel.disabled = true;
-      gSel.style.opacity = '0.45';
-    }
-  }
-  await poblarFiltroSeccion('com-seccion', gSel?.value || null, { cfg, alumnos: _comAlumnos || [] });
   let sSel = document.getElementById('com-seccion');
+
   // ================================================================
-  // FIX NUCLEAR 2026-08-26 v2: PARA DOCENTES, SOBRE-ESCRIBIR SIEMPRE
-  // las options de N/G/S usando ÚNICAMENTE scopeAulas[] (la fuente de
-  // verdad). NO importa qué trajeron poblarFiltro* desde alumnos legacy
-  // o datos viejos del cargo. También auto-selecciona Nivel si solo hay
-  // 1 opción disponible y dispara la cascada (onComNivelChange).
+  // SOLUCION DEFINITIVA 2026-08-26 (Admin Moises): SEPARAR
+  // COMPLETAMENTE Admin/Global scope de Docente scope.
+  //
+  // Ruta A) ADMIN / DIRECTOR / permGlobal = true:
+  //   - USAR VALORES CANON CEBA FIJOS para NIVEL / GRADO / SECCIÓN.
+  //   - NUNCA dependemos de poblarFiltro* helpers (que dependen de
+  //     alumnos existentes hoy y ciclo legacy → inconsistente).
+  //   - Niveles canon CEBA:  ['INICIAL/INTERMEDIO', 'AVANZADO']
+  //   - Grados canon CEBA:   [1, 2, 3, 4, 5, 6]
+  //   - Secciones canon CEBA: [A, B, C, D]
+  //   - Cascada disabled N→G→S por seleccion de value (no options).
+  //
+  // Ruta B) DOCENTE CON SCOPE ASIGNACIONES (scopeAulas>0): mantener
+  //   scopeAulas PASO2/3 que ya funciona (Llerena LH / Orlando HO).
+  //
+  // Ruta C) OTROS (rol sin scope): usar poblarFiltro* legacy.
   // ================================================================
-  if (isProf && scopeAulas.length > 0) {
+  const permGlobal = !!(currentPerms?.verTodasAulas) || _normRol(currentRol) === 'admin' || _normRol(currentRol) === 'director';
+  const usaCanonCebaFijo = permGlobal;  // Admin / Director SIEMPRE usa canon CEBA
+
+  if (usaCanonCebaFijo) {
+    // ================================================================
+    // RUTA A: ADMIN / DIRECTOR (permGlobal). Valores CANON FIJOS.
+    // No hay 0 options "porque hoy no hay alumnos en X" — si no
+    // existen, tabla muestra 0 rows (correcto).
+    // ================================================================
+    if (nivelSel) {
+      nivelSel.innerHTML = '';
+      nivelSel.appendChild(new Option('Todos', ''));
+      nivelSel.appendChild(new Option('Inicial/Intermedio', 'INICIAL/INTERMEDIO'));
+      nivelSel.appendChild(new Option('Avanzado', 'AVANZADO'));
+      nivelSel.disabled = false;
+      nivelSel.style.opacity = '1';
+    }
+    if (gSel) {
+      gSel.innerHTML = '';
+      gSel.appendChild(new Option('Todos', ''));
+      for (let g=1; g<=6; g++) gSel.appendChild(new Option(String(g), String(g)));
+      const nivelVal = (nivelSel && nivelSel.value) ? nivelSel.value : '';
+      gSel.disabled = !nivelVal;
+      gSel.style.opacity = nivelVal ? '1' : '0.45';
+    }
+    if (sSel) {
+      sSel.innerHTML = '';
+      sSel.appendChild(new Option('Todas', ''));
+      ['A','B','C','D'].forEach(se => sSel.appendChild(new Option(se, se)));
+      const gVal = (gSel && gSel.value) ? gSel.value : '';
+      sSel.disabled = !gVal;
+      sSel.style.opacity = gVal ? '1' : '0.45';
+    }
+
+    // Si habia seleccion previa (renavegacion) disparar cascada para
+    // actualizar disabled de Grado / Seccion correctamente.
+    if (nivelSel && nivelSel.value) {
+      try { onComNivelChange(); } catch(_) {}
+    } else if (gSel && gSel.value) {
+      try { onComGradoChange(); } catch(_) {}
+    }
+  } else if (isProf && scopeAulas.length > 0) {
+    // ================================================================
+    // RUTA B: DOCENTE CON ASIGNACIONES (scopeAulas). Sobre-escribir
+    // options desde scopeAulas (fuente de verdad).
+    // ================================================================
+    if (nivelSel && nivelSel.options && nivelSel.options.length) {
+      const oldVal = nivelSel.value;
+      const arrOpts = Array.from(nivelSel.options).map(o => ({ v: o.value, t: o.textContent }));
+      const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Nivel --' || o.t === '-- Nivel --'));
+      nivelSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+      if (oldVal) {
+        const vals = new Set(Array.from(nivelSel.options).map(o => o.value));
+        if (vals.has(oldVal)) nivelSel.value = oldVal;
+      }
+    }
+    await poblarFiltroGrado('com-grado', nivelSel?.value || null, { cfg, alumnos: _comAlumnos || [] });
+    if (gSel) {
+      if (gSel.options && gSel.options.length) {
+        const arrOpts = Array.from(gSel.options).map(o => ({ v: o.value, t: o.textContent }));
+        const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Grado --' || o.t === '-- Grado --'));
+        gSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+      }
+      if (isProf && tieneAsignaciones) {
+        gSel.disabled = !(nivelSel?.value);
+        gSel.style.opacity = (nivelSel?.value) ? '1' : '0.45';
+      } else {
+        gSel.disabled = true;
+        gSel.style.opacity = '0.45';
+      }
+    }
+    await poblarFiltroSeccion('com-seccion', gSel?.value || null, { cfg, alumnos: _comAlumnos || [] });
+
     const setNiveles = new Set();
-    const setGradosPorNivel = {}; // { AVANZADO: Set(["2"]) }
-    const setSeccionesPorGS = {}; // { "AVANZADO,2": Set(["A","C"]) }
+    const setGradosPorNivel = {};
+    const setSeccionesPorGS = {};
     scopeAulas.forEach(aula => {
       if (!aula || !aula.grado || !aula.seccion) return;
       const g = String(aula.grado).replace(/\D/g,'').trim();
@@ -14003,26 +14059,16 @@ async function initComunicado() {
       setSeccionesPorGS[key].add(s);
     });
 
-    // ================================================================
-    // PASO 1) CONSTRUIR options de NIVEL (SOLO scopeAulas[]). Borrar
-    // todas las options anteriores. No mergear NADA con poblarFiltro.
-    // ================================================================
     const arrNiveles = Array.from(setNiveles).sort((a,b) => {
       if (a === 'AVANZADO') return 1;
       if (b === 'AVANZADO') return -1;
       return a.localeCompare(b);
     });
     if (nivelSel && arrNiveles.length > 0) {
-      // Borrar TODO, rearmar desde cero
       nivelSel.innerHTML = '';
       nivelSel.appendChild(new Option('Todos', ''));
       arrNiveles.forEach(n => { nivelSel.appendChild(new Option(n, n)); });
     }
-
-    // ================================================================
-    // PASO 2) GRADO y SECCIÓN: se limpian y luego la cascada los llena
-    // al disparar onComNivelChange. Primero resetear a "Todos".
-    // ================================================================
     if (gSel) {
       gSel.innerHTML = '<option value="">Todos</option>';
       gSel.disabled = true;
@@ -14033,53 +14079,65 @@ async function initComunicado() {
       sSel.disabled = true;
       sSel.style.opacity = '0.45';
     }
-
-    // ================================================================
-    // PASO 3) AUTO-SELECCIONAR NIVEL si solo hay 1 nivel disponible
-    // (sin contar Todos). Luego disparar onComNivelChange para llenar
-    // cascada de Grado → Sección.
-    // EXTRA: si después de onComNivelChange, Grado se queda con 1 sola
-    // opción → auto-seleccionarlo y disparar onComGradoChange para
-    // llenar las secciones. Si Sección tiene 1 sola opción también
-    // auto-seleccionarla. (Llerena: 1 nivel → 1 grado → 2 secciones)
-    // ================================================================
     if (nivelSel && arrNiveles.length === 1) {
-      nivelSel.value = arrNiveles[0]; // Ej: Llerena → 'AVANZADO'
+      nivelSel.value = arrNiveles[0];
     }
     if (nivelSel && nivelSel.value) {
       try { onComNivelChange(); } catch(_) {}
-      // Después de la cascada: si Grado tiene SOLO 1 option (no Todos) → auto-seleccionar
       if (gSel && gSel.options) {
         const gOpts = Array.from(gSel.options).map(o => o.value).filter(Boolean);
         if (gOpts.length === 1) {
           gSel.value = gOpts[0];
           try { onComGradoChange(); } catch(_) {}
-          // Si Sección tiene SOLO 1 option → auto-seleccionarla
           if (sSel && sSel.options) {
             const sOpts = Array.from(sSel.options).map(o => o.value).filter(Boolean);
             if (sOpts.length === 1) sSel.value = sOpts[0];
           }
         } else if (gOpts.length > 1 && gSel.value) {
-          // Aunque haya varias opciones, si había value (por ejemplo tras
-          // volver a esta pantalla), disparar cascada de sección
           try { onComGradoChange(); } catch(_) {}
         }
       }
     }
-  }
-  if (sSel) {
-    if (sSel.options && sSel.options.length) {
+    if (sSel && sSel.options && sSel.options.length) {
       const arrOpts = Array.from(sSel.options).map(o => ({ v: o.value, t: o.textContent }));
       const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Sección --' || o.t === '-- Sección --'));
       sSel.innerHTML = '<option value="">Todas</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
     }
     if (isProf && tieneAsignaciones) {
-      sSel.disabled = !(gSel?.value);
-      sSel.style.opacity = (gSel?.value) ? '1' : '0.45';
-    } else {
-      sSel.disabled = true;
-      sSel.style.opacity = '0.45';
+      if (sSel) { sSel.disabled = !(gSel?.value); sSel.style.opacity = (gSel?.value) ? '1' : '0.45'; }
     }
+  } else {
+    // ================================================================
+    // RUTA C: OTROS roles. Usar poblarFiltro* legacy.
+    // ================================================================
+    if (nivelSel && nivelSel.options && nivelSel.options.length) {
+      const oldVal = nivelSel.value;
+      const arrOpts = Array.from(nivelSel.options).map(o => ({ v: o.value, t: o.textContent }));
+      const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Nivel --' || o.t === '-- Nivel --'));
+      nivelSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+      if (oldVal) {
+        const vals = new Set(Array.from(nivelSel.options).map(o => o.value));
+        if (vals.has(oldVal)) nivelSel.value = oldVal;
+      }
+    }
+    await poblarFiltroGrado('com-grado', nivelSel?.value || null, { cfg, alumnos: _comAlumnos || [] });
+    if (gSel) {
+      if (gSel.options && gSel.options.length) {
+        const arrOpts = Array.from(gSel.options).map(o => ({ v: o.value, t: o.textContent }));
+        const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Grado --' || o.t === '-- Grado --'));
+        gSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+      }
+      gSel.disabled = !(nivelSel?.value);
+      gSel.style.opacity = (nivelSel?.value) ? '1' : '0.45';
+    }
+    await poblarFiltroSeccion('com-seccion', gSel?.value || null, { cfg, alumnos: _comAlumnos || [] });
+    if (sSel && sSel.options && sSel.options.length) {
+      const arrOpts = Array.from(sSel.options).map(o => ({ v: o.value, t: o.textContent }));
+      const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Sección --' || o.t === '-- Sección --'));
+      sSel.innerHTML = '<option value="">Todas</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
+    }
+    sSel.disabled = !(gSel?.value);
+    sSel.style.opacity = (gSel?.value) ? '1' : '0.45';
   }
   const sendAEl = document.getElementById('com-enviar-a');
   if (sendAEl) sendAEl.value = 'tel1';
@@ -14141,7 +14199,14 @@ function onComNivelChange() {
   const esDocente = !permGlobal && scopeAulas.length > 0;
   let grados = [];
 
-  if (esDocente) {
+  // ================================================================
+  // ADMIN / permGlobal: VALORES CANON CEBA FIJOS (1..6) sin importar
+  // si hay alumnos en este nivel HOY. Evita disabled sticky por
+  // datos legacy incompletos en INICIAL/INTERMEDIO.
+  // ================================================================
+  if (permGlobal) {
+    grados = ['1','2','3','4','5','6'];
+  } else if (esDocente) {
     // ================================================================
     // DOCENTE: SOLO grados desde scopeAulas[] para el nivel seleccionado.
     // IGNORAR COMPLETAMENTE _comAlumnos para poblar options (podría tener
@@ -14155,14 +14220,13 @@ function onComNivelChange() {
       const gNum = parseInt(g, 10);
       const ciclo = _normCicloScope(aula.ciclo || (aula.nivel ? aula.nivel : ''), gNum);
       if (!ciclo) return;
-      // Match contra el nivel seleccionado (admite sub-match INICIAL vs INICIAL/INTERMEDIO)
       const match = (ciclo === nivel) ||
         ((nivel === 'INICIAL/INTERMEDIO') && (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO'));
       if (match) setG.add(g);
     });
     grados = Array.from(setG).sort((a,b) => parseInt(String(a),10) - parseInt(String(b),10));
   } else {
-    // ADMIN / GLOBAL: usar alumnos + unión con asignaciones (comportamiento anterior)
+    // OTROS: alumnos + union asignaciones
     const rolRaw = _normRol(currentRol);
     const isProfScope = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0) && !permGlobal;
     const _cfgCom = typeof configCache !== 'undefined' ? configCache : {};
@@ -14212,7 +14276,14 @@ function onComGradoChange() {
   const esDocente = !permGlobal && scopeAulas.length > 0;
   let secciones = [];
 
-  if (esDocente) {
+  // ================================================================
+  // ADMIN / permGlobal: VALORES CANON CEBA FIJOS (A/B/C/D) sin importar
+  // si hay alumnos en este grado HOY. Evita disabled sticky por
+  // datos legacy incompletos en INICIAL/INTERMEDIO o turnos sucios BD.
+  // ================================================================
+  if (permGlobal) {
+    secciones = ['A','B','C','D'];
+  } else if (esDocente) {
     // DOCENTE: SOLO secciones desde scopeAulas[] para el grado/nivel.
     const setS = new Set();
     scopeAulas.forEach(aula => {
@@ -14230,7 +14301,7 @@ function onComGradoChange() {
     });
     secciones = Array.from(setS).sort();
   } else {
-    // ADMIN / GLOBAL
+    // OTROS: legacy alumnos + union asignaciones
     const rolRaw = _normRol(currentRol);
     const isProfScope = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0) && !permGlobal;
     const _cfgCom2 = typeof configCache !== 'undefined' ? configCache : {};
