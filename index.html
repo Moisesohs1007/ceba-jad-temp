@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=125"></script>
-<script src="db_supabase.js?v=125"></script>
+<script src="compat.js?v=126"></script>
+<script src="db_supabase.js?v=126"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -22405,6 +22405,17 @@ async function _cargarUsuariosCache() {
   if(Array.isArray(_usuariosCacheData) && _usuariosCacheData.length > 0) return _usuariosCacheData;
   let lsUsr = null;
   try { lsUsr = LSC.get('usuarios'); } catch(_dummyLSC) { lsUsr = null; }
+  // ✅ FIX 2026-08-26 #2: cache con 1 sola fila = sospechoso (RLS glitch que
+  //    trae solo admin moises). Si length <= 2 y solo hay admin, invalidar.
+  if (lsUsr && Array.isArray(lsUsr)) {
+    const _onlyAdmin = lsUsr.length <= 2 && lsUsr.every(u =>
+      (u && (String(u.rol||'').toUpperCase() === 'ADMIN' || /admin|moisesohs/.test(String(u.email||'').toLowerCase())))
+    );
+    if (_onlyAdmin) {
+      try { LSC.del('usuarios'); } catch(_dummy){}
+      lsUsr = null; _usuariosCacheData = null;
+    }
+  }
   if (lsUsr && Array.isArray(lsUsr) && lsUsr.length > 0) {
     let staleCount = 0;
     const checkSample = lsUsr.slice(0, Math.min(8, lsUsr.length));
@@ -22428,17 +22439,6 @@ async function _cargarUsuariosCache() {
   let _sbOK = false;
   let _arrSB = [];
   try {
-    // =================================================================
-    // ✅ FIX 2026-08-24 FINAL: AÑADIR ALIAS NOMBRES DETALLADAS (9 alias + D).
-    // Root cause que duró 5 horas de bugs 100% confirmado:
-    // savePrivilegios guarda MULTIPLES aliases nombre detalladas por
-    // seguridad, PERO Supabase .select() L21597 SÓLO traía 16 fields →
-    // faltaban `grados_asignaciones_json` (con S = asignaciones) + 7 más
-    // (solo traía `grados_asignados_json` con D). Así _userAsignacionesLabel
-    // L21741 nunca encontraba detalladas → _dedupDet.size = 0 → rama else
-    // legacy alias → u.asignaciones plano SIN ciclo → addEntry default AVZ.
-    // Solución 100%: .select() TRAER 9 NOMBRES alias detalladas COMPLETOS.
-    // =================================================================
     const { data, error } = await _sb
       .from('usuarios')
       .select('id,nombre,email,rol,cargo,telefono,restringir,asignaciones,grados_asignaciones_json,grados_asignados_json,gradosAsignacionesJson,asignacionesDetalladasJson,asignacionesDetalladas,gradosAsignacionesJSON,detalladas,asigDetall,asignacionesGradosJson,tutor_aulas_json,tutorAulasJson2,tutor_aulas_objects,tutorAulasObjects,tutAulasJson,tutorGradosAsignados,tutor_grados_asignados,tutorGradosAsignadosArray,tutGradosAsig,gradosAsignados,gradosAsignadosArr,tutorAulas,tutor_aulas,tutor_aulas_arr,tutorAulasArray,tutAulas,tutor_aulas_str,aulasTutor,tutAulasLista,es_tutor,tutor_grado,tutor_seccion,tutorGrado,tutorSeccion,ciclo_nivel,nivelCiclo,cicloAcademico,mod_atencion,modalidadAtencion,numGrado,numeroGrado,gr,sec,secTut,seccionTutoria,secc,asignacionesLegacy,asignacionesPlano,asigPlano,asignaciones_obj,asigLegacy,aulasPlano,gradosAsignadosPlano,asignaciones2,incidentes_dia_lectura,permisos_extra')
@@ -22452,24 +22452,61 @@ async function _cargarUsuariosCache() {
     _sbOK = false;
     _arrSB = [];
   }
-  if (_sbOK && Array.isArray(_arrSB) && _arrSB.length > 0) {
-    _usuariosCacheData = _arrSB;
-  } else {
+  // ✅ FIX 2026-08-26 #1: no solo length === 0 → cualquier data SOSPECHOSA
+  //    dispara fallback Firestore (menos de 3 usuarios, o faltan Orlando / Llerena
+  //    que sabemos que existen por BD).
+  const _eIncompleteSB = (() => {
+    if (!_sbOK || !Array.isArray(_arrSB)) return true;
+    if (_arrSB.length < 3) return true;
+    const _emails = _arrSB.map(u => String((u&&u.email)||'').toLowerCase());
+    const _missing = [
+      'orlando@',  // Orlando (correo exacto contiene)
+      'llerena',   // Llerena
+      'huaman'     // Llerena opcional
+    ];
+    let _mCount = 0;
+    _missing.forEach(k => { if (!_emails.some(e => e.includes(k))) _mCount++; });
+    if (_mCount >= 2) return true; // faltan 2+ de 3 marcadores = data incompleta
+    return false;
+  })();
+  let _arrFS = [];
+  if (_eIncompleteSB) {
     try {
       const snap = await db.collection('usuarios').get();
-      const arrFS = snap.docs.map(d => {
+      _arrFS = snap.docs.map(d => {
         const raw = { id: d.id, ...d.data() };
         return _mapUsuarioCacheRow(raw);
       }).filter(Boolean);
-      _usuariosCacheData = arrFS;
     } catch(e1) {
-      try { console.warn('[usuarios] Firestore fallback también falló', e1 && e1.message || e1); } catch(_){}
-      _usuariosCacheData = _arrSB || [];
+      try { console.warn('[usuarios] Firestore fallback falló', e1 && e1.message || e1); } catch(_){}
+      _arrFS = [];
     }
   }
+  // Merge SB + FS dedup por id → email → nombre
+  const _merge = [];
+  const _seen = new Set();
+  const _pushUniq = (u) => {
+    if (!u) return;
+    const _k = [String(u.id||''), String(u.email||'').toLowerCase(), String(u.nombre||'').toUpperCase().trim()]
+      .map(x => x.replace(/\s+/g,'')).filter(Boolean).join('||');
+    if (!_k || _seen.has(_k)) return;
+    _seen.add(_k);
+    _merge.push(u);
+  };
+  // Preferimos los datos de SB primero (más actual), luego FS rellena faltantes
+  _arrSB.forEach(_pushUniq);
+  _arrFS.forEach(_pushUniq);
+  _merge.sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||'')));
+  _usuariosCacheData = _merge;
   try {
     if (Array.isArray(_usuariosCacheData) && _usuariosCacheData.length > 0) {
-      LSC.set('usuarios', _usuariosCacheData, LSC.TTL_USUARIOS);
+      // 🚨 FIX: NUNCA cachear data incompleta (<3 usuarios o solo admin)
+      const _isSmall = _usuariosCacheData.length < 3;
+      if (!_isSmall) {
+        LSC.set('usuarios', _usuariosCacheData, LSC.TTL_USUARIOS);
+      } else {
+        try { LSC.del('usuarios'); } catch(_cl){}
+      }
     }
   } catch(_set){}
   return Array.isArray(_usuariosCacheData) ? _usuariosCacheData : [];
