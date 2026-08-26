@@ -13847,17 +13847,16 @@ async function initComunicado() {
   await poblarFiltroSeccion('com-seccion', gSel?.value || null, { cfg, alumnos: _comAlumnos || [] });
   let sSel = document.getElementById('com-seccion');
   // ================================================================
-  // FIX NUCLEAR 2026-08-26: SI AÚN DESPUÉS DE poblarFiltro* LAS OPTIONS
-  // SIGUEN VACÍAS (solo "Todos"/"Todas"), INYECTAR DIRECTAMENTE desde
-  // scopeAulas[] sin depender de poblarFiltro ni de currentRol.
-  // Por qué: poblarFiltro usa detección canónica de ciclo que a veces no
-  // matchea los datos legacy. scopeAulas[] es LA FUENTE DE VERDAD.
+  // FIX NUCLEAR 2026-08-26 v2: PARA DOCENTES, SOBRE-ESCRIBIR SIEMPRE
+  // las options de N/G/S usando ÚNICAMENTE scopeAulas[] (la fuente de
+  // verdad). NO importa qué trajeron poblarFiltro* desde alumnos legacy
+  // o datos viejos del cargo. También auto-selecciona Nivel si solo hay
+  // 1 opción disponible y dispara la cascada (onComNivelChange).
   // ================================================================
   if (isProf && scopeAulas.length > 0) {
     const setNiveles = new Set();
     const setGradosPorNivel = {}; // { AVANZADO: Set(["2"]) }
     const setSeccionesPorGS = {}; // { "AVANZADO,2": Set(["A","C"]) }
-    const _cfgHC = cfg || {};
     scopeAulas.forEach(aula => {
       if (!aula || !aula.grado || !aula.seccion) return;
       const g = String(aula.grado).replace(/\D/g,'').trim();
@@ -13876,85 +13875,50 @@ async function initComunicado() {
       if (!setSeccionesPorGS[key]) setSeccionesPorGS[key] = new Set();
       setSeccionesPorGS[key].add(s);
     });
-    // --- INYECTAR NIVEL ---
-    if (nivelSel) {
-      const optsActuales = Array.from(nivelSel.options || []).map(o => o.value).filter(Boolean);
-      const tieneOtras = (arr) => arr && arr.length > 0 && !arr.every(v => ['-- NIVEL --','--NIVEL--'].includes(String(v).toUpperCase()));
-      if (!tieneOtras(optsActuales)) {
-        const arr = Array.from(setNiveles);
-        if (arr.length > 0) {
-          nivelSel.innerHTML = '<option value="">Todos</option>' + arr
-            .sort((a,b) => {
-              if (a === 'AVANZADO') return 1;
-              if (b === 'AVANZADO') return -1;
-              return a.localeCompare(b);
-            })
-            .map(n => `<option value="${n}">${n}</option>`).join('');
-        }
-      }
+
+    // ================================================================
+    // PASO 1) CONSTRUIR options de NIVEL (SOLO scopeAulas[]). Borrar
+    // todas las options anteriores. No mergear NADA con poblarFiltro.
+    // ================================================================
+    const arrNiveles = Array.from(setNiveles).sort((a,b) => {
+      if (a === 'AVANZADO') return 1;
+      if (b === 'AVANZADO') return -1;
+      return a.localeCompare(b);
+    });
+    if (nivelSel && arrNiveles.length > 0) {
+      // Borrar TODO, rearmar desde cero
+      nivelSel.innerHTML = '';
+      nivelSel.appendChild(new Option('Todos', ''));
+      arrNiveles.forEach(n => { nivelSel.appendChild(new Option(n, n)); });
     }
-    // --- INYECTAR GRADO (corresponde al nivel actualmente seleccionado) ---
+
+    // ================================================================
+    // PASO 2) GRADO y SECCIÓN: se limpian y luego la cascada los llena
+    // al disparar onComNivelChange. Primero resetear a "Todos".
+    // ================================================================
     if (gSel) {
-      const nivelAct = nivelSel?.value || '';
-      const optsActualesG = Array.from(gSel.options || []).map(o => o.value).filter(Boolean);
-      if (optsActualesG.length === 0) {
-        let arrG = [];
-        if (nivelAct) {
-          const spn = setGradosPorNivel[nivelAct];
-          if (spn) arrG = Array.from(spn);
-        } else {
-          // Sin nivel seleccionado: todos los grados
-          Object.values(setGradosPorNivel).forEach(setG => {
-            Array.from(setG).forEach(v => arrG.push(v));
-          });
-          arrG = [...new Set(arrG)];
-        }
-        arrG.sort((a,b) => parseInt(String(a),10) - parseInt(String(b),10));
-        if (arrG.length > 0) {
-          gSel.innerHTML = '<option value="">Todos</option>' + arrG.map(g => `<option value="${g}">${g}</option>`).join('');
-          gSel.disabled = !(nivelAct || !Object.keys(setGradosPorNivel).length); // Habilitar solo si hay un nivel seleccionado, o es admin (sin niveles)
-          // Docente SIEMPRE con scope: si tiene grados, habilitar (no requiere nivel? Si - requiere para cascada, pero si no hay nivel queda deshabilitado)
-          gSel.disabled = !(nivelSel?.value);
-          gSel.style.opacity = (nivelSel?.value) ? '1' : '0.45';
-        }
-      }
+      gSel.innerHTML = '<option value="">Todos</option>';
+      gSel.disabled = true;
+      gSel.style.opacity = '0.45';
     }
-    // --- INYECTAR SECCIONES ---
     if (sSel) {
-      const nivelAct = nivelSel?.value || '';
-      const gradoAct = gSel?.value || '';
-      const optsActualesS = Array.from(sSel.options || []).map(o => o.value).filter(Boolean);
-      if (optsActualesS.length === 0) {
-        let arrS = [];
-        if (nivelAct && gradoAct) {
-          const sps = setSeccionesPorGS[`${nivelAct},${gradoAct}`];
-          if (sps) arrS = Array.from(sps);
-        } else if (gradoAct) {
-          // Sin nivel, pero sí grado: buscar en todos los niveles para ese grado
-          Object.keys(setSeccionesPorGS).forEach(k => {
-            const parts = k.split(',');
-            if (parts[1] === gradoAct) Array.from(setSeccionesPorGS[k]).forEach(v => arrS.push(v));
-          });
-          arrS = [...new Set(arrS)];
-        } else if (nivelAct) {
-          Object.keys(setSeccionesPorGS).forEach(k => {
-            const parts = k.split(',');
-            if (parts[0] === nivelAct) Array.from(setSeccionesPorGS[k]).forEach(v => arrS.push(v));
-          });
-          arrS = [...new Set(arrS)];
-        } else {
-          Object.values(setSeccionesPorGS).forEach(ss => {
-            Array.from(ss).forEach(v => arrS.push(v));
-          });
-          arrS = [...new Set(arrS)];
-        }
-        arrS.sort();
-        if (arrS.length > 0) {
-          sSel.innerHTML = '<option value="">Todas</option>' + arrS.map(s => `<option value="${s}">${s}</option>`).join('');
-          sSel.disabled = !(gSel?.value);
-          sSel.style.opacity = (gSel?.value) ? '1' : '0.45';
-        }
-      }
+      sSel.innerHTML = '<option value="">Todas</option>';
+      sSel.disabled = true;
+      sSel.style.opacity = '0.45';
+    }
+
+    // ================================================================
+    // PASO 3) AUTO-SELECCIONAR NIVEL si solo hay 1 nivel disponible
+    // (sin contar Todos). Luego disparar onComNivelChange para llenar
+    // cascada de Grado → Sección.
+    // ================================================================
+    if (nivelSel && arrNiveles.length === 1) {
+      nivelSel.value = arrNiveles[0]; // Ej: Llerena → 'AVANZADO'
+      // Disparar evento de cambio (manual porque la cascada lee value)
+      try { onComNivelChange(); } catch(_) {}
+    } else if (nivelSel && nivelSel.value) {
+      // Si ya había un nivel seleccionado (usuario navega de regreso)
+      try { onComNivelChange(); } catch(_) {}
     }
   }
   if (sSel) {
@@ -14060,28 +14024,55 @@ function onComNivelChange() {
   }
   const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
     ? (_profesorAsignacionesAulasList() || []) : [];
-  const rolRaw = _normRol(currentRol);
-  const isProf = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0)
-    && !(currentPerms?.verTodasAulas);
-  const _cfgCom = typeof configCache !== 'undefined' ? configCache : {};
-  // 1) Grados desde alumnos filtrados por el nivel seleccionado
-  let grados = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom)).map(a=>a.grado).filter(Boolean))].sort();
-  // 2) FIX: Si es docente, UNIR con grados de sus AULAS ASIGNADAS que coincidan con el nivel.
-  if (isProf && scopeAulas && scopeAulas.length > 0) {
-    const gradosAsignadosSet = new Set();
+  const permGlobal = !!(currentPerms?.verTodasAulas) || _normRol(currentRol) === 'admin' || _normRol(currentRol) === 'director';
+  const esDocente = !permGlobal && scopeAulas.length > 0;
+  let grados = [];
+
+  if (esDocente) {
+    // ================================================================
+    // DOCENTE: SOLO grados desde scopeAulas[] para el nivel seleccionado.
+    // IGNORAR COMPLETAMENTE _comAlumnos para poblar options (podría tener
+    // ciclo legacy mal). Extraer ciclo canon por grado 1-6.
+    // ================================================================
+    const setG = new Set();
     scopeAulas.forEach(aula => {
-      if (!aula) return;
-      const match = aula.ciclo ? _matchNivel(aula, nivel, _cfgCom) : (aula.grado && parseInt(String(aula.grado),10) >= 1 && parseInt(String(aula.grado),10) <= 6 ? (nivel === 'AVANZADO') : false);
-      if (match && aula.grado) {
-        const g = String(aula.grado).replace(/\D/g,'');
-        if (g) gradosAsignadosSet.add(g);
-      }
+      if (!aula || !aula.grado) return;
+      const g = String(aula.grado).replace(/\D/g,'').trim();
+      if (!g) return;
+      const gNum = parseInt(g, 10);
+      let ciclo = '';
+      if (aula.ciclo) ciclo = String(aula.ciclo).trim().toUpperCase();
+      if (!ciclo && gNum >= 1 && gNum <= 6) ciclo = 'AVANZADO';
+      if (!ciclo) return;
+      if (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO') ciclo = 'INICIAL/INTERMEDIO';
+      // Match contra el nivel seleccionado (admite sub-match INICIAL vs INICIAL/INTERMEDIO)
+      const match = (ciclo === nivel) ||
+        ((nivel === 'INICIAL/INTERMEDIO') && (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO'));
+      if (match) setG.add(g);
     });
-    if (gradosAsignadosSet.size > 0) {
-      const merge = [...new Set([...(grados||[]), ...Array.from(gradosAsignadosSet)])].sort((a,b)=>parseInt(String(a),10)-parseInt(String(b),10));
-      grados = merge.filter(Boolean);
+    grados = Array.from(setG).sort((a,b) => parseInt(String(a),10) - parseInt(String(b),10));
+  } else {
+    // ADMIN / GLOBAL: usar alumnos + unión con asignaciones (comportamiento anterior)
+    const rolRaw = _normRol(currentRol);
+    const isProfScope = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0) && !permGlobal;
+    const _cfgCom = typeof configCache !== 'undefined' ? configCache : {};
+    grados = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom)).map(a=>a.grado).filter(Boolean))].sort();
+    if (isProfScope && scopeAulas && scopeAulas.length > 0) {
+      const gradosAsignadosSet = new Set();
+      scopeAulas.forEach(aula => {
+        if (!aula) return;
+        const match = aula.ciclo ? _matchNivel(aula, nivel, _cfgCom) : (aula.grado && parseInt(String(aula.grado),10) >= 1 && parseInt(String(aula.grado),10) <= 6 ? (nivel === 'AVANZADO') : false);
+        if (match && aula.grado) {
+          const g = String(aula.grado).replace(/\D/g,'');
+          if (g) gradosAsignadosSet.add(g);
+        }
+      });
+      if (gradosAsignadosSet.size > 0) {
+        grados = [...new Set([...(grados||[]), ...Array.from(gradosAsignadosSet)])].sort((a,b)=>parseInt(String(a),10)-parseInt(String(b),10));
+      }
     }
   }
+
   gradoSel.innerHTML = '<option value="">Todos</option>' + grados.map(g=>`<option value="${g}">${g}</option>`).join('');
   gradoSel.disabled = !(grados.length > 0);
   gradoSel.style.opacity = (grados.length > 0) ? '1' : '0.45';
@@ -14104,26 +14095,52 @@ function onComGradoChange() {
   }
   const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
     ? (_profesorAsignacionesAulasList() || []) : [];
-  const rolRaw = _normRol(currentRol);
-  const isProf = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0)
-    && !(currentPerms?.verTodasAulas);
-  const _cfgCom2 = typeof configCache !== 'undefined' ? configCache : {};
-  let secciones = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom2) && a.grado===grado).map(a=>a.seccion).filter(Boolean))].sort();
-  // FIX: Unión con secciones de AULAS ASIGNADAS que coincidan con el grado seleccionado
-  if (isProf && scopeAulas && scopeAulas.length > 0) {
-    const secsAsigSet = new Set();
+  const permGlobal = !!(currentPerms?.verTodasAulas) || _normRol(currentRol) === 'admin' || _normRol(currentRol) === 'director';
+  const esDocente = !permGlobal && scopeAulas.length > 0;
+  let secciones = [];
+
+  if (esDocente) {
+    // DOCENTE: SOLO secciones desde scopeAulas[] para el grado/nivel.
+    const setS = new Set();
     scopeAulas.forEach(aula => {
-      if (!aula) return;
-      const g = String(aula.grado || '').replace(/\D/g,'');
-      if (g === String(grado).replace(/\D/g,'') && aula.seccion) {
-        const s = String(aula.seccion).trim().toUpperCase();
-        if (/^[A-D]$/.test(s)) secsAsigSet.add(s);
-      }
+      if (!aula || !aula.grado || !aula.seccion) return;
+      const g = String(aula.grado).replace(/\D/g,'').trim();
+      const s = String(aula.seccion).trim().toUpperCase();
+      if (!g || !/^[A-D]$/.test(s)) return;
+      if (g !== String(grado).replace(/\D/g,'').trim()) return;
+      const gNum = parseInt(g, 10);
+      let ciclo = '';
+      if (aula.ciclo) ciclo = String(aula.ciclo).trim().toUpperCase();
+      if (!ciclo && gNum >= 1 && gNum <= 6) ciclo = 'AVANZADO';
+      if (!ciclo) return;
+      if (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO') ciclo = 'INICIAL/INTERMEDIO';
+      const matchCiclo = (ciclo === nivel) ||
+        ((nivel === 'INICIAL/INTERMEDIO') && (ciclo === 'INICIAL' || ciclo === 'INTERMEDIO'));
+      if (matchCiclo) setS.add(s);
     });
-    if (secsAsigSet.size > 0) {
-      secciones = [...new Set([...(secciones||[]), ...Array.from(secsAsigSet)])].sort();
+    secciones = Array.from(setS).sort();
+  } else {
+    // ADMIN / GLOBAL
+    const rolRaw = _normRol(currentRol);
+    const isProfScope = ((rolRaw === 'profesor' || rolRaw === 'psicologo') || scopeAulas.length > 0) && !permGlobal;
+    const _cfgCom2 = typeof configCache !== 'undefined' ? configCache : {};
+    secciones = [...new Set((_comAlumnos||[]).filter(a=>_matchNivel(a, nivel, _cfgCom2) && a.grado===grado).map(a=>a.seccion).filter(Boolean))].sort();
+    if (isProfScope && scopeAulas && scopeAulas.length > 0) {
+      const secsAsigSet = new Set();
+      scopeAulas.forEach(aula => {
+        if (!aula) return;
+        const g = String(aula.grado || '').replace(/\D/g,'');
+        if (g === String(grado).replace(/\D/g,'') && aula.seccion) {
+          const s = String(aula.seccion).trim().toUpperCase();
+          if (/^[A-D]$/.test(s)) secsAsigSet.add(s);
+        }
+      });
+      if (secsAsigSet.size > 0) {
+        secciones = [...new Set([...(secciones||[]), ...Array.from(secsAsigSet)])].sort();
+      }
     }
   }
+
   seccSel.innerHTML = '<option value="">Todas</option>' + secciones.map(s=>`<option value="${s}">${s}</option>`).join('');
   seccSel.disabled = !(secciones.length > 0);
   seccSel.style.opacity = (secciones.length > 0) ? '1' : '0.45';
@@ -14139,42 +14156,69 @@ function _comFiltrados() {
   const permGlobal = !!(currentPerms?.verTodasAulas) || _normRol(currentRol) === 'admin' || _normRol(currentRol) === 'director';
   const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
     ? (_profesorAsignacionesAulasList() || []) : [];
+  const esDocente = !permGlobal && scopeAulas.length > 0;
+
+  // PASO 1: Obtener rowSource (todos los alumnos)
   let rowsRaw = (_comAlumnos && _comAlumnos.length) ? _comAlumnos : (window.alumnosCache || []);
-  // Si rows está vacío PERO es docente con scope → FILTRAR MANUAL desde DB.getAlumnos
-  if (!permGlobal && scopeAulas.length > 0 && (!rowsRaw || rowsRaw.length === 0)) {
+  if (!rowsRaw || !Array.isArray(rowsRaw) || rowsRaw.length === 0) {
     try {
-      rowsRaw = (typeof DB !== 'undefined' && DB && DB.getAlumnos) ? ((async () => {})() || []) : rowsRaw;
+      const raw = sessionStorage.getItem('_alumnosCache');
+      if (raw) { try { rowsRaw = JSON.parse(raw); } catch(_) {} }
     } catch(_) {}
-    if (!rowsRaw || rowsRaw.length === 0) {
-      try {
-        const raw = sessionStorage.getItem('_alumnosCache');
-        if (raw) {
-          try { rowsRaw = JSON.parse(raw); } catch(_) {}
-        }
-      } catch(_) {}
-    }
-    if (Array.isArray(rowsRaw) && rowsRaw.length > 0) {
-      const claves = new Set();
-      scopeAulas.forEach(aula => {
-        if (!aula || !aula.grado || !aula.seccion) return;
-        const g = String(aula.grado).replace(/\D/g,'').trim();
-        const s = String(aula.seccion).trim().toUpperCase();
-        if (g && /^[A-D]$/.test(s)) claves.add(`${g},${s}`);
+  }
+  if (!Array.isArray(rowsRaw)) rowsRaw = [];
+
+  let rows = rowsRaw.slice();
+
+  // PASO 2: DOCENTE -> APLICAR scopeAulas (G/S) PRIMERO y MANTENER.
+  // Este es el filtro PRINCIPAL (fuente de verdad). Ningún dropdown debe
+  // poder filtrar alumnos que están en el scope G/S del profesor.
+  if (esDocente) {
+    const claves = new Set();
+    scopeAulas.forEach(aula => {
+      if (!aula || !aula.grado || !aula.seccion) return;
+      const g = String(aula.grado).replace(/\D/g,'').trim();
+      const s = String(aula.seccion).trim().toUpperCase();
+      if (g && /^[A-D]$/.test(s)) claves.add(`${g},${s}`);
+    });
+    if (claves.size > 0) {
+      rows = rows.filter(a => {
+        const gA = String(a?.grado || '').replace(/\D/g,'').trim();
+        const sA = String(a?.seccion || '').trim().toUpperCase() || (gA ? 'A' : '');
+        return gA && /^[A-D]$/.test(sA) && claves.has(`${gA},${sA}`);
       });
-      if (claves.size > 0) {
-        rowsRaw = rowsRaw.filter(a => {
-          const gA = String(a?.grado || '').replace(/\D/g,'').trim();
-          const sA = String(a?.seccion || '').trim().toUpperCase() || (gA ? 'A' : '');
-          return gA && /^[A-D]$/.test(sA) && claves.has(`${gA},${sA}`);
-        });
+    } else {
+      rows = []; // Sin aulas asignadas, sin alumnos.
+    }
+  }
+
+  const _cfgCom3 = typeof configCache !== 'undefined' ? configCache : {};
+
+  // PASO 3: Aplicar filtro de NIVEL (solo si NO ES DOCENTE, o si es docente
+  // PERO al aplicarlo NO se queda en 0 si el scope G/S sí trajo datos).
+  // Esto corrige "Sin resultados" cuando los alumnos tienen ciclo legacy
+  // distinto al nivel seleccionado pero SÍ pertenecen a G/S asignados.
+  if (!esDocente) {
+    if (nivel) rows = rows.filter(a=>_matchNivel(a, nivel, _cfgCom3));
+  } else {
+    if (nivel) {
+      const antes = rows.length;
+      const rowsPostNivel = rows.filter(a=>_matchNivel(a, nivel, _cfgCom3));
+      // Si el filtro NIVEL descarta TODO pero sí había filas del scope G/S,
+      // NO aplicar el filtro NIVEL (evitar pérdida por desalineación legacy).
+      if (antes > 0 && rowsPostNivel.length === 0) {
+        // no aplicar (se quedan rows originales)
+      } else {
+        rows = rowsPostNivel;
       }
     }
   }
-  let rows = Array.isArray(rowsRaw) ? rowsRaw : [];
-  const _cfgCom3 = typeof configCache !== 'undefined' ? configCache : {};
-  if(nivel) rows = rows.filter(a=>_matchNivel(a, nivel, _cfgCom3));
-  if(grado) rows = rows.filter(a=>a.grado===grado);
-  if(seccion) rows = rows.filter(a=>a.seccion===seccion);
+
+  // PASO 4: Filtros de Grado / Sección / Búsqueda (siempre se aplican).
+  // Para docentes: Grado y Sección ya están RESTRINGIDOS a valores del scope
+  // en los dropdowns → no pueden escapar del scope.
+  if(grado) rows = rows.filter(a=>String(a.grado||'').replace(/\D/g,'') === String(grado).replace(/\D/g,''));
+  if(seccion) rows = rows.filter(a=>String(a.seccion||'').trim().toUpperCase() === String(seccion).trim().toUpperCase());
   if(q) rows = rows.filter(a=>{
     const nombre = (((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || (a.nombre||'')).toLowerCase();
     return nombre.includes(q) || String(a.id||'').includes(q);
