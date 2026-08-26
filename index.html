@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=132"></script>
-<script src="db_supabase.js?v=132"></script>
+<script src="compat.js?v=133"></script>
+<script src="db_supabase.js?v=133"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -3677,6 +3677,10 @@
             <input type="checkbox" id="pe-sec-horarios-grado" style="accent-color:var(--accent);width:15px;height:15px;">
             Horarios por grado
           </label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.86rem;font-weight:650;">
+            <input type="checkbox" id="pe-sec-chat" style="accent-color:var(--accent);width:15px;height:15px;">
+            Chat Interno
+          </label>
         </div>
       </div>
       <div style="display:flex;gap:10px;margin-top:18px;">
@@ -6387,11 +6391,11 @@ function canAccessSection(secId) {
   if(id === 'materiales') return _isSuperAdmin();
   if(id === 'materiales-entrega') return _isSuperAdmin();
   if(id === 'comunicado') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || r === 'psicologo' || (r === 'profesor' && isTutor));
-  if(id === 'agenda') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || (r === 'profesor' && isTutor));
+  if(id === 'agenda') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador');
   if(id === 'rol-examenes') return _isSuperAdmin();
   if(id === 'ia-horarios') return _isSuperAdmin();
   if(id === 'horarios-grado') return _isSuperAdmin();
-  if(id === 'chat') return _isSuperAdmin();
+  if(id === 'chat') return (_isSuperAdmin() || r === 'admin' || r === 'director');
   if(id === 'usuarios') return (_isSuperAdmin() || r === 'admin' || r === 'director');
   if(id === 'config') return _isSuperAdmin();
   if(id === 'generadores-ia') return false;
@@ -7429,7 +7433,7 @@ function aplicarPermisos(rol) {
 
   const hasAsistencia = ['scan','registro','reportes','alertas'].some(canAccessSection);
   const hasAula = ['alumnos','incidentes','materiales','materiales-entrega'].some(canAccessSection);
-  const hasCom = ['comunicado','agenda','rol-examenes','ia-horarios','horarios-grado'].some(canAccessSection);
+  const hasCom = ['comunicado','agenda','rol-examenes','ia-horarios','horarios-grado','chat'].some(canAccessSection);
   const hasCfg = ['config','usuarios'].some(canAccessSection);
 
   const tabAs = document.getElementById('tab-asistencia');
@@ -14032,35 +14036,11 @@ async function initComunicado() {
   } else if (isProf && scopeAulas.length > 0) {
     // ================================================================
     // RUTA B: DOCENTE CON ASIGNACIONES (scopeAulas). Sobre-escribir
-    // options desde scopeAulas (fuente de verdad).
+    // options DIRECTAMENTE desde scopeAulas (fuente de verdad).
+    // NO llamar a poblarFiltroGrado/Seccion legacy para evitar que
+    // datos incompletos de _comAlumnos generen options vacíos y dejen
+    // los selects deshabilitados (ej: Orlando HO 4B/4C se veían gris).
     // ================================================================
-    if (nivelSel && nivelSel.options && nivelSel.options.length) {
-      const oldVal = nivelSel.value;
-      const arrOpts = Array.from(nivelSel.options).map(o => ({ v: o.value, t: o.textContent }));
-      const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Nivel --' || o.t === '-- Nivel --'));
-      nivelSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
-      if (oldVal) {
-        const vals = new Set(Array.from(nivelSel.options).map(o => o.value));
-        if (vals.has(oldVal)) nivelSel.value = oldVal;
-      }
-    }
-    await poblarFiltroGrado('com-grado', nivelSel?.value || null, { cfg, alumnos: _comAlumnos || [] });
-    if (gSel) {
-      if (gSel.options && gSel.options.length) {
-        const arrOpts = Array.from(gSel.options).map(o => ({ v: o.value, t: o.textContent }));
-        const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Grado --' || o.t === '-- Grado --'));
-        gSel.innerHTML = '<option value="">Todos</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
-      }
-      if (isProf && tieneAsignaciones) {
-        gSel.disabled = !(nivelSel?.value);
-        gSel.style.opacity = (nivelSel?.value) ? '1' : '0.45';
-      } else {
-        gSel.disabled = true;
-        gSel.style.opacity = '0.45';
-      }
-    }
-    await poblarFiltroSeccion('com-seccion', gSel?.value || null, { cfg, alumnos: _comAlumnos || [] });
-
     const setNiveles = new Set();
     const setGradosPorNivel = {};
     const setSeccionesPorGS = {};
@@ -14085,47 +14065,69 @@ async function initComunicado() {
       if (b === 'AVANZADO') return -1;
       return a.localeCompare(b);
     });
-    if (nivelSel && arrNiveles.length > 0) {
+
+    if (nivelSel) {
+      const oldVal = nivelSel.value;
       nivelSel.innerHTML = '';
       nivelSel.appendChild(new Option('Todos', ''));
       arrNiveles.forEach(n => { nivelSel.appendChild(new Option(n, n)); });
+      nivelSel.disabled = false;
+      nivelSel.style.opacity = '1';
+      if (oldVal && Array.from(nivelSel.options).some(o => o.value === oldVal)) nivelSel.value = oldVal;
+      else if (arrNiveles.length === 1) nivelSel.value = arrNiveles[0];
     }
     if (gSel) {
+      const oldVal = gSel.value;
       gSel.innerHTML = '<option value="">Todos</option>';
-      gSel.disabled = true;
-      gSel.style.opacity = '0.45';
+      const gValNivel = (nivelSel?.value) ? String(nivelSel.value).trim() : '';
+      if (gValNivel) {
+        const arrG = Array.from(setGradosPorNivel[gValNivel] || []).sort((a,b)=>parseInt(String(a),10)-parseInt(String(b),10));
+        arrG.forEach(g => gSel.appendChild(new Option(g, g)));
+      } else {
+        // Sin nivel seleccionado: unión de TODOS los grados asignados (para que tenga options pero disabled)
+        const todos = new Set();
+        Object.values(setGradosPorNivel).forEach(s => s.forEach(g => todos.add(g)));
+        Array.from(todos).sort((a,b)=>parseInt(String(a),10)-parseInt(String(b),10)).forEach(g => gSel.appendChild(new Option(g, g)));
+      }
+      gSel.disabled = !(nivelSel?.value);
+      gSel.style.opacity = (nivelSel?.value) ? '1' : '0.45';
+      if (oldVal && Array.from(gSel.options).some(o => o.value === oldVal)) gSel.value = oldVal;
     }
     if (sSel) {
+      const oldVal = sSel.value;
       sSel.innerHTML = '<option value="">Todas</option>';
-      sSel.disabled = true;
-      sSel.style.opacity = '0.45';
+      const gValG = (gSel?.value) ? String(gSel.value).trim() : '';
+      const gValNivel = (nivelSel?.value) ? String(nivelSel.value).trim() : '';
+      if (gValG && gValNivel) {
+        const k = `${gValNivel},${gValG}`;
+        const arrS = Array.from(setSeccionesPorGS[k] || []).sort();
+        arrS.forEach(se => sSel.appendChild(new Option(se, se)));
+      } else {
+        const todas = new Set();
+        Object.values(setSeccionesPorGS).forEach(s => s.forEach(se => todas.add(se)));
+        Array.from(todas).sort().forEach(se => sSel.appendChild(new Option(se, se)));
+      }
+      sSel.disabled = !(gSel?.value);
+      sSel.style.opacity = (gSel?.value) ? '1' : '0.45';
+      if (oldVal && Array.from(sSel.options).some(o => o.value === oldVal)) sSel.value = oldVal;
     }
-    if (nivelSel && arrNiveles.length === 1) {
-      nivelSel.value = arrNiveles[0];
-    }
+
+    // Auto-select 1-opción restante y disparar cascada
     if (nivelSel && nivelSel.value) {
-      try { onComNivelChange(); } catch(_) {}
+      try { onComNivelChange(); } catch(_){}
       if (gSel && gSel.options) {
         const gOpts = Array.from(gSel.options).map(o => o.value).filter(Boolean);
         if (gOpts.length === 1) {
           gSel.value = gOpts[0];
-          try { onComGradoChange(); } catch(_) {}
+          try { onComGradoChange(); } catch(_){}
           if (sSel && sSel.options) {
             const sOpts = Array.from(sSel.options).map(o => o.value).filter(Boolean);
             if (sOpts.length === 1) sSel.value = sOpts[0];
           }
         } else if (gOpts.length > 1 && gSel.value) {
-          try { onComGradoChange(); } catch(_) {}
+          try { onComGradoChange(); } catch(_){}
         }
       }
-    }
-    if (sSel && sSel.options && sSel.options.length) {
-      const arrOpts = Array.from(sSel.options).map(o => ({ v: o.value, t: o.textContent }));
-      const sinPrimero = arrOpts.filter(o => !(o.value === '' || o.value === '-- Sección --' || o.t === '-- Sección --'));
-      sSel.innerHTML = '<option value="">Todas</option>' + sinPrimero.map(o => (o.value ? `<option value="${o.value}">${o.t}</option>` : '')).join('');
-    }
-    if (isProf && tieneAsignaciones) {
-      if (sSel) { sSel.disabled = !(gSel?.value); sSel.style.opacity = (gSel?.value) ? '1' : '0.45'; }
     }
   } else {
     // ================================================================
@@ -21662,7 +21664,7 @@ function _aulasListToAsignacionesObj(listArr) {
 
 const _PE_SEC_KEYS = [
   'scan','alumnos','registro','reportes','incidentes','materiales','materiales-entrega',
-  'comunicado','agenda','rol-examenes','alertas','usuarios','config','ia-horarios','horarios-grado'
+  'comunicado','agenda','rol-examenes','alertas','usuarios','config','ia-horarios','horarios-grado','chat'
 ];
 function _resetPxCheckboxesDOMToFalse() {
   ['pe-incidentes-dia-lectura','pe-incidentes-ver-todo','pe-modo-carnets','pe-ver-todas-aulas','pe-alumnos-fotos-masivo'].forEach(id => {
