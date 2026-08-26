@@ -25751,57 +25751,63 @@ function aplicarFiltroProfesor(alumnos) {
     const xTurno = (typeof _normModAtencion === 'function') ? _normModAtencion(x.turno || '') : (String(x.turno || '').toUpperCase());
     return { x, xCiclo, xGradoRaw, xGradoNum, xSec, xTurno };
   });
-  // PASO 1 (el actual): GradoNumMatch + Seccion (con ciclo lax fallback turno igual)
-  // ✅ FIX 2026-08-24 SOLEDAD B=PRES FANTASMA (igual fix Orlando): Si xSec/aSec ∈ {A,B,C}
-  // APLICAR CANON A=PRES, B=SEMI, C=VIRT INCONDICIONALMENTE ANTES DE return true.
-  // También obligar turnoMatch cuando xTurno/aTurno tengan valor (no omitir por ciclo ok).
+  // PASO 1: GradoNumMatch + Seccion. Regla GENERAL CANÓNICA 2026-08-26 (para
+  // TODOS los docentes, automática, nunca más uno por uno):
+  //
+  //   • Si el alumno tiene (grado,seccion) ∈ scope del profesor → INCLUIRLO.
+  //   • El CANÓN (A/D=PRESENCIAL, B=SEMIPRESENCIAL, C=VIRTUAL) DEFINE LA
+  //     MODALIDAD ASIGNADA al aula, NO sirve para BLOQUEAR alumnos que tienen
+  //     turno erróneo en la BD (importación vieja).
+  //   • Esto corrige a Orlando (4B + 4C): si los alumnos de 4B en BD tienen
+  //     mal el turno, de todos modos se muestran. El canon se usa PARA la UI
+  //     y para poblar dropdowns, NO para descartar coincidencias G+S.
+  //   • Si PASO 1 no devuelve alumnos para TODOS los G+S del scope → se
+  //     continúa con PASO 2/3 (fallbacks). Si PASO 1 sí cubre al menos UN
+  //     alumno por cada aula scope, se retorna out1.
   const out1 = alumnos.filter(a => {
     const aCiclo = String(a.ciclo || '').trim().toUpperCase();
     const aGradoRaw = String(a.grado || '').trim();
     const aGradoNum = (aGradoRaw.match(/\d+/) || [])[0] || '';
     const aSec = String(a.seccion || '').trim().toUpperCase();
-    const aTurno = (typeof _normModAtencion === 'function') ? _normModAtencion(a.turno || '') : (String(a.turno || '').toUpperCase());
     return aulasPrep.some(ap => {
-      const { xCiclo, xGradoRaw, xGradoNum, xSec, xTurno } = ap;
+      const { xCiclo, xGradoRaw, xGradoNum, xSec } = ap;
       const gradoNumMatch = (xGradoNum && aGradoNum && xGradoNum === aGradoNum) || (xGradoRaw && xGradoRaw === aGradoRaw);
       const seccionMatch = !xSec || !aSec || xSec === aSec;
-      let turnoMatch = !xTurno || !aTurno || xTurno === aTurno;
-      // ================================================================
-      // ✅ PRIORIDAD 0 CANON CEBA A/B/C (igual helper granular modal 23755):
-      // Para Soledad y TODOS docentes: A=PRES; B=SEMIPRESENCIAL; C=VIRTUAL.
-      // Bloquea alumnos con combinación inválida incluso aunque la asignación
-      // no traiga turno explícito (xTurno='') y la importación vieja tenga
-      // turno erróneo (ej: 1B PRESENCIAL fantasma en la imagen).
-      // ================================================================
-      const sKC = (xSec || aSec || '').trim().toUpperCase();
-      if (sKC === 'A' || sKC === 'B' || sKC === 'C') {
-        const canonMod = { A:'PRESENCIAL', B:'SEMIPRESENCIAL', C:'VIRTUAL' }[sKC];
-        // Si el alumno trae turno distinto del canon → BLOQUEAR DIRECTAMENTE.
-        if (aTurno && aTurno !== canonMod) return false;
-        // Si la asignación trae turno distinto del canon → BLOQUEAR (no debería
-        // pasar porque savePrivilegios + canonical infieren bien, pero safety).
-        if (xTurno && xTurno !== canonMod) return false;
-        // Sobreescribir turnoMatch para que coincida con canon (incluso si vacíos):
-        turnoMatch = true;
-      }
-      // Capa 1: Grado + Seccion son los campos más importantes (no tiene por qué fallar por ciclo)
-      if(gradoNumMatch && seccionMatch) {
-        // ✅ FIX SOLEDAD: SIEMPRE requerir turnoMatch (no omitir aunque ciclo OK).
-        // (Para A/B/C ya quedó en true arriba canon; para D u otros se usa normal).
-        if (sKC === 'D') { /* D = PRESENCIAL por canon si infiere, mantener lax */ }
-        if (xTurno && aTurno && xTurno !== aTurno && sKC !== 'D') return false;
-        if(!xCiclo || !aCiclo) return turnoMatch;
-        if(xCiclo === aCiclo) return turnoMatch;
-        const xEsAgrupIniInt = (xCiclo === 'INICIAL/INTERMEDIO' || xCiclo === 'INICIAL / INTERMEDIO');
-        if(xEsAgrupIniInt && (aCiclo === 'INICIAL' || aCiclo === 'INTERMEDIO')) return turnoMatch;
-        if(xTurno && aTurno && xTurno === aTurno) return true;
-        return false;
-      }
+      // ✅ REGLA GENERAL 2026-08-26: G y S match → ACEPTAR.
+      // (turno/ciclo son secundarios, no bloquean por datos sucios BD)
+      if (gradoNumMatch && seccionMatch) return true;
+      // Fallback si no hubo match estricto pero sí coincide (grado lax + seccion lax)
+      if(!gradoNumMatch && !seccionMatch) return false;
+      const gLax = !xGradoRaw || !aGradoRaw || xGradoRaw === aGradoRaw;
+      if (gLax && seccionMatch) return true;
       return false;
     });
   });
   stats.paso1GradoSeccion = out1.length;
-  if (out1.length > 0) { stats.finalSize = out1.length; return out1; }
+
+  // ✅ NUEVA GUARDIA: "out1 cubre todos los (grado,seccion) del scope"?
+  // Si out1 NO cubre todas las aulas (ej: Orlando muestra 4C pero NO 4B porque
+  // los turnos en BD estaban mal y el código anterior los bloqueaba) → NO
+  // retornamos out1. Dejamos que pasen a PASO 2/3 para que SOLO GRADO rescue
+  // los alumnos de las aulas "huérfanas". Si PASO 2 los trae, luego el scope
+  // de Sección ya los filtrará correctamente en renderAlumnos (filtros UI).
+  let todasAulasCubiertas = true;
+  try {
+    const clavesScope = new Set(aulasPrep.map(ap => `${ap.xGradoNum || ap.xGradoRaw || ''},${ap.xSec || ''}`).filter(k=>k!==','));
+    const clavesEncontradas = new Set(out1.map(a => {
+      const gNum = (String(a.grado||'').match(/\d+/)||[])[0] || String(a.grado||'').trim();
+      return `${gNum},${String(a.seccion||'').trim().toUpperCase()}`;
+    }));
+    let faltantes = 0;
+    clavesScope.forEach(k => { if (!clavesEncontradas.has(k)) faltantes++; });
+    todasAulasCubiertas = (faltantes === 0);
+    // Guardar en stats para panel debug
+    stats.aulasScopeCount = clavesScope.size;
+    stats.aulasCubiertas = clavesEncontradas.size;
+    stats.aulasFaltantes = faltantes;
+  } catch(_) {}
+
+  if (out1.length > 0 && todasAulasCubiertas) { stats.finalSize = out1.length; return out1; }
 
   // PASO 2: FALLBACK SOLO GRADO (cualquier seccion, cualquier turno, cualquier nivel)
   const out2 = alumnos.filter(a => {
@@ -27113,15 +27119,67 @@ async function onGradoChangeAlumnos() {
 function onSeccionChangeAlumnos() {
   try { if (window._asmqrSinAutoTut === true) return; } catch(_) {}
   document.getElementById('search-alumnos').value = '';
-  // Helper: selección UI válida (TODOS cuenta, placeholder no)
   const _selOk = v => { v = String(v||'').trim(); return !!v && v !== '--' && !v.startsWith('-- ') && !v.endsWith(' --') && !/Seleccionar/i.test(v); };
-  // CASCADA: Sección (incluso TODOS) habilita Modalidad.
   const seccion = document.getElementById('fa-seccion').value;
-  if (_selOk(seccion)) {
-    _enableSelect('fa-modalidad');
-  } else {
-    document.getElementById('fa-modalidad').value = '';
-    _disableSelect('fa-modalidad');
+  const modEl = document.getElementById('fa-modalidad');
+
+  // ================================================================
+  // REGLA GENERAL 2026-08-26: DOCENTE → modalidades segun scope CANÓNICO
+  //   A/D = PRESENCIAL; B = SEMIPRESENCIAL; C = VIRTUAL.
+  // SOLO muestra las modalidades que existen en su scope (unión con las
+  // secciones seleccionadas en el filtro). Si la sección está fija (no "Todas"),
+  // la modalidad queda LIGADA (solo 1 opción canon, auto-seleccionable).
+  // ================================================================
+  const scopeAulas = (typeof _profesorAsignacionesAulasList === 'function')
+    ? (_profesorAsignacionesAulasList() || []) : [];
+  const permGlobal = !!(currentPerms?.verTodasAulas) || _normRol(currentRol) === 'admin' || _normRol(currentRol) === 'director';
+  const esDocente = !permGlobal && scopeAulas.length > 0;
+
+  if (modEl) {
+    const grado = document.getElementById('fa-grado').value;
+    const nivel = document.getElementById('fa-nivel').value;
+    // 1) Construir Set de modalidades permitidas PARA DOCENTES según scope +
+    //    (grado,sección,nivel) del filtro actual.
+    let modsPermitidas = null; // null = ADMIN: todas las modalidades.
+    if (esDocente) {
+      modsPermitidas = new Set();
+      scopeAulas.forEach(aula => {
+        if (!aula || !aula.grado || !aula.seccion) return;
+        const g = String(aula.grado).replace(/\D/g,'').trim();
+        const s = String(aula.seccion).trim().toUpperCase();
+        if (!g || !/^[A-D]$/.test(s)) return;
+        const gNum = parseInt(g, 10);
+        const ciclo = _normCicloScope(aula.ciclo || (aula.nivel ? aula.nivel : ''), gNum);
+        // Si hay grado / seccion / nivel UI seleccionado → filtrar por ellos
+        if (grado && g !== String(grado).replace(/\D/g,'').trim()) return;
+        if (nivel && ciclo !== nivel) return;
+        if (seccion && s !== seccion) return;
+        // CANÓN CEBA
+        const canonMod = (s === 'B') ? 'SEMIPRESENCIAL'
+          : (s === 'C') ? 'VIRTUAL'
+          : 'PRESENCIAL';
+        modsPermitidas.add(canonMod);
+      });
+    }
+
+    // 2) Re-escribir <option> de modalidad según permitidas.
+    const arrMods = modsPermitidas ? Array.from(modsPermitidas).sort()
+      : ['PRESENCIAL','SEMIPRESENCIAL','VIRTUAL'];
+    if (arrMods.length === 0) arrMods.push('PRESENCIAL');
+    modEl.innerHTML = '<option value="">-- Modalidad --</option>' +
+      arrMods.map(m => `<option value="${m}">${_MODALIDAD_ATENCION_LABEL[m] || m}</option>`).join('');
+    // 3) Auto-seleccionar si hay 1 sola opción canon (ej: sección B → SEMIPRESENCIAL)
+    if (arrMods.length === 1 && _selOk(seccion)) {
+      modEl.value = arrMods[0];
+    } else {
+        modEl.value = '';
+    }
+    // 4) Habilitar / deshabilitar según sección seleccionada.
+    if (_selOk(seccion)) {
+      _enableSelect('fa-modalidad');
+    } else {
+      _disableSelect('fa-modalidad');
+    }
   }
   renderAlumnos();
 }
