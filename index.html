@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=134"></script>
-<script src="db_supabase.js?v=134"></script>
+<script src="compat.js?v=135"></script>
+<script src="db_supabase.js?v=135"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -32013,31 +32013,116 @@ function abrirModalNuevoChatStaff() {
   chatStaffPrecargarAlumnos().then(renderChatNuevoAlumnos);
 }
 
-async function chatStaffPrecargarListaStaff() {
-  if (CHAT_STAFF.staffCache && CHAT_STAFF.staffCache.length) return;
-  const sb = chatStaffGetSB();
-  if (!sb) { CHAT_STAFF.staffCache = []; return; }
+async function chatStaffPrecargarListaStaff(force) {
+  // Inicializar uid de forma robusta: CHAT_STAFF.uid si hay, sino currentUser.uid
+  const uidYo = CHAT_STAFF.uid || (window.currentUser && window.currentUser.uid) || null;
+  if (!CHAT_STAFF.uid && uidYo) CHAT_STAFF.uid = uidYo;
+  CHAT_STAFF.staffError = null;
+
+  if (!force && Array.isArray(CHAT_STAFF.staffCache) && CHAT_STAFF.staffCache.length > 0) return;
+  const rawList = [];
+  let _msgErr = null;
+
+  // ================================================================
+  // PATH 1 (FUENTE PRINCIPAL): Reusar _cargarUsuariosCache()
+  //   Este helper ya trae todos los usuarios con:
+  //   ✅ LSC cache local 30 min
+  //   ✅ Fallback Supabase + Firestore merge SB+FS dedup
+  //   ✅ Validación data incompleta <3 usuarios o faltan marcadores
+  //   ✅ Mapeo canónico campos uid/nombre/email/rol/cargo
+  //   NO depende de SELECT usuarios fresh RLS (que falla Staff↔Staff).
+  // ================================================================
   try {
-    const colegio = chatStaffColegioId();
-    const { data, error } = await sb
-      .from('usuarios')
-      .select('id,nombre,nombres,apellidos,cargo,rol,correo,email')
-      .eq('colegio_id', colegio)
-      .order('apellidos', { ascending: true })
-      .order('nombres', { ascending: true })
-      .limit(400);
-    if (error) throw error;
-    CHAT_STAFF.staffCache = ((data || []).filter(u => {
-      if (!u || !u.id) return false;
-      if (u.id === CHAT_STAFF.uid) return false;  // no mostrarse a sí mismo
-      const r = _normRol(u.rol);
-      return ['admin','director','coordinador','profesor','psicologo','auxiliar'].includes(r);
-    }) || []);
-    // Hidratar cache de usuarios para chatStaffNombreStaff
-    CHAT_STAFF.staffCache.forEach(u => CHAT_STAFF.usuariosCache.set(u.id, u));
-  } catch(e) {
-    console.error('chatStaffPrecargarListaStaff', e);
-    CHAT_STAFF.staffCache = [];
+    if (typeof _cargarUsuariosCache === 'function') {
+      const arr = (await _cargarUsuariosCache()) || [];
+      if (Array.isArray(arr) && arr.length) {
+        arr.forEach(u => {
+          if (!u) return;
+          rawList.push({
+            id: u.uid,
+            nombre: u.nombre || '',
+            nombres: '',
+            apellidos: '',
+            cargo: u.cargo || '',
+            rol: u.rol || '',
+            correo: u.email || '',
+            email: u.email || '',
+          });
+        });
+      }
+    }
+  } catch(e1) {
+    try { console.warn('[chatStaffPrecargar] Path 1 _cargarUsuariosCache falló, continuar SB', e1 && e1.message || e1); } catch(_){}
+  }
+
+  // ================================================================
+  // PATH 2 (REFRESH OPTATIVO): Consulta directa Supabase para traer
+  //   nombres actualizados o usuarios NUEVOS no en caché 30min.
+  //   SI FALLA (RLS glitch / timeout / 0 rows) → NO reemplaza la
+  //   lista del Path 1 que ya funcionó. Solo mergea por id.
+  // ================================================================
+  const sb = chatStaffGetSB();
+  if (sb) {
+    try {
+      const colegio = chatStaffColegioId();
+      const { data, error } = await sb
+        .from('usuarios')
+        .select('id,nombre,nombres,apellidos,cargo,rol,correo,email')
+        .eq('colegio_id', colegio)
+        .order('apellidos', { ascending: true })
+        .order('nombres', { ascending: true })
+        .limit(400);
+      if (error) throw error;
+      if (Array.isArray(data) && data.length) {
+        // Merge: path1 prioridad, data SB actualiza campos si hay match id
+        const byId = new Map();
+        rawList.forEach(r => byId.set(String(r.id||''), r));
+        data.forEach(d => {
+          if (!d || !d.id) return;
+          const k = String(d.id);
+          if (byId.has(k)) {
+            const old = byId.get(k);
+            if (d.nombre && !old.nombre) old.nombre = d.nombre;
+            if (d.cargo && !old.cargo) old.cargo = d.cargo;
+            if (d.rol && !old.rol) old.rol = d.rol;
+          } else {
+            rawList.push({ ...d });
+          }
+        });
+      }
+    } catch(e2) {
+      try { console.warn('[chatStaffPrecargar] Path 2 SB fetch falló (mantengo Path1). error=', e2 && e2.message || e2); } catch(_){}
+    }
+  }
+
+  // ================================================================
+  // FILTRADO: staff válido, excluirme a mí mismo
+  // ================================================================
+  const rolesValidos = new Set(['admin','director','coordinador','profesor','psicologo','auxiliar']);
+  const final = rawList.filter(u => {
+    if (!u || !u.id) return false;
+    if (String(u.id) === String(uidYo || '')) return false;
+    return rolesValidos.has(_normRol(u.rol));
+  }).sort((a, b) => {
+    const na = String(a.nombre || [a.nombres,a.apellidos].filter(Boolean).join(' ') || '').toLowerCase().trim();
+    const nb = String(b.nombre || [b.nombres,b.apellidos].filter(Boolean).join(' ') || '').toLowerCase().trim();
+    return na.localeCompare(nb);
+  });
+
+  if (!final.length) {
+    // Ambos paths 0 rows o fallaron: marcar error para render muestra aviso + retry
+    CHAT_STAFF.staffCache = null;  // NO cachear [] vacío, forzar reintento próximo
+    _msgErr = 'No se pudo cargar la lista del personal. Posible causa: RLS bloqueó la consulta o caché corrupta.';
+  } else {
+    CHAT_STAFF.staffCache = final;
+    // Hidratar cache de nombres
+    final.forEach(u => {
+      if (!CHAT_STAFF.usuariosCache.has(u.id)) CHAT_STAFF.usuariosCache.set(u.id, u);
+    });
+  }
+
+  if (!Array.isArray(CHAT_STAFF.staffCache) || CHAT_STAFF.staffCache.length === 0) {
+    CHAT_STAFF.staffError = _msgErr;
   }
 }
 
@@ -32052,13 +32137,26 @@ function renderChatNuevoStaff() {
   const el = document.getElementById('chat-nuevo-staff-lista');
   if (!el) return;
   const q = String(document.getElementById('chat-staff-buscar-nuevo')?.value || '').toLowerCase().trim();
+
+  // Error visible (carga falló) → Mensaje color rojo + Botón Reintentar
+  if (CHAT_STAFF.staffError && !(Array.isArray(CHAT_STAFF.staffCache) && CHAT_STAFF.staffCache.length)) {
+    el.innerHTML = `
+      <div style="padding:18px;text-align:center;">
+        <div style="color:#ef4444;font-size:0.84rem;font-weight:700;margin-bottom:8px;">⚠ ${escapeHtml(CHAT_STAFF.staffError)}</div>
+        <div style="color:var(--muted);font-size:0.76rem;margin-bottom:14px;">Sugerencia: borra el caché de <code style="background:var(--surface);padding:1px 6px;border-radius:6px;">lsc:usuarios</code> en F12 → Application → Local Storage y recarga (Ctrl+Shift+R).</div>
+        <button onclick="(async()=>{ try { document.getElementById('chat-nuevo-staff-lista').innerHTML = '<div style=\\'padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;\\'>Reintentando...</div>'; await chatStaffPrecargarListaStaff(true); renderChatNuevoStaff(); } catch(err){ toast('Error: '+err.message,'error'); } })()" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:10px;font-weight:700;font-size:0.84rem;cursor:pointer;">🔄 Reintentar carga</button>
+      </div>`;
+    return;
+  }
+
   const list = (CHAT_STAFF.staffCache || []).filter(u => {
     if (!q) return true;
     const nombreFull = [(u.nombres||''),(u.apellidos||''),(u.nombre||''),(u.cargo||''),(u.rol||''),(u.correo||''),(u.email||'')].filter(Boolean).join(' ').toLowerCase();
     return nombreFull.includes(q);
   }).slice(0, 80);
   if (!list.length) {
-    el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">${q ? 'Sin coincidencias' : 'No hay otros usuarios del personal registrados.'}</div>`;
+    const txt = q ? 'Sin coincidencias' : 'No hay otros usuarios del personal registrados.';
+    el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:0.82rem;">${txt}</div>`;
     return;
   }
   const parts = list.map(u => {
