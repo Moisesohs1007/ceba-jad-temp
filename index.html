@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=149"></script>
-<script src="db_supabase.js?v=149"></script>
+<script src="compat.js?v=150"></script>
+<script src="db_supabase.js?v=150"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -31724,13 +31724,27 @@ function _chatStaffIniciarLoopFondo() {
     } catch(_){}
   }, 2200);
   // Dedupe / resolver parejas (menos frecuente, para no generar reflow)
+  // MUTEX: __chatStaffBgRunning garantiza que NUNCA 2 tareas background
+  // (dedupeGlobal o resolverTodas) se ejecutan a la vez. Si la anterior
+  // sigue corriendo, saltamos la iteración hasta que libere el lock.
+  // Así no se pisan CHAT_STAFF.bandeja / convActualId y desaparece la vista.
   setInterval(() => {
     try {
       if (!CHAT_STAFF || !CHAT_STAFF.uid) return;
+      if (window.__chatStaffBgRunning) return;
       t1++;
-      if (t1 % 9 === 0) _chatStaffResolverTodasParejasUnicas().then(() => {}).catch(() => {});
-      else _chatStaffDedupeGlobalSTAFF_STAFF();
-    } catch(_){}
+      if (t1 % 9 === 0) {
+        window.__chatStaffBgRunning = true;
+        _chatStaffResolverTodasParejasUnicas()
+          .then(() => {}).catch(() => {})
+          .finally(() => { try { window.__chatStaffBgRunning = false; } catch(_){} });
+      } else {
+        window.__chatStaffBgRunning = true;
+        Promise.resolve().then(() => _chatStaffDedupeGlobalSTAFF_STAFF())
+          .then(() => {}).catch(() => {})
+          .finally(() => { try { window.__chatStaffBgRunning = false; } catch(_){} });
+      }
+    } catch(_){ try { window.__chatStaffBgRunning = false; } catch(_2){} }
   }, 9000);
   // ════════════════════════════════════════════════════════════════════
   // BroadcastChannel: notificaciones cross-tab / cross-ventana mismo navegador
@@ -31948,14 +31962,16 @@ async function _chatStaffDedupeGlobalSTAFF_STAFF() {
     });
     let cambióAlgo = false;
     const idsBorrar = new Set();
+    const parejasKeeper = new Map(); // key => keeper (para redirigir convActualId si se borra dup)
     for (const [k, arr] of grupos.entries()) {
-      if (arr.length <= 1) continue;
+      if (arr.length <= 1) { parejasKeeper.set(k, arr[0]); continue; }
       arr.sort((x, y) => {
         const tx = new Date(x.last_message_at || x.created_at || 0).getTime();
         const ty = new Date(y.last_message_at || y.created_at || 0).getTime();
         return ty - tx;
       });
       const keeper = arr[0];
+      parejasKeeper.set(k, keeper);
       for (let i = 1; i < arr.length; i++) {
         const dup = arr[i];
         try {
@@ -31966,7 +31982,7 @@ async function _chatStaffDedupeGlobalSTAFF_STAFF() {
             try {
               await sb.from('chat_mensajes').update({ conversacion_id: keeper.id })
                 .in('id', ids).eq('colegio_id', colegio);
-            } catch(_uErr) { /* fallback: delete then insert no es viable, skip update individual */ }
+            } catch(_uErr) { /* fallback no individual */ }
           }
           try { await sb.from('chat_mensajes').delete().eq('conversacion_id', dup.id).eq('colegio_id', colegio); } catch(_){}
           try { await sb.from('chat_conversaciones').delete().eq('id', dup.id).eq('colegio_id', colegio); } catch(_){}
@@ -31975,10 +31991,40 @@ async function _chatStaffDedupeGlobalSTAFF_STAFF() {
         } catch(_dupErr){}
       }
     }
-    // Dedupe UI: remover idsBorrar de CHAT_STAFF.bandeja y por pareja key dentro de la bandeja
+    // Dedupe UI: PRIMERO remover idsBorrar de CHAT_STAFF.bandeja,
+    // LUEGO (separado) seenKeys por pareja key. Nunca al revés: si
+    // primero se marca k del dup y keeper misma key = keeper se filtra (RC DESAPARECE).
     if (Array.isArray(CHAT_STAFF.bandeja) && CHAT_STAFF.bandeja.length) {
       const antes = CHAT_STAFF.bandeja.length;
+      const convActualId = String(CHAT_STAFF.convActualId || '');
+      // PASO 1: Quitar explícitamente los idsBorrar (dups borrados de BD)
       CHAT_STAFF.bandeja = CHAT_STAFF.bandeja.filter(c => !idsBorrar.has(String(c.id)));
+      // Si convActualId era un dup borrado → redirigir a keeper de su MISMA pareja.
+      if (convActualId && idsBorrar.has(convActualId)) {
+        try {
+          const pkYo = String(uidYo);
+          const dupConv = todas.find(c => String(c.id) === convActualId);
+          if (dupConv) {
+            const kDup = _chatStaffParejaKey(dupConv);
+            const keeperConv = parejasKeeper.get(kDup);
+            if (keeperConv && String(keeperConv.id) !== convActualId) {
+              try { console.warn('[CHAT-STAFF] RC DESAPARECÍA: convActualId dup=' + convActualId + ' → redirect KEEPER=' + keeperConv.id); } catch(_){}
+              CHAT_STAFF.convActualId = String(keeperConv.id);
+              CHAT_STAFF.convActual = keeperConv;
+              if (!CHAT_STAFF.bandeja.find(x => String(x.id) === String(keeperConv.id))) {
+                CHAT_STAFF.bandeja.unshift(keeperConv);
+              }
+              try {
+                chatStaffSuscribirMensajes(CHAT_STAFF.convActualId);
+                chatStaffCargarMensajes(CHAT_STAFF.convActualId, { force: true });
+              } catch(_){}
+              cambióAlgo = true;
+            }
+          }
+        } catch(_red){}
+      }
+      // PASO 2: Ahora SIN los dups, aplicar seenKeys SÓLO para mergear si quedaron
+      // 2 filas misma pareja (ninguna fue marcada idsBorrar). No se pierde NUNCA keeper.
       const seenKeys = new Set();
       CHAT_STAFF.bandeja = CHAT_STAFF.bandeja.filter(c => {
         if (c.scope_type !== 'STAFF_STAFF') return true;
@@ -31992,6 +32038,7 @@ async function _chatStaffDedupeGlobalSTAFF_STAFF() {
       if (CHAT_STAFF.bandeja.length !== antes) cambióAlgo = true;
     }
     if (cambióAlgo) {
+      try { console.info('[CHAT-STAFF] dedupeGlobal: cambió bandeja, re-render.'); } catch(_){}
       try { renderChatStaffBandeja(); } catch(_){}
     }
     return cambióAlgo;
@@ -32454,21 +32501,45 @@ async function chatStaffCargarMensajes(convId, opts) {
     if (error) throw error;
     const nuevos = data || [];
     const prev = CHAT_STAFF.mensajes || [];
+    // ══════════════════════════════════════════════════════════════════
+    // MERGE PROTECTOR (RC: desaparición temporal):
+    // NO hacemos `mensajes = nuevos` directamente. En el 2.2s entre polls
+    // puede haber llegado 1 realtime push al array prev, pero la consulta
+    // select de supabase aún NO lo ve (delay replicación 200-800ms).
+    // Por eso: hacemos UNION por msg.id → nunca se pierde el push.
+    // ══════════════════════════════════════════════════════════════════
+    const mapM = new Map();
+    for (let i = 0; i < prev.length; i++) {
+      const m = prev[i];
+      if (!m || !m.id) continue;
+      mapM.set(String(m.id), m);
+    }
+    for (let i = 0; i < nuevos.length; i++) {
+      const m = nuevos[i];
+      if (!m || !m.id) continue;
+      mapM.set(String(m.id), m); // nuevos de DB sobreescriben a push local si hay id coincidente.
+    }
+    const merged = Array.from(mapM.values());
+    merged.sort((a, b) => {
+      const ta = new Date(a.created_at || 0).getTime();
+      const tb = new Date(b.created_at || 0).getTime();
+      return ta - tb;
+    });
     // Detección precisa de cambios: SÓLO SKIP si la cantidad es la misma
     // Y el último ID coincide (así si llega un mensaje nuevo, siempre pasamos).
     // Evita el false-negative del lastFp fingerprint que no pintaba.
     let hayCambios = forceRender;
     if (!hayCambios) {
-      if (prev.length !== nuevos.length) hayCambios = true;
+      if (prev.length !== merged.length) hayCambios = true;
       else {
         const ultPrev = prev.length ? String(prev[prev.length - 1].id) : '';
-        const ultNew = nuevos.length ? String(nuevos[nuevos.length - 1].id) : '';
+        const ultNew = merged.length ? String(merged[merged.length - 1].id) : '';
         if (ultPrev !== ultNew) hayCambios = true;
         else {
           // Si cantidades y último id coinciden, comprobamos la primera mitad del final por si hay actualizaciones de estado leído.
           for (let i = Math.max(0, prev.length - 20); i < prev.length; i++) {
-            if (String(prev[i].leido || '') !== String(nuevos[i].leido || '') ||
-                String(prev[i].texto || '') !== String(nuevos[i].texto || '')) {
+            if (String(prev[i].leido || '') !== String(merged[i].leido || '') ||
+                String(prev[i].texto || '') !== String(merged[i].texto || '')) {
               hayCambios = true;
               break;
             }
@@ -32476,8 +32547,17 @@ async function chatStaffCargarMensajes(convId, opts) {
         }
       }
     }
-    if (!hayCambios && !forceRender) return; // Nada nuevo, salir sin tocar DOM.
-    CHAT_STAFF.mensajes = nuevos;
+    if (!hayCambios && !forceRender) {
+      // Igualamos a merged por si actualizó algún campo de los 20 últimos no comparado
+      if (mapM.size) CHAT_STAFF.mensajes = merged;
+      return;
+    }
+    try {
+      if (hayCambios) {
+        console.info('[CHAT-STAFF] mensajes convId=' + convId + ' prev=' + prev.length + ' fetch=' + nuevos.length + ' merged=' + merged.length + ' force=' + forceRender);
+      }
+    } catch(_){}
+    CHAT_STAFF.mensajes = merged;
     // Forzar render (evita lastFp false negatives que no pintaban nada)
     try { if (el) delete el.dataset.lastFp; } catch(_){}
     renderChatStaffMensajes({ soloSiCambio: false });
