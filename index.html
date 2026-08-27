@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=138"></script>
-<script src="db_supabase.js?v=138"></script>
+<script src="compat.js?v=139"></script>
+<script src="db_supabase.js?v=139"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -31562,7 +31562,15 @@ const CHAT_STAFF = {
 };
 
 function chatStaffGetSB() {
-  return (window._sb && window._sb.supabase) ? window._sb.supabase : null;
+  // Estructuras posibles según versiones del proyecto:
+  //   v138+ (compat.js): window._sb = cliente Supabase directo (tiene .auth / .from)
+  //   Legacy:           window._sb = { supabase: cliente } o { client: cliente }
+  const root = window._sb;
+  if (!root) return null;
+  if (typeof root.from === 'function' && typeof root.auth !== 'undefined') return root;
+  if (root.supabase && typeof root.supabase.from === 'function') return root.supabase;
+  if (root.client && typeof root.client.from === 'function') return root.client;
+  return null;
 }
 
 function chatStaffResolveUidYo() {
