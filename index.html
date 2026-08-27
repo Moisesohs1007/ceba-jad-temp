@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=151"></script>
-<script src="db_supabase.js?v=151"></script>
+<script src="compat.js?v=152"></script>
+<script src="db_supabase.js?v=152"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -31751,6 +31751,22 @@ function _chatStaffIniciarLoopFondo() {
   };
   // Base: 800ms tick (la decisión modo rápido/reposo se toma dentro)
   setInterval(_receptorLoop, 800);
+  // ────────────────────────────────────────────────────────────────────────
+  // 2DO CANAL POLLING RECURSIVO SETTIMEOUT (fallback anti-Doze Android)
+  //   Algunos móviles con Doze/Data Saver hacen throttle setInterval a 60s
+  //   pero setTimeout recursivo + network activity (fetch activo)
+  //   sigue corriendo en 1.5s. Es un loop INDEPENDIENTE al de 800ms.
+  // ────────────────────────────────────────────────────────────────────────
+  (function _chatStaffPollingFallback(){
+    try {
+      if (CHAT_STAFF && CHAT_STAFF.uid) {
+        const convId = String(CHAT_STAFF.convActualId || '');
+        if (convId) chatStaffCargarMensajes(convId);
+      }
+    } catch(_){}
+    // 1500ms (1.5s) — no configurable, garantía <2s si el setInterval se pausó por Doze.
+    setTimeout(_chatStaffPollingFallback, 1500);
+  })();
   // Dedupe / resolver parejas (menos frecuente, para no generar reflow)
   // MUTEX SÓLO PARA ESTE LOOP 9s — NUNCA bloquea el receptor 800ms.
   // Antes v150 el mutex lo bloqueaba TODO = demora 30-60s sin actualizar receptor.
@@ -32344,9 +32360,23 @@ function chatStaffSuscribirBandeja() {
             chatStaffHidratarNombres([newR]).then(() => {
               renderChatStaffBandeja();
               chatBadgeUpdateStaff();
-              // Si es la conversación abierta, refrescar mensajes header y no-leídos
-              if (newR.id === CHAT_STAFF.convActualId) {
+              // ════════════════════════════════════════════════════════
+              // CANAL DE ENTREGA NÚMERO 4 (SÓLO FALLBACK MÁS FIABLE):
+              //   Realtime CONV UPDATE se dispara siempre (porque tras
+              //   insert msg actualizamos last_message_at de la conv).
+              //   Si este UPDATE afecta a la conversación ABIERTA:
+              //     (a) forzar polling receptor rápido 5 minutos
+              //     (b) chatStaffCargarMensajes {force:true} inmediato.
+              //   Así incluso si MSGS INSERT no llega por websocket, la
+              //   actualización de la bandeja nos refetcha los msgs.
+              // ════════════════════════════════════════════════════════
+              if (String(newR.id) === String(CHAT_STAFF.convActualId || '')) {
                 CHAT_STAFF.convActual = newR;
+                try { if (typeof window.__chatStaffActivarReceptorRapido === 'function') window.__chatStaffActivarReceptorRapido(); } catch(_){}
+                try {
+                  // No await, no queremos bloquear la UI del header.
+                  chatStaffCargarMensajes(CHAT_STAFF.convActualId, { force: true });
+                } catch(_){}
                 chatStaffMarcarLeido();
               }
               // Toast si no es el emisor YO y hay nuevo mensaje no leído
@@ -32795,14 +32825,46 @@ async function enviarChatStaffMsg() {
       }
       try { await _chatStaffEnsureSoyStaff(convIdUsar); } catch(_){}
     }
+    const colegio = chatStaffColegioId();
+    const now = new Date();
     const { error } = await sb.from('chat_mensajes').insert({
-      colegio_id: chatStaffColegioId(),
+      colegio_id: colegio,
       conversacion_id: convIdUsar,
       sender_type: 'staff',
       sender_id: CHAT_STAFF.uid,
       texto: txt,
+      created_at: now.toISOString(),
     });
     if (error) throw error;
+    // ────────────────────────────────────────────────────────────────
+    // CANAL ENTREGA #4 (FIABLE): Actualizar la conversación INMEDIATAMENTE
+    // para disparar Realtime CONV UPDATE en el receptor. Si el MSGS INSERT
+    // realtime falla (websocket cortado, Doze Android), la actualización de
+    // last_message_at SÍ llega al receptor por el canal de bandeja y le
+    // fuerza un force refetch.
+    // ────────────────────────────────────────────────────────────────
+    try {
+      await sb.from('chat_conversaciones').update({
+        last_message: txt,
+        last_sender_uid: CHAT_STAFF.uid,
+        last_message_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      }).eq('id', convIdUsar).eq('colegio_id', colegio);
+      // Actualizar estado local para que nuestra bandeja muestre el preview correcto
+      const myIdx = (CHAT_STAFF.bandeja || []).findIndex(c => String(c.id) === String(convIdUsar));
+      if (myIdx >= 0) {
+        CHAT_STAFF.bandeja[myIdx] = Object.assign({}, CHAT_STAFF.bandeja[myIdx], {
+          last_message: txt, last_sender_uid: CHAT_STAFF.uid, last_message_at: now.toISOString()
+        });
+        CHAT_STAFF.bandeja.sort((a,b) => new Date(b.last_message_at||0) - new Date(a.last_message_at||0));
+        try { renderChatStaffBandeja(); } catch(_){}
+      }
+      if (CHAT_STAFF.convActual && String(CHAT_STAFF.convActual.id) === String(convIdUsar)) {
+        CHAT_STAFF.convActual = Object.assign({}, CHAT_STAFF.convActual, {
+          last_message: txt, last_sender_uid: CHAT_STAFF.uid, last_message_at: now.toISOString()
+        });
+      }
+    } catch(_uErr){}
     // Broadcast (cross-tab / cross-ventana) para que otras pestañas CEBA del mismo navegador se enteren INSTANTÁNEAMENTE
     try {
       if (window.__chatStaffBC && typeof window.__chatStaffBC.postMessage === 'function') {
@@ -32827,6 +32889,10 @@ async function enviarChatStaffMsg() {
     setTimeout(() => {
       try { chatStaffCargarMensajes(CHAT_STAFF.convActualId, { force: true }); } catch(_){}
     }, 1200);
+    // Fallback final 5s (extremo: Doze mode o 3G congestión)
+    setTimeout(() => {
+      try { chatStaffCargarMensajes(CHAT_STAFF.convActualId, { force: true }); } catch(_){}
+    }, 5000);
     try { if (inp) inp.focus(); } catch(e){}
   } catch(e) {
     toast('Error al enviar: ' + e.message, 'error');
