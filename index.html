@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=157"></script>
-<script src="db_supabase.js?v=157"></script>
+<script src="compat.js?v=158"></script>
+<script src="db_supabase.js?v=158"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -1064,6 +1064,36 @@
   .chat-audio-toggle:hover { background: var(--surface); }
   .chat-audio-toggle.on  { color: #22c55e; border-color: rgba(34,197,94,0.5); }
   .chat-audio-toggle.off { color: #ef4444; border-color: rgba(239,68,68,0.5); }
+
+  /* ════════════════════════════════════════════════════════
+     FILA BANDEJA CHAT: EFECTOS VISUALES MENSAJE RECIENTE
+     (Regla2 USER: indicador puntito ℹ️ + fila pulse verde)
+     ════════════════════════════════════════════════════════ */
+  .chat-staff-band-row.chat-band-row-nuevo {
+    background: linear-gradient(90deg, rgba(16,185,129,0.08), rgba(16,185,129,0.00) 65%);
+    animation: chatBandRowPulse 1.8s ease-in-out 4;
+    border-left: 0 solid transparent;
+    box-shadow: inset 0 0 0 0 rgba(16,185,129,0);
+  }
+  @keyframes chatBandRowPulse {
+    0%,100% {
+      box-shadow: inset 4px 0 0 rgba(16,185,129,0.00);
+      background: linear-gradient(90deg, rgba(16,185,129,0.08), rgba(16,185,129,0.00) 65%);
+    }
+    50% {
+      box-shadow: inset 4px 0 0 rgba(16,185,129,0.75);
+      background: linear-gradient(90deg, rgba(16,185,129,0.13), rgba(16,185,129,0.00) 70%);
+    }
+  }
+  /* Puntito / badge sin leer: PARPADEO infinito mientras siga sin leer */
+  .chat-staff-unread-dot.chat-band-dot-nuevo {
+    animation: chatBandDotPulse 0.85s ease-in-out infinite !important;
+    transform-origin: center;
+  }
+  @keyframes chatBandDotPulse {
+    0%,100% { transform: scale(1);   opacity: 1;   }
+    50%     { transform: scale(1.45); opacity: 0.5; }
+  }
 
   /* SEARCH BAR */
   .search-wrap { position: relative; margin-bottom: 16px; }
@@ -32292,14 +32322,25 @@ function _chatStaffTitleBlinkStop() {
   } catch(_) {}
 }
 
-// Detectar si el usuario está interactuando con la conversación (focus/click dentro)
-function _chatStaffEstaViendoConv(convId) {
+// Detectar si la VENTANA DE CHAT EN GENERAL está visible y en primer plano
+// (independientemente de la conversación abierta: bandeja o conv abierta).
+// Regla1: si esto es true → NO mostrar toast sticky arriba ni Notification nativa.
+function _chatStaffEstoyDentroDelChat() {
   try {
     if (!document.hasFocus()) return false;
     const sec = document.getElementById('sec-chat');
     if (!sec) return false;
+    if (!sec.classList.contains('active')) return false;
     const st = window.getComputedStyle(sec);
     if (!st || st.display === 'none' || (sec.offsetWidth < 10)) return false;
+    // Si el elemento está dentro del viewport y visible, está dentro del chat.
+    return true;
+  } catch(_) { return false; }
+}
+// Detectar si el usuario está interactuando CON ESTA CONVERSACIÓN ESPECÍFICA abierta.
+function _chatStaffEstaViendoConv(convId) {
+  try {
+    if (!_chatStaffEstoyDentroDelChat()) return false;
     if (!CHAT_STAFF.convActualId) return false;
     if (CHAT_STAFF.convActualId !== String(convId || '')) return false;
     return true;
@@ -32361,11 +32402,12 @@ function _chatStaffAlertarNuevoMensaje(conv) {
 
   // Si usuario ESTÁ VIENDO en PRIMER PLANO esta conversación → solo beep corto + badge, no sticky.
   const viendoAhora = _chatStaffEstaViendoConv(conv.id);
+  const dentroDelChat = _chatStaffEstoyDentroDelChat();
 
   // ══════════ CANAL 1: Badge NAV/MENÚ (siempre, incluso en otra sección)
   try { chatBadgeUpdateStaff(); } catch(_) {}
 
-  // ══════════ CANAL 2: Count total para title blink
+  // ══════════ CANAL 2: Count total para title blink (solo si NO está dentro del chat activo)
   try {
     const totalBadge = (() => {
       const el = document.getElementById('nav-chat-badge');
@@ -32373,17 +32415,23 @@ function _chatStaffAlertarNuevoMensaje(conv) {
       const t = parseInt((el.textContent || '').trim(), 10);
       return isNaN(t) ? 1 : Math.max(1, t);
     })();
-    if (!viendoAhora) _chatStaffTitleBlinkStart(totalBadge);
+    if (!dentroDelChat) _chatStaffTitleBlinkStart(totalBadge);
   } catch(_) {}
 
-  // ══════════ CANAL 3: Beep audio (siempre a menos que tenga el toggle off; y si viendoAhora solo 1 pip suave)
+  // ══════════ CANAL 3: Beep audio (siempre a menos que tenga el toggle off)
+  // - viendoAhora (conv abierta exacta en foco) → 1 pip suave
+  // - dentroDelChat (otra conv abierta dentro del chat) → 1 pip suave
+  // - FUERA del chat → 2 pips para que se entere
   try {
-    if (viendoAhora) _chatStaffBeep(1);
-    else             _chatStaffBeep(2);
+    if (dentroDelChat) _chatStaffBeep(1);
+    else               _chatStaffBeep(2);
   } catch(_) {}
 
-  // ══════════ CANAL 4: Toast sticky CLICKEABLE arriba-der (NO auto-dismiss; solo cierra user X o click)
-  if (!viendoAhora) {
+  // ══════════ CANAL 4: Toast sticky CLICKEABLE arriba-der
+  // Regla1 USER: SÓLO si el usuario NO está DENTRO DE LA VENTANA DEL CHAT.
+  // (si estoy en otra sección / otra pestaña / Chrome minimizado → sí aparece)
+  // (si estoy dentro del chat, aunque sea otra conv distinta → NO aparece)
+  if (!dentroDelChat) {
     try {
       const wrap = document.getElementById('chat-staff-alert-wrap');
       if (wrap) {
@@ -32400,14 +32448,12 @@ function _chatStaffAlertarNuevoMensaje(conv) {
             `<div class="chat-alert-text">${escapeHtml(previewTxt)}</div>` +
           `</div>` +
           `<div class="chat-alert-close" title="Cerrar" aria-label="Cerrar">✕</div>`;
-        // Click en cualquier parte (menos X) → abre la conversación
         card.addEventListener('click', (e) => {
           try {
             if (e.target.closest('.chat-alert-close')) {
               card.remove();
               return;
             }
-            // Ir a sección chat + abrir la conversación
             try {
               if (typeof showSectionDirect === 'function') showSectionDirect('chat');
               else if (typeof showSection === 'function') showSection('chat');
@@ -32420,27 +32466,36 @@ function _chatStaffAlertarNuevoMensaje(conv) {
           } catch(_) {}
         }, { passive: true });
         wrap.appendChild(card);
-        // Auto-dismis SUAVE solo después de 12 segundos (para que no se acumulen si está de vacaciones).
         setTimeout(() => { try { if (card && card.parentNode) card.remove(); } catch(_){} }, 12000);
-        // Límite máximo: solo 4 notificaciones abiertas a la vez, quita la más vieja
         while (wrap.children.length > 4) try { wrap.removeChild(wrap.firstChild); } catch(_) { break; }
       }
     } catch(_) {}
   } else {
-    // ══════════ CANAL 4-BIS: usuario tiene la conv abierta, flash sutil en header conv para que note que llegó nuevo
+    // ══════════ CANAL 4-BIS: DENTRO DEL CHAT → flash sutil solo sobre la bandeja
+    // para notificar que UNA de las filas de la lista tiene nuevo.
     try {
-      const head = document.getElementById('chat-staff-conv-header');
-      if (head) {
-        head.animate([
-          { background: 'rgba(16,185,129,0.18)' },
-          { background: 'transparent' }
+      const band = document.getElementById('chat-staff-band');
+      if (band) {
+        band.animate([
+          { boxShadow: 'inset 0 0 0 2px rgba(16,185,129,0.55)' },
+          { boxShadow: 'inset 0 0 0 2px rgba(16,185,129,0.00)' }
         ], { duration: 1400, iterations: 2 });
+      }
+      if (viendoAhora) {
+        const head = document.getElementById('chat-staff-conv-header');
+        if (head) {
+          head.animate([
+            { background: 'rgba(16,185,129,0.18)' },
+            { background: 'transparent' }
+          ], { duration: 1400, iterations: 2 });
+        }
       }
     } catch(_) {}
   }
 
-  // ══════════ CANAL 5: Notification API nativa (si tiene permiso granted y pestaña no focused)
-  if (!viendoAhora) {
+  // ══════════ CANAL 5: Notification API nativa
+  // Regla1 USER: SÓLO si el usuario NO está DENTRO DE LA VENTANA DEL CHAT.
+  if (!dentroDelChat) {
     try {
       if ('Notification' in window && Notification.permission === 'granted') {
         const n = new Notification('💬 Nuevo mensaje · ' + nombreOtro, {
@@ -32839,6 +32894,7 @@ function renderChatStaffBandeja() {
     </div>`;
     return;
   }
+  const ahoraUnix = Date.now();
   const parts = lista.map(c => {
     // Unread bidireccional:
     //   Si yo soy staff1 (staff_user_id=uid):  unread = c.read_by_staff   === false
@@ -32846,10 +32902,16 @@ function renderChatStaffBandeja() {
     //   Si yo soy apoderado normal (fuera del chat staff, no aplica aquí; default = read_by_staff false para mostrar en staff side)
     const soyStaff2 = _chatStaffEsStaff2Yo(c);
     const unread = soyStaff2 ? (c.read_by_apoderado != true) : (c.read_by_staff != true);
+    // Regla2 USER: Efectos visuales "nuevo reciente" solo si unread=true y el último mensaje llegó en los últimos 90 segundos.
+    const lastAtMs = c.last_message_at ? new Date(c.last_message_at).getTime() : 0;
+    const esRecienteNuevo = unread && lastAtMs && (ahoraUnix - lastAtMs) < (90 * 1000);
+    const rowClases = ['chat-row-item'];
+    if (esRecienteNuevo) rowClases.push('chat-staff-band-row', 'chat-band-row-nuevo');
+    const dotClases = esRecienteNuevo ? 'chat-staff-unread-dot chat-band-dot-nuevo' : '';
     const nom = chatStaffNombreApoderado(c);
     const al = chatStaffAlumnoLabel(c);
     const convId = c.id;
-    const active = (convId === CHAT_STAFF.convActualId) ? ' style="background:var(--surface2);border-left:3px solid var(--accent);"' : '';
+    const active = (convId === CHAT_STAFF.convActualId);
     // Color avatar: si es STAFF_STAFF, usar color por rol del otro staff
     let avatarBg = '#C9A84C';
     if (c.scope_type === 'STAFF_STAFF') {
@@ -32863,7 +32925,18 @@ function renderChatStaffBandeja() {
         }
       }
     }
-    return `<div class="chat-row-item" data-conv="${convId}" onclick="abrirConversacionStaff('${convId}')" style="padding:11px 12px;border-bottom:1px solid var(--border);cursor:pointer;${unread ? 'font-weight:700;' : ''}${active ? 'background:var(--surface2);border-left:3px solid var(--accent);' : ''}" onmouseover="this.style.background='var(--surface2)'" onmouseout="${active ? 'this.style.background=\'var(--surface2)\'' : 'this.style.background=\'\''}">
+    const rowStyles = [
+      'padding:11px 12px',
+      'border-bottom:1px solid var(--border)',
+      'cursor:pointer',
+      (unread ? 'font-weight:700;' : ''),
+      (active ? 'background:var(--surface2);border-left:3px solid var(--accent);' : ''),
+    ].join(';');
+    const hoverActive = active ? 'this.style.background=\'var(--surface2)\'' : 'this.style.background=\'\'';
+    const unreadBadge = unread
+      ? `<span class="${dotClases}" style="background:var(--accent2,#ef4444);color:#fff;font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;${esRecienteNuevo ? 'box-shadow:0 0 0 0 rgba(239,68,68,0.6)' : ''}">!</span>`
+      : '';
+    return `<div class="${rowClases.join(' ')}" data-conv="${convId}" onclick="abrirConversacionStaff('${convId}')" style="${rowStyles}" onmouseover="this.style.background='var(--surface2)'" onmouseout="${hoverActive}">
       <div style="display:flex;align-items:center;gap:10px;">
         <div style="width:38px;height:38px;border-radius:50%;background:${avatarBg};color:${c.scope_type === 'STAFF_STAFF' ? '#fff' : '#0D1A3A'};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">${chatStaffIniciales(nom)}</div>
         <div style="flex:1;min-width:0;">
@@ -32874,7 +32947,7 @@ function renderChatStaffBandeja() {
           <div style="font-size:0.72rem;color:${c.scope_type === 'STAFF_STAFF' ? '#6366F1' : '#185FA5'};margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${al || (c.scope_type === 'STAFF_STAFF' ? '👥 Staff' : 'Sin alumno')}</div>
           <div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
             <div style="flex:1;font-size:0.78rem;color:var(--muted);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.last_message ? ((c.last_sender_uid && c.last_sender_uid !== CHAT_STAFF.uid) ? '' : (c.last_sender_type==='staff' ? 'Tú: ' : '')) + c.last_message : 'Sin mensajes'}</div>
-            ${unread ? `<span style="background:var(--accent2,#ef4444);color:#fff;font-size:10px;font-weight:800;padding:1px 7px;border-radius:999px;">!</span>` : ''}
+            ${unreadBadge}
           </div>
         </div>
       </div>
