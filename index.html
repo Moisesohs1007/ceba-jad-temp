@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=155"></script>
-<script src="db_supabase.js?v=155"></script>
+<script src="compat.js?v=156"></script>
+<script src="db_supabase.js?v=156"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -7434,6 +7434,30 @@ auth.onAuthStateChanged(async user => {
     setTimeout(() => {
       try { _chequearYRecargarSiStale('post-login-inicial'); } catch(_) {}
     }, 3000);
+    // ══════════════════════════════════════════════════════════════════
+    // 🔴 PRE-CARGA CHAT: bandeja + badge NAV (sin abrir la sección chat)
+    //    El usuario veía el badge rojo "!" en la fila de bandeja PERO
+    //    NO veía #nav-chat-badge / #msb-chat-badge EN EL MENÚ (barra
+    //    superior/sidebar) porque chatBadgeUpdateStaff() solo se
+    //    ejecutaba DENTRO del chat. Ahora: 3.8s después del login se
+    //    carga la bandeja en background y pinta el badge del menú.
+    //    + loop ligero 28s para mantener el badge actualizado sin
+    //    abrir chat (no consume recursos realtime).
+    // ══════════════════════════════════════════════════════════════════
+    setTimeout(() => {
+      try {
+        if (typeof chatStaffInit === 'function') chatStaffInit();
+        if (typeof chatStaffCargarBandeja === 'function') {
+          try { chatStaffCargarBandeja(); } catch(_){}
+        }
+      } catch(_eChatPre){}
+      window.__chatStaffBadgeLoop = setInterval(() => {
+        try {
+          if (!window.CHAT_STAFF || !CHAT_STAFF.uid) return;
+          if (typeof chatStaffCargarBandeja === 'function') chatStaffCargarBandeja();
+        } catch(_eLoop){}
+      }, 28000);
+    }, 3800);
   } else {
     // SIN SESION — mostrar login solo si splash ya terminó
 
@@ -7467,6 +7491,8 @@ auth.onAuthStateChanged(async user => {
     // Luego resetear el resto con protección de errores
     try {
       try { sessionStorage.removeItem('asmqr_haySession'); sessionStorage.removeItem('asmqr_lastSection'); } catch(e) {}
+      // Detener loop ligero badge chat al cerrar sesión (evita memoria leak entre perfiles)
+      try { if (window.__chatStaffBadgeLoop) { clearInterval(window.__chatStaffBadgeLoop); window.__chatStaffBadgeLoop = null; } } catch(_cbClr){}
       _loginBusyPersonal = false;
       _creandoCuentaApoderado = false;
       _clearCurrentUsuarioCache();
@@ -31959,8 +31985,27 @@ async function chatStaffHidratarNombres(convList) {
   const sb = chatStaffGetSB();
   const apodUids = [...new Set(convList.map(c => c.apoderado_auth_uid).filter(Boolean))];
   const staffUids = [...new Set(convList.map(c => c.staff_user_id).filter(Boolean))];
-  // Staff: public.usuarios
+  // ══════════════════════════════════════════════════════════════
+  // 🔴 STAFF: USAR _cargarUsuariosCache SSoT PRIMERO (fuente verdad)
+  //    El query sb.from('usuarios') directo sufre RLS glitch (1 fila
+  //    / 0 filas sin throw). La SSoT hace: LSC cache → SB select →
+  //    Firestore fallback + anti-small + anti-admin-only.
+  //    Esto corrige que se vea "Staff 48BBF5" en lugar de nombre real.
+  // ══════════════════════════════════════════════════════════════
   if (staffUids.length) {
+    try {
+      if (typeof _cargarUsuariosCache === 'function') {
+        const allUsr = await _cargarUsuariosCache();
+        if (Array.isArray(allUsr)) {
+          allUsr.forEach(u => {
+            const k = String(u.uid || u.id || '').trim();
+            if (!k) return;
+            if (!CHAT_STAFF.usuariosCache.has(k)) CHAT_STAFF.usuariosCache.set(k, u);
+          });
+        }
+      }
+    } catch(_eUsr){}
+    // Complemento SB directo SOLO para UIDs que sigan faltando después de la SSoT
     const faltan = staffUids.filter(u => !CHAT_STAFF.usuariosCache.has(u));
     if (faltan.length && sb) {
       try {
@@ -31995,7 +32040,17 @@ function _chatStaffGetOtroStaffUid(conv) {
 }
 
 function chatStaffNombreStaff(uid) {
-  const u = CHAT_STAFF.usuariosCache.get(uid);
+  let u = CHAT_STAFF.usuariosCache.get(uid);
+  if (!u) {
+    // 🔴 FALLBACK: caché SSoT global _usuariosCacheData (cuando Map no
+    //    fue poblado aún por hidratar nombres pero la SSoT ya lo tiene).
+    try {
+      if (Array.isArray(_usuariosCacheData)) {
+        u = _usuariosCacheData.find(x => String(x.uid || x.id || '') === String(uid || ''));
+        if (u) CHAT_STAFF.usuariosCache.set(String(uid||''), u);
+      }
+    } catch(_eFb){}
+  }
   if (!u) {
     const s = String(uid || '').trim();
     if (!s) return 'Personal';
@@ -32327,7 +32382,7 @@ function renderChatStaffBandeja() {
     //   Si yo soy staff2 (scope STAFF_STAFF y apoderado_auth_uid=uid):   unread = c.read_by_apoderado === false
     //   Si yo soy apoderado normal (fuera del chat staff, no aplica aquí; default = read_by_staff false para mostrar en staff side)
     const soyStaff2 = _chatStaffEsStaff2Yo(c);
-    const unread = soyStaff2 ? (c.read_by_apoderado === false) : (c.read_by_staff === false);
+    const unread = soyStaff2 ? (c.read_by_apoderado != true) : (c.read_by_staff != true);
     const nom = chatStaffNombreApoderado(c);
     const al = chatStaffAlumnoLabel(c);
     const convId = c.id;
@@ -32416,7 +32471,7 @@ function chatBadgeUpdateStaff() {
   const adminVerTodas = _isAdminDirectorOrCoord();
   const count = (CHAT_STAFF.bandeja || []).filter(c => {
     const soyStaff2 = _chatStaffEsStaff2Yo(c);
-    const unread = soyStaff2 ? (c.read_by_apoderado === false) : (c.read_by_staff === false);
+    const unread = soyStaff2 ? (c.read_by_apoderado != true) : (c.read_by_staff != true);
     if (!unread) return false;
     if (adminVerTodas) return true;
     const participa = (c.staff_user_id === CHAT_STAFF.uid) ||
@@ -32491,7 +32546,7 @@ function chatStaffSuscribirBandeja() {
               // Toast si no es el emisor YO y hay nuevo mensaje no leído
               if (ev === 'UPDATE' && CHAT_STAFF.convActualId !== newR.id) {
                 const soyStaff2 = _chatStaffEsStaff2Yo(newR);
-                const unreadParaMi = soyStaff2 ? (newR.read_by_apoderado === false) : (newR.read_by_staff === false);
+                const unreadParaMi = soyStaff2 ? (newR.read_by_apoderado != true) : (newR.read_by_staff != true);
                 const elOtroMeEnvio = (newR.last_sender_uid && newR.last_sender_uid !== CHAT_STAFF.uid);
                 const scopeOkParticipa = (newR.staff_user_id === CHAT_STAFF.uid) ||
                   (newR.scope_type === 'STAFF_STAFF' && newR.apoderado_auth_uid === CHAT_STAFF.uid);
