@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=141"></script>
-<script src="db_supabase.js?v=141"></script>
+<script src="compat.js?v=142"></script>
+<script src="db_supabase.js?v=142"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -31712,6 +31712,8 @@ async function chatStaffCargarBandeja() {
     chatBadgeUpdateStaff();
     // Dedupe global DB (merge mensajes, eliminar convs duplicadas históricas) en background
     setTimeout(() => { try { _chatStaffDedupeGlobalSTAFF_STAFF(); } catch(_){} }, 350);
+    // Resolver parejas únicas cross-device: mergear todas las conv ids duplicadas por pareja (Moises-PC vs Orlando-móvil) en 1 sola keeper
+    setTimeout(() => { try { _chatStaffResolverTodasParejasUnicas().then(ok => { if (ok) { try { renderChatStaffBandeja(); } catch(_){} } }); } catch(_){} }, 1200);
   } catch(e) {
     console.error(e);
     const el = document.getElementById('chat-staff-lista');
@@ -31846,6 +31848,103 @@ async function _chatStaffDedupeGlobalSTAFF_STAFF() {
     }
     return cambióAlgo;
   } catch(e) { try { console.error('dedupeGlobalSTAFF', e); } catch(_){} return false; }
+}
+
+async function _chatStaffResolverIdUnicaPareja(uidOtro) {
+  try {
+    const sb = chatStaffGetSB(); if (!sb) return null;
+    const colegio = chatStaffColegioId();
+    const uidYo = chatStaffResolveUidYo(); if (!uidYo || !uidOtro) return null;
+    if (String(uidYo) === String(uidOtro)) return null;
+    const { data, error } = await sb
+      .from('chat_conversaciones').select('*')
+      .eq('colegio_id', colegio).eq('scope_type', 'STAFF_STAFF').limit(800);
+    if (error) return null;
+    const pk1 = String(uidYo); const pk2 = String(uidOtro);
+    const match = (data || []).filter(c =>
+      (String(c.staff_user_id) === pk1 && String(c.apoderado_auth_uid) === pk2) ||
+      (String(c.staff_user_id) === pk2 && String(c.apoderado_auth_uid) === pk1)
+    );
+    if (!match.length) return null;
+    if (match.length === 1) {
+      try { await _chatStaffEnsureSoyStaff(match[0].id); } catch(_){}
+      return match[0];
+    }
+    const conCantidad = [];
+    for (let i = 0; i < match.length; i++) {
+      const c = match[i];
+      let n = 0;
+      try {
+        const { count, error: cntErr } = await sb
+          .from('chat_mensajes').select('id', { count: 'exact', head: true })
+          .eq('conversacion_id', c.id).eq('colegio_id', colegio);
+        if (!cntErr && typeof count === 'number') n = count;
+      } catch(_){}
+      conCantidad.push({ c, n, ts: new Date(c.last_message_at || c.created_at || 0).getTime() });
+    }
+    conCantidad.sort((a, b) => (b.n - a.n) || (b.ts - a.ts));
+    const KEEPER = conCantidad[0].c;
+    const idsKeeper = String(KEEPER.id);
+    for (let i = 1; i < conCantidad.length; i++) {
+      const dup = conCantidad[i].c;
+      const dupId = String(dup.id);
+      if (dupId === idsKeeper) continue;
+      try {
+        const { data: msgs } = await sb.from('chat_mensajes').select('id')
+          .eq('conversacion_id', dupId).eq('colegio_id', colegio).limit(800);
+        if (msgs && msgs.length) {
+          const ids = msgs.map(m => m.id);
+          try { await sb.from('chat_mensajes').update({ conversacion_id: idsKeeper }).in('id', ids).eq('colegio_id', colegio); } catch(_u){}
+        }
+        try { await sb.from('chat_mensajes').delete().eq('conversacion_id', dupId).eq('colegio_id', colegio); } catch(_){}
+        try { await sb.from('chat_conversaciones').delete().eq('id', dupId).eq('colegio_id', colegio); } catch(_){}
+        const bi = (CHAT_STAFF.bandeja || []).findIndex(x => String(x.id) === dupId);
+        if (bi >= 0) CHAT_STAFF.bandeja.splice(bi, 1);
+      } catch(_dupErr){}
+    }
+    try {
+      const { data: msgs } = await sb.from('chat_mensajes').select('*')
+        .eq('conversacion_id', idsKeeper).eq('colegio_id', colegio)
+        .order('created_at', { ascending: false }).limit(1);
+      if (msgs && msgs.length) {
+        const u = msgs[0];
+        const payload = { last_message_at: u.created_at, last_message: u.texto, last_sender_uid: u.sender_id };
+        try { await sb.from('chat_conversaciones').update(payload).eq('id', idsKeeper).eq('colegio_id', colegio); } catch(_u){}
+        const ki = (CHAT_STAFF.bandeja || []).findIndex(x => String(x.id) === idsKeeper);
+        if (ki >= 0) { CHAT_STAFF.bandeja[ki] = Object.assign({}, CHAT_STAFF.bandeja[ki], payload); }
+      }
+    } catch(_){}
+    try { await _chatStaffEnsureSoyStaff(idsKeeper); } catch(_){}
+    const ki2 = (CHAT_STAFF.bandeja || []).findIndex(x => String(x.id) === idsKeeper);
+    if (ki2 < 0) { CHAT_STAFF.bandeja.unshift(KEEPER); }
+    CHAT_STAFF.bandeja.sort((a,b) => new Date(b.last_message_at||0) - new Date(a.last_message_at||0));
+    try { renderChatStaffBandeja(); } catch(_){}
+    return KEEPER;
+  } catch(e) { try { console.error('resolverUnicaPareja', e); } catch(_){} return null; }
+}
+
+async function _chatStaffResolverTodasParejasUnicas() {
+  try {
+    const sb = chatStaffGetSB(); if (!sb) return false;
+    const colegio = chatStaffColegioId();
+    const uidYo = chatStaffResolveUidYo(); if (!uidYo) return false;
+    const { data, error } = await sb
+      .from('chat_conversaciones').select('*')
+      .eq('colegio_id', colegio).eq('scope_type', 'STAFF_STAFF').limit(800);
+    if (error) return false;
+    const vistas = new Set();
+    let hizo = false;
+    for (const c of (data || [])) {
+      const a = String(c.staff_user_id || ''); const b = String(c.apoderado_auth_uid || '');
+      if (!a || !b) continue;
+      if (a !== uidYo && b !== uidYo) continue;
+      const otro = (a === uidYo) ? b : a;
+      if (vistas.has(otro)) continue;
+      vistas.add(otro);
+      try { const res = await _chatStaffResolverIdUnicaPareja(otro); if (res) hizo = true; } catch(_){}
+    }
+    return hizo;
+  } catch(e) { return false; }
 }
 
 function chatStaffNombreApoderado(conv) {
@@ -32050,20 +32149,64 @@ function chatStaffSuscribirBandeja() {
   } catch(e) { console.error('sus conv', e); }
 }
 
+function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
+  try {
+    const secChat = document.getElementById('sec-chat');
+    const band = document.getElementById('chat-staff-band');
+    const conv = document.getElementById('chat-staff-conv');
+    if (secChat) {
+      if (mode === 'conv') secChat.classList.add('chat-show-conv');
+      else secChat.classList.remove('chat-show-conv');
+    }
+    const isMob = (typeof _isMobileLike === 'function' && _isMobileLike()) || window.innerWidth <= 849;
+    if (!isMob) {
+      if (band) { band.style.display = ''; band.style.visibility = ''; band.style.opacity = ''; }
+      if (conv) { conv.style.display = ''; conv.style.visibility = ''; conv.style.opacity = ''; }
+      return;
+    }
+    // En móvil: overrides inline (como showSectionDirect) para NO depender de clases .section CSS
+    if (band) {
+      band.style.display = (mode === 'conv') ? 'none' : 'block';
+      band.style.visibility = (mode === 'conv') ? 'hidden' : 'visible';
+      band.style.opacity = (mode === 'conv') ? '0' : '1';
+      band.style.position = (mode === 'conv') ? 'absolute' : '';
+      band.style.pointerEvents = (mode === 'conv') ? 'none' : '';
+    }
+    if (conv) {
+      conv.style.display = (mode === 'conv') ? 'flex' : 'none';
+      conv.style.visibility = (mode === 'conv') ? 'visible' : 'hidden';
+      conv.style.opacity = (mode === 'conv') ? '1' : '0';
+      conv.style.position = (mode === 'conv') ? 'relative' : '';
+      conv.style.pointerEvents = (mode === 'conv') ? '' : 'none';
+      if (mode === 'conv') { conv.style.flexDirection = 'column'; conv.style.height = '100%'; }
+    }
+  } catch(_){}
+}
+
 async function abrirConversacionStaff(convId) {
-  CHAT_STAFF.convActualId = convId;
-  const conv = CHAT_STAFF.bandeja.find(c => c.id === convId) || null;
+  let convFinalId = convId;
+  let conv = CHAT_STAFF.bandeja.find(c => c.id === convId) || null;
+  // Si la conversación es STAFF_STAFF → RESOLVER la pareja única cross-device (mergear otras conv_ids sobrantes a KEEPER).
+  if (conv && conv.scope_type === 'STAFF_STAFF') {
+    const otroUid = _chatStaffGetOtroStaffUid(conv);
+    if (otroUid) {
+      try {
+        const resuelta = await _chatStaffResolverIdUnicaPareja(otroUid);
+        if (resuelta && String(resuelta.id) !== String(convId)) {
+          convFinalId = resuelta.id;
+          conv = resuelta;
+        } else if (resuelta) {
+          conv = resuelta;
+        }
+      } catch(_){}
+    }
+  }
+  CHAT_STAFF.convActualId = convFinalId;
   CHAT_STAFF.convActual = conv;
   renderChatStaffBandeja();
-  // Móvil: ocultar la bandeja para mostrar únicamente el panel de mensajes
-  // (colapsa 2 columnas en 1, evita layout superpuesto o altura 0).
-  const secChat = document.getElementById('sec-chat');
   const isMob = (typeof _isMobileLike === 'function' && _isMobileLike()) || window.innerWidth <= 849;
-  if (secChat) {
-    if (isMob && convId) secChat.classList.add('chat-show-conv');
-    else secChat.classList.remove('chat-show-conv');
-  }
-  // Botón back en móvil (regresa a bandeja) — solo si ya existe o lo creamos.
+  if (isMob && convFinalId) _chatStaffMostrarVistaMovil('conv');
+  else _chatStaffMostrarVistaMovil('bandeja');
   const hdr = document.getElementById('chat-staff-conv-header');
   if (hdr && conv) {
     const nomApo = chatStaffNombreApoderado(conv);
@@ -32086,7 +32229,7 @@ async function abrirConversacionStaff(convId) {
         }
       }
     }
-    const backBtnHtml = isMob ? `<button onclick="const sc=document.getElementById('sec-chat');if(sc){sc.classList.remove('chat-show-conv');}" style="background:transparent;border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.82rem;">‹ Atrás</button>` : '';
+    const backBtnHtml = isMob ? `<button onclick="window._chatStaffVolverBandejaMovil && window._chatStaffVolverBandejaMovil()" style="background:transparent;border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.82rem;">‹ Atrás</button>` : '';
     hdr.innerHTML = `<div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
       ${backBtnHtml}
       <div style="width:38px;height:38px;border-radius:50%;background:${avatarBg};color:${avatarColor};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">${chatStaffIniciales(nomApo)}</div>
@@ -32096,15 +32239,14 @@ async function abrirConversacionStaff(convId) {
       </div>
     </div>`;
   }
+  window._chatStaffVolverBandejaMovil = function() {
+    try { _chatStaffMostrarVistaMovil('bandeja'); } catch(_){}
+  };
   const sendBtn = document.getElementById('chat-staff-send');
   if (sendBtn) sendBtn.disabled = !conv;
-  // Suscribir mensajes
-  chatStaffSuscribirMensajes(convId);
-  // Cargar mensajes
-  await chatStaffCargarMensajes(convId);
-  // Marcar leído si venía no-leído
+  chatStaffSuscribirMensajes(convFinalId);
+  await chatStaffCargarMensajes(convFinalId);
   chatStaffMarcarLeido();
-  // Enfocar input
   setTimeout(() => { try { document.getElementById('chat-staff-input')?.focus(); } catch(e){} }, 50);
 }
 
@@ -32248,7 +32390,7 @@ function chatStaffInputKey(e) {
 }
 
 async function enviarChatStaffMsg() {
-  const conv = CHAT_STAFF.convActual;
+  let conv = CHAT_STAFF.convActual;
   if (!conv) { toast('Selecciona una conversación', 'warning'); return; }
   const inp = document.getElementById('chat-staff-input');
   const txt = String(inp?.value || '').trim();
@@ -32257,21 +32399,34 @@ async function enviarChatStaffMsg() {
   if (!sb) return;
   inp.value = '';
   inp.style.height = '';
+  let convIdUsar = conv.id;
   try {
-    // STAFF_STAFF: si la conversación me tiene en apoderado_auth_uid,
-    // RLS de chat_mensajes NO me permite enviar sender_type='staff' con mi uid.
-    // Solución: SWAP roles en chat_conversaciones para que yo sea staff_user_id ANTES de enviar.
     if (conv.scope_type === 'STAFF_STAFF') {
-      try { await _chatStaffEnsureSoyStaff(conv.id); } catch(_){}
+      // Resolver pareja UNICA cross-device (mergear duplicados históricos) → usar keeper.id
+      const otroUid = _chatStaffGetOtroStaffUid(conv);
+      if (otroUid) {
+        try {
+          const resuelta = await _chatStaffResolverIdUnicaPareja(otroUid);
+          if (resuelta && resuelta.id) {
+            convIdUsar = resuelta.id;
+            CHAT_STAFF.convActual = resuelta;
+            CHAT_STAFF.convActualId = resuelta.id;
+            conv = resuelta;
+          }
+        } catch(_){}
+      }
+      try { await _chatStaffEnsureSoyStaff(convIdUsar); } catch(_){}
     }
     const { error } = await sb.from('chat_mensajes').insert({
       colegio_id: chatStaffColegioId(),
-      conversacion_id: conv.id,
+      conversacion_id: convIdUsar,
       sender_type: 'staff',
       sender_id: CHAT_STAFF.uid,
       texto: txt,
     });
     if (error) throw error;
+    // Fallback polling cross-device: si realtime no llega en 1.4s, refrescar mensajes a mano.
+    setTimeout(() => { try { chatStaffCargarMensajes(CHAT_STAFF.convActualId); } catch(_){} }, 1400);
   } catch(e) {
     toast('Error al enviar: ' + e.message, 'error');
     inp.value = txt;
