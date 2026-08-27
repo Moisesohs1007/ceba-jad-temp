@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=153"></script>
-<script src="db_supabase.js?v=153"></script>
+<script src="compat.js?v=154"></script>
+<script src="db_supabase.js?v=154"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -31738,6 +31738,8 @@ function _chatStaffIniciarLoopFondo() {
     try {
       tickReceptor++;
       if (!CHAT_STAFF || !CHAT_STAFF.uid) return;
+      // 🔴 Chequear cada tick 800ms: si conv abierta es DUP → redirect AUTOMÁTICO a keeper.
+      try { if (typeof window._chatStaffAsegurarConvActualEsKeeper === 'function') window._chatStaffAsegurarConvActualEsKeeper(); } catch(_){}
       const convId = String(CHAT_STAFF.convActualId || '');
       if (!convId) return;
       const ahora = Date.now();
@@ -31760,6 +31762,8 @@ function _chatStaffIniciarLoopFondo() {
   (function _chatStaffPollingFallback(){
     try {
       if (CHAT_STAFF && CHAT_STAFF.uid) {
+        // 🔴 Chequear cada tick 1500ms anti-Doze: si conv actual es DUP → redirect keeper automático.
+        try { if (typeof window._chatStaffAsegurarConvActualEsKeeper === 'function') window._chatStaffAsegurarConvActualEsKeeper(); } catch(_){}
         const convId = String(CHAT_STAFF.convActualId || '');
         if (convId) chatStaffCargarMensajes(convId);
       }
@@ -31816,6 +31820,8 @@ function _chatStaffIniciarLoopFondo() {
     document.addEventListener('visibilitychange', function(){
       try {
         if (document.visibilityState === 'visible') {
+          // 🔴 Al volver visible: asegurar que la conv abierta es la KEEPER (incluso si el usuario la habia abierto antes del fix).
+          try { if (typeof window._chatStaffAsegurarConvActualEsKeeper === 'function') window._chatStaffAsegurarConvActualEsKeeper(); } catch(_){}
           activarReceptorRapido();
         }
       } catch(_){}
@@ -32260,6 +32266,32 @@ function renderChatStaffBandeja() {
     }
     return true;
   });
+  // ════════════════════════════════════════════════════════════════════
+  // 🔴 FILTRO RENDER ANTI-DUP (misma pareja staff = solo KEEPER)
+  //   Aunque CHAT_STAFF.bandeja tenga 2+ convs con la MISMA pareja (dups
+  //   sin borrar aún de la BD / realtime delay delete) — NUNCA las
+  //   mostramos juntas al usuario. Para cada pareja key: solo se queda
+  //   la de último last_message_at (KEEPER). Las demás desaparecen del
+  //   DOM inmediatamente → el usuario NO puede clickear 79D46D.
+  // ════════════════════════════════════════════════════════════════════
+  const seenParejasRender = new Map(); // parejaKey => conv
+  lista.sort((a, b) => new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0));
+  const listaFiltrada = [];
+  for (let i = 0; i < lista.length; i++) {
+    const c = lista[i];
+    if (c && c.scope_type === 'STAFF_STAFF') {
+      const key = _chatStaffParejaKey(c);
+      if (!key) { listaFiltrada.push(c); continue; }
+      if (seenParejasRender.has(key)) {
+        // Esta es una conv DUP de la MISMA pareja que una más reciente ya vista → SKIP render.
+        try { console.info('[CHAT-STAFF] render-bandeja SKIP dup conv=' + c.id + ' (pareja ' + key + ' → keeper=' + seenParejasRender.get(key).id + ')'); } catch(_){}
+        continue;
+      }
+      seenParejasRender.set(key, c);
+    }
+    listaFiltrada.push(c);
+  }
+  lista = listaFiltrada;
   if (!lista.length) {
     el.innerHTML = `<div style="padding:26px 18px;text-align:center;color:var(--muted);font-size:0.83rem;">
       ${(CHAT_STAFF.bandeja||[]).length ? 'No hay coincidencias' : 'Sin conversaciones aún. Haz clic en + Nuevo para iniciar.'}
@@ -32310,6 +32342,52 @@ function renderChatStaffBandeja() {
   el.innerHTML = parts.join('');
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ✅ GARANTÍA SIEMPRE CONVERSACIÓN ACTUAL = KEEPER (no dup)
+//   Cada vez que llega un evento de realtime (INSERT/UPDATE/DELETE),
+//   o hay un nuevo mensaje, o cambia visibilidad de pestaña:
+//   (1) Obtener parejaKey de CHAT_STAFF.convActual abierta.
+//   (2) Encontrar KEEPER (conv más reciente de MISMA pareja staff)
+//       buscando en CHAT_STAFF.bandeja local.
+//   (3) Si convActual es un DUP (keeper es otra conv id) → REDIRIGIR
+//       AUTOMÁTICAMENTE a keeper, SIN QUE EL USUARIO HAGA CLICK.
+//
+//   Esto arregla el bug donde Orlando HO tenía la dup 79D46D abierta y
+//   Moises AD enviaba a keeper 48BBF5: hasta no clickear la fila
+//   keeper → Orlando no veía los mensajes. Ahora se corrige solo.
+// ══════════════════════════════════════════════════════════════════════
+function _chatStaffAsegurarConvActualEsKeeper() {
+  try {
+    if (!CHAT_STAFF || !CHAT_STAFF.uid) return;
+    // THROTTLE: no redirigir más de 1 vez cada 5 segundos (evitar bucles abrirConv→re-render→asegurar)
+    const ahora = Date.now();
+    if (window.__chatStaffLastKeeperRedirect && (ahora - window.__chatStaffLastKeeperRedirect) < 5000) return;
+    const currId = String(CHAT_STAFF.convActualId || '');
+    if (!currId) return;
+    const currConv = CHAT_STAFF.convActual || (CHAT_STAFF.bandeja && CHAT_STAFF.bandeja.find(c => String(c.id) === currId));
+    if (!currConv) return;
+    if (currConv.scope_type !== 'STAFF_STAFF') return;
+    const pk = _chatStaffParejaKey(currConv);
+    if (!pk) return;
+    // Buscar TODAS las conv de ESTA pareja en bandeja local
+    const mismasParejas = (CHAT_STAFF.bandeja || []).filter(c => c && c.scope_type === 'STAFF_STAFF' && _chatStaffParejaKey(c) === pk);
+    if (!mismasParejas.length) return;
+    // Keeper = la más reciente por last_message_at
+    mismasParejas.sort((x, y) => new Date(y.last_message_at || y.created_at || 0) - new Date(x.last_message_at || x.created_at || 0));
+    const keeper = mismasParejas[0];
+    const keeperId = String(keeper.id);
+    if (keeperId === currId) return; // ya estamos en keeper, nada que hacer.
+    // 🔴 Redirect AUTOMÁTICO: conv actual es DUP → irnos a keeper!
+    window.__chatStaffLastKeeperRedirect = ahora;
+    try {
+      console.warn('[CHAT-STAFF] CONV-ACTUAL DUP: id=' + currId + ' → AUTOMATIC REDIRECT KEEPER=' + keeperId + ' (pareja=' + pk + ')');
+    } catch(_){}
+    // Forzar que abrirConversacionStaff use el keeper (incluso si la fila no es visible)
+    abrirConversacionStaff(keeperId);
+  } catch(e) { try { console.error('asegurarConvActualKeeper err', e); } catch(_){} }
+}
+window._chatStaffAsegurarConvActualEsKeeper = _chatStaffAsegurarConvActualEsKeeper;
+
 function chatBadgeUpdateStaff() {
   const r = _normRol(currentRol);
   const adminVerTodas = _isAdminDirectorOrCoord();
@@ -32356,6 +32434,14 @@ function chatStaffSuscribirBandeja() {
           }
           // Ordenar por last_message_at desc
           CHAT_STAFF.bandeja.sort((a,b) => new Date(b.last_message_at||0) - new Date(a.last_message_at||0));
+          // ════════════════════════════════════════════════════════════════
+          // 🔴 CADA EVENTO DE BANDEJA (INSERT/UPDATE/DELETE): chequear
+          //    si la conversación ABIERTA ACTUALMENTE es un DUP → redirect
+          //    automático a keeper INMEDIATO, incluso sin click user.
+          //    Esto soluciona el bug que Orlando tenía dup 79D46D abierta
+          //    y los mensajes PC a keeper 48BBF5 nunca eran visibles.
+          // ════════════════════════════════════════════════════════════════
+          try { if (typeof window._chatStaffAsegurarConvActualEsKeeper === 'function') window._chatStaffAsegurarConvActualEsKeeper(); } catch(_){}
           if ((ev === 'INSERT' || ev === 'UPDATE') && newR) {
             chatStaffHidratarNombres([newR]).then(() => {
               renderChatStaffBandeja();
