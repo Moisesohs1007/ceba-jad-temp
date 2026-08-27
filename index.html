@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=135"></script>
-<script src="db_supabase.js?v=135"></script>
+<script src="compat.js?v=136"></script>
+<script src="db_supabase.js?v=136"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -2080,6 +2080,33 @@
       padding-left: 24px;
     }
   }
+
+  /* ══ FIX CHAT INTERNO Pantalla Vacía y Responsive Móvil ══ */
+  /* RC 26/08: .sec-chat.active no se veía por layout grid 300px que en
+     móvil desborda y colapsa 0 altura. Solución: en móvil 1 columna,
+     banda colapsable, altura explícita y visibility garantizada. */
+  @media (max-width: 849px) {
+    #sec-chat .card#chat-staff-card {
+      grid-template-columns: 1fr !important;
+      min-height: 72vh !important;
+    }
+    #sec-chat #chat-staff-band {
+      max-height: 52vh;
+    }
+    #sec-chat.chat-show-conv #chat-staff-band {
+      display: none !important;
+    }
+  }
+  #sec-chat {
+    visibility: visible;
+    opacity: 1;
+  }
+  #sec-chat .card#chat-staff-card {
+    visibility: visible;
+    opacity: 1;
+    z-index: 2;
+  }
+  /* ════════════════════════════════════════════════════════════ */
 
   /* ══ Modal Alumno: solo PC ≥768px — sin scroll, layout compacto ══
        IMPORTANTE: este bloque NO afecta movil (<768px).
@@ -7510,6 +7537,41 @@ function showSectionDirect(id) {
   if(!tab && id === 'materiales') tab = document.getElementById('tab-aula');
   if(sec) sec.classList.add('active');
   if(tab) tab.classList.add('active');
+
+  // ================================================================
+  // FIX RC 26/08 #chat Pantalla Vacía
+  // Garantías inline por si la clase .active no se aplica por timing
+  // race de CSS o specificity. Sobreescriben cualquier display:none
+  // inline anterior o glitch de reflow tras login.
+  // ================================================================
+  if (id === 'chat' && sec) {
+    sec.style.display = 'block';
+    sec.style.visibility = 'visible';
+    sec.style.opacity = '1';
+    const card = document.getElementById('chat-staff-card');
+    if (card) {
+      const isMob = (typeof _isMobileLike === 'function' && _isMobileLike()) || window.innerWidth <= 849;
+      card.style.display = isMob ? 'flex' : 'grid';
+      if (isMob) {
+        card.style.flexDirection = 'column';
+        card.style.gridTemplateColumns = '';
+      } else {
+        card.style.gridTemplateColumns = '300px 1fr';
+        card.style.flexDirection = '';
+      }
+      card.style.visibility = 'visible';
+      card.style.opacity = '1';
+      card.style.zIndex = '2';
+    }
+  }
+  // Reset clases estado en secciones que usan bandejas de chat
+  if (id !== 'chat') {
+    const sc = document.getElementById('sec-chat');
+    if (sc) {
+      sc.classList.remove('chat-show-conv');
+      sc.style.display = '';
+    }
+  }
 
   if(prevSection === 'scan' && id !== 'scan') {
     try { stopScanner(); } catch(e) {}
@@ -31469,20 +31531,51 @@ function chatStaffColegioId() {
 }
 
 function chatStaffInitShow() {
-  if (!currentUser) return;
   if (!CHAT_STAFF.uid) {
-    CHAT_STAFF.uid = currentUser.uid;
+    CHAT_STAFF.uid = (window.currentUser && window.currentUser.uid) ? window.currentUser.uid : null;
     CHAT_STAFF.rol = _normRol(currentRol);
-    CHAT_STAFF.nombre = (currentUserData && (currentUserData.nombre || currentUserData.nombres)) || 'Usuario';
+    CHAT_STAFF.nombre = (window.currentUserData && (window.currentUserData.nombre || window.currentUserData.nombres)) || 'Usuario';
   }
   // Visibilidad de opción ADMIN_APOD
   const optAdmin = document.getElementById('chat-nuevo-opt-admin');
   if (optAdmin) {
     optAdmin.style.display = _isAdminDirectorOrCoord() ? '' : 'none';
   }
+
+  // Garantías display inline final (race condition fix)
+  const sec = document.getElementById('sec-chat');
+  if (sec) {
+    sec.style.display = 'block';
+    sec.style.visibility = 'visible';
+    sec.style.opacity = '1';
+    sec.classList.add('active');
+  }
+  const card = document.getElementById('chat-staff-card');
+  if (card) {
+    const isMob = (typeof _isMobileLike === 'function' && _isMobileLike()) || window.innerWidth <= 849;
+    card.style.display = isMob ? 'flex' : 'grid';
+    if (isMob) card.style.flexDirection = 'column';
+    card.style.visibility = 'visible';
+    card.style.opacity = '1';
+    card.style.zIndex = '2';
+  }
+
+  // Race condition: si getSession retornó null y todavía no hay currentUser,
+  // re-intentamos chatStaffInitShow 3 veces (max 150ms). No queremos fallar
+  // silenciosamente y dejar pantalla vacía.
+  if (!window.currentUser && !CHAT_STAFF.initDone) {
+    if (!window.__chatInitRetries) window.__chatInitRetries = 0;
+    if (window.__chatInitRetries < 3) {
+      window.__chatInitRetries++;
+      setTimeout(() => { try { chatStaffInitShow(); } catch(_){} }, 120);
+      return;
+    }
+  }
   if (!CHAT_STAFF.initDone) {
     CHAT_STAFF.initDone = true;
-    chatStaffCargarBandeja().then(() => chatStaffSuscribirBandeja()).catch(e => console.error('chatStaffInitShow', e));
+    chatStaffCargarBandeja()
+      .then(() => chatStaffSuscribirBandeja())
+      .catch(e => console.error('chatStaffInitShow', e));
   } else {
     renderChatStaffBandeja();
   }
@@ -31771,7 +31864,15 @@ async function abrirConversacionStaff(convId) {
   const conv = CHAT_STAFF.bandeja.find(c => c.id === convId) || null;
   CHAT_STAFF.convActual = conv;
   renderChatStaffBandeja();
-  // Header
+  // Móvil: ocultar la bandeja para mostrar únicamente el panel de mensajes
+  // (colapsa 2 columnas en 1, evita layout superpuesto o altura 0).
+  const secChat = document.getElementById('sec-chat');
+  const isMob = (typeof _isMobileLike === 'function' && _isMobileLike()) || window.innerWidth <= 849;
+  if (secChat) {
+    if (isMob && convId) secChat.classList.add('chat-show-conv');
+    else secChat.classList.remove('chat-show-conv');
+  }
+  // Botón back en móvil (regresa a bandeja) — solo si ya existe o lo creamos.
   const hdr = document.getElementById('chat-staff-conv-header');
   if (hdr && conv) {
     const nomApo = chatStaffNombreApoderado(conv);
@@ -31780,7 +31881,6 @@ async function abrirConversacionStaff(convId) {
     if (conv.scope_type === 'ADMIN_APOD') scopeLabel = 'Canal directo';
     else if (conv.scope_type === 'ALUMNO_GENERAL') scopeLabel = 'General';
     else if (conv.scope_type === 'STAFF_STAFF') scopeLabel = '👥 Staff interno';
-    // Avatar color por rol si es STAFF_STAFF
     let avatarBg = '#C9A84C';
     let avatarColor = '#0D1A3A';
     if (conv.scope_type === 'STAFF_STAFF') {
@@ -31795,7 +31895,9 @@ async function abrirConversacionStaff(convId) {
         }
       }
     }
+    const backBtnHtml = isMob ? `<button onclick="const sc=document.getElementById('sec-chat');if(sc){sc.classList.remove('chat-show-conv');}" style="background:transparent;border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.82rem;">‹ Atrás</button>` : '';
     hdr.innerHTML = `<div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
+      ${backBtnHtml}
       <div style="width:38px;height:38px;border-radius:50%;background:${avatarBg};color:${avatarColor};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">${chatStaffIniciales(nomApo)}</div>
       <div style="min-width:0;flex:1;">
         <div style="font-size:0.9rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nomApo}</div>
