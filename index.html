@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=150"></script>
-<script src="db_supabase.js?v=150"></script>
+<script src="compat.js?v=151"></script>
+<script src="db_supabase.js?v=151"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -31713,21 +31713,47 @@ function _chatStaffIniciarLoopFondo() {
   if (window.__chatStaffLoopFondo) return;
   window.__chatStaffLoopFondo = true;
   let t1 = 0;
-  // Receptor polling frecuente (entrega PC↔móvil <2.2s sin depender de realtime)
-  setInterval(() => {
+  // ──────────────────────────────────────────────────────────────────────
+  // POLLING RECEPTOR DINÁMICO (ahorro batería + entrega instantánea)
+  //   · Estado "activo": usuario abrió chat, llegó msg realtime/push,
+  //     visibilitychange visible, envió msg → 800ms por 300 segundos.
+  //     (5 minutos de modo sensible)
+  //   · Estado "reposo": después de 5 minutos sin actividad → 2200ms
+  //     para no drenar batería en móviles con ahorro de energía.
+  // ──────────────────────────────────────────────────────────────────────
+  let tickReceptor = 0;
+  let rafTm = null;
+  const activarReceptorRapido = function() {
     try {
+      window.__chatStaffRapidoHasta = Date.now() + (300 * 1000); // 5 minutos modo rápido
+      // Primer fetch inmediato (no esperar 800ms)
+      try {
+        const convId = String((CHAT_STAFF && CHAT_STAFF.convActualId) || '');
+        if (convId && CHAT_STAFF && CHAT_STAFF.uid) chatStaffCargarMensajes(convId, { force: true });
+      } catch(_){}
+    } catch(_){}
+  };
+  try { window.__chatStaffRapidoHasta = Date.now() + (180 * 1000); window.__chatStaffActivarReceptorRapido = activarReceptorRapido; } catch(_){}
+  const _receptorLoop = function() {
+    try {
+      tickReceptor++;
       if (!CHAT_STAFF || !CHAT_STAFF.uid) return;
       const convId = String(CHAT_STAFF.convActualId || '');
       if (!convId) return;
-      // NO skipear por document.hidden: el receptor movil necesita actualizar incluso si la pestaña está en segundo plano leve.
+      const ahora = Date.now();
+      const modoRapido = (window.__chatStaffRapidoHasta && ahora < window.__chatStaffRapidoHasta);
+      if (!modoRapido) {
+        // Modo reposo 2200ms: sólo ejecutar en ticks pares (cada 2 * 800ms = ~1600ms, ajustamos con 3er tick = ~2400ms)
+        if (tickReceptor % 3 !== 0) return;
+      }
       chatStaffCargarMensajes(convId);
     } catch(_){}
-  }, 2200);
+  };
+  // Base: 800ms tick (la decisión modo rápido/reposo se toma dentro)
+  setInterval(_receptorLoop, 800);
   // Dedupe / resolver parejas (menos frecuente, para no generar reflow)
-  // MUTEX: __chatStaffBgRunning garantiza que NUNCA 2 tareas background
-  // (dedupeGlobal o resolverTodas) se ejecutan a la vez. Si la anterior
-  // sigue corriendo, saltamos la iteración hasta que libere el lock.
-  // Así no se pisan CHAT_STAFF.bandeja / convActualId y desaparece la vista.
+  // MUTEX SÓLO PARA ESTE LOOP 9s — NUNCA bloquea el receptor 800ms.
+  // Antes v150 el mutex lo bloqueaba TODO = demora 30-60s sin actualizar receptor.
   setInterval(() => {
     try {
       if (!CHAT_STAFF || !CHAT_STAFF.uid) return;
@@ -31757,6 +31783,7 @@ function _chatStaffIniciarLoopFondo() {
         try {
           if (!ev || !ev.data) return;
           if (ev.data.tipo === 'nuevo-msg') {
+            activarReceptorRapido();
             const convId = String(ev.data.convId || '');
             const miConv = String(CHAT_STAFF.convActualId || '');
             if (convId && miConv && convId === miConv) {
@@ -31768,15 +31795,12 @@ function _chatStaffIniciarLoopFondo() {
     }
   } catch(_){}
   // ════════════════════════════════════════════════════════════════════
-  // Al volver visible la pestaña (movil o desktop) → fetch inmediato.
+  // Al volver visible la pestaña (movil o desktop) → fetch inmediato + modo rápido 5min.
   try {
     document.addEventListener('visibilitychange', function(){
       try {
         if (document.visibilityState === 'visible') {
-          const convId = String(CHAT_STAFF.convActualId || '');
-          if (convId && CHAT_STAFF && CHAT_STAFF.uid) {
-            chatStaffCargarMensajes(convId, { force: true });
-          }
+          activarReceptorRapido();
         }
       } catch(_){}
     }, { passive: true });
@@ -31829,11 +31853,13 @@ function chatStaffInitShow() {
   if (!CHAT_STAFF.initDone) {
     CHAT_STAFF.initDone = true;
     _chatStaffIniciarLoopFondo();
+    try { if (typeof window.__chatStaffActivarReceptorRapido === 'function') window.__chatStaffActivarReceptorRapido(); } catch(_){}
     chatStaffCargarBandeja()
       .then(() => chatStaffSuscribirBandeja())
       .catch(e => console.error('chatStaffInitShow', e));
   } else {
     _chatStaffIniciarLoopFondo();
+    try { if (typeof window.__chatStaffActivarReceptorRapido === 'function') window.__chatStaffActivarReceptorRapido(); } catch(_){}
     renderChatStaffBandeja();
     setTimeout(() => { try { _chatStaffDedupeGlobalSTAFF_STAFF(); } catch(_){} }, 500);
   }
@@ -32462,6 +32488,10 @@ async function abrirConversacionStaff(convId) {
   if (sendBtn) sendBtn.disabled = !conv;
   chatStaffSuscribirMensajes(convFinalId);
   // ════════════════════════════════════════════════════════════════════
+  // Al abrir conversación se activa el modo polling receptor rápido 5min
+  // (800ms) y se hace 1 fetch inmediato antes del force general (demora < 1s).
+  try { if (typeof window.__chatStaffActivarReceptorRapido === 'function') window.__chatStaffActivarReceptorRapido(); } catch(_){}
+  // ════════════════════════════════════════════════════════════════════
   // Force render al abrir conv: evita cache dedupe "igual que antes"
   // cuando cambiamos de convId a keeper. Así la UI NUNCA se queda con
   // placeholder vacío si la conv resuelta tiene msgs.
@@ -32652,16 +32682,33 @@ function chatStaffSuscribirMensajes(convId) {
         (payload) => {
           const m = payload.new;
           if (!m) return;
+          // Activa polling receptor rápido (5 minutos) ya que hay actividad.
+          try { if (typeof window.__chatStaffActivarReceptorRapido === 'function') window.__chatStaffActivarReceptorRapido(); } catch(_){}
           if (!CHAT_STAFF.mensajes.find(x => String(x.id) === String(m.id))) {
             CHAT_STAFF.mensajes.push(m);
             // ═══════════════════════════════════════════════════════
-            // Realtime insert → SIEMPRE forzar re-render sin fingerprint
-            // NO usar el soloSiCambio, evita false-negative que no pintaba.
+            // DETECTOR DE PAYLOAD PARCIAL de Realtime Supabase:
+            //   A veces socket envía sólo {id, conversacion_id, created_at}
+            //   y `texto` o `sender_id` son null/undefined (replica
+            //   retardada 200-400ms). Si detectamos payload parcial:
+            //   renderizamos el placeholder + luego force-refetch en
+            //   200ms para rellenar los campos que faltan.
+            // ═══════════════════════════════════════════════════════
+            const payloadParcial = (typeof m.texto === 'undefined' || m.texto === null || !String(m.texto||'').length || typeof m.sender_id === 'undefined' || m.sender_id === null);
             const el = document.getElementById('chat-staff-msgs');
             try { if (el) delete el.dataset.lastFp; } catch(_){}
             renderChatStaffMensajes();
             try { if (el) el.scrollTop = el.scrollHeight; } catch(_){}
-            // ═══════════════════════════════════════════════════════
+            if (payloadParcial) {
+              try { console.warn('[CHAT-STAFF] realtime INSERT payload parcial (id=' + m.id + ') → force refetch en 200ms.'); } catch(_){}
+              setTimeout(() => {
+                try {
+                  const el2 = document.getElementById('chat-staff-msgs');
+                  if (el2) delete el2.dataset.lastFp;
+                  chatStaffCargarMensajes(convId, { force: true });
+                } catch(_){}
+              }, 200);
+            }
             const senderNoYo = (m.sender_id && String(m.sender_id) !== String(CHAT_STAFF.uid)) || (!m.sender_id && m.sender_type === 'apoderado');
             if (senderNoYo) chatStaffMarcarLeido();
           }
@@ -32728,6 +32775,8 @@ async function enviarChatStaffMsg() {
   const wrap = document.getElementById('chat-staff-input-wrap');
   const msgs = document.getElementById('chat-staff-msgs');
   if (wrap) { wrap.style.display = 'flex'; wrap.style.minHeight = '62px'; wrap.style.flexShrink = '0'; }
+  // Activar receptor rápido 5 minutos (al enviar hay alta probabilidad de respuesta inmediata).
+  try { if (typeof window.__chatStaffActivarReceptorRapido === 'function') window.__chatStaffActivarReceptorRapido(); } catch(_){}
   // ════════════════════════════════════════════════════════════════════
   let convIdUsar = conv.id;
   try {
@@ -32760,17 +32809,24 @@ async function enviarChatStaffMsg() {
         window.__chatStaffBC.postMessage({ tipo: 'nuevo-msg', convId: convIdUsar, ts: Date.now() });
       }
     } catch(_){}
+    // 3 REFRESHES ACELERADOS post-envío:
+    //   · 200ms → ya debería existir el registro en Postgres (confirma insert OK)
+    //   · 600ms → fallback si el primer select se perdió por 200ms delay replicación
+    //   · 1200ms → fallback final si hubo congestión de red / retardo.
+    // Antes 700ms + 1800ms = demasiado lento → ahora máximo 1.2s entrega local.
     setTimeout(() => {
       try {
         if (msgs) { msgs.scrollTop = msgs.scrollHeight; }
         if (wrap) { wrap.style.minHeight = ''; wrap.style.flexShrink = ''; }
       } catch(_){}
       try { chatStaffCargarMensajes(CHAT_STAFF.convActualId, { force: true }); } catch(_){}
-    }, 700);
-    // Refresco receptor extra en 1.8s por si realtime falló
+    }, 200);
     setTimeout(() => {
       try { chatStaffCargarMensajes(CHAT_STAFF.convActualId, { force: true }); } catch(_){}
-    }, 1800);
+    }, 600);
+    setTimeout(() => {
+      try { chatStaffCargarMensajes(CHAT_STAFF.convActualId, { force: true }); } catch(_){}
+    }, 1200);
     try { if (inp) inp.focus(); } catch(e){}
   } catch(e) {
     toast('Error al enviar: ' + e.message, 'error');
