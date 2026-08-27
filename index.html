@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=144"></script>
-<script src="db_supabase.js?v=144"></script>
+<script src="compat.js?v=145"></script>
+<script src="db_supabase.js?v=145"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -2088,13 +2088,10 @@
   @media (max-width: 849px) {
     #sec-chat .card#chat-staff-card {
       grid-template-columns: 1fr !important;
-      min-height: 72vh !important;
+      min-height: 82vh !important;
     }
     #sec-chat #chat-staff-band {
-      max-height: 52vh;
-    }
-    #sec-chat.chat-show-conv #chat-staff-band {
-      display: none !important;
+      max-height: none;
     }
   }
   #sec-chat {
@@ -4970,10 +4967,10 @@
     <div class="page-title">💬 Chat Interno</div>
     <div class="page-sub">Comunícate con los apoderados de tus alumnos</div>
 
-    <div class="card" id="chat-staff-card" style="display:grid;grid-template-columns:300px 1fr;gap:0;padding:0;overflow:hidden;min-height:62vh;max-height:72vh;height:72vh;">
+    <div class="card" id="chat-staff-card" style="display:grid;grid-template-columns:300px 1fr;grid-template-rows:1fr;gap:0;padding:0;overflow:hidden;min-height:62vh;max-height:72vh;height:72vh;">
       <!-- Bandeja de conversaciones -->
-      <div id="chat-staff-band" style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;max-height:100%;height:100%;overflow:hidden;">
-        <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <div id="chat-staff-band" style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;max-height:100%;height:0;flex:1;overflow:hidden;">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0;">
           <input id="chat-staff-buscar" placeholder="Buscar conversación..." oninput="renderChatStaffBandeja()"
             style="flex:1;min-width:140px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-family:var(--font-body);font-size:0.82rem;">
           <button class="btn btn-primary" onclick="abrirModalNuevoChatStaff()" style="padding:6px 10px;font-size:0.82rem;justify-content:center;" title="Nueva conversación">+ Nuevo</button>
@@ -4983,13 +4980,13 @@
         </div>
       </div>
       <!-- Vista de conversación -->
-      <div id="chat-staff-conv-wrap" style="display:flex;flex-direction:column;min-height:0;max-height:100%;height:100%;overflow:hidden;">
+      <div id="chat-staff-conv-wrap" style="display:flex;flex-direction:column;min-height:0;max-height:100%;height:0;flex:1;overflow:hidden;">
         <div id="chat-staff-conv-header" style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;min-height:54px;flex-shrink:0;">
           <div style="color:var(--muted);font-size:0.85rem;">Selecciona una conversación o inicia una nueva</div>
         </div>
         <div id="chat-staff-msgs" style="flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:16px 20px;display:flex;flex-direction:column;gap:10px;background:var(--surface2);scroll-behavior:smooth;">
         </div>
-        <div id="chat-staff-input-wrap" style="padding:10px 16px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:flex-end;flex-shrink:0;z-index:3;">
+        <div id="chat-staff-input-wrap" style="padding:10px 16px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:flex-end;flex-shrink:0;z-index:3;position:relative;">
           <textarea id="chat-staff-input" placeholder="Escribe un mensaje... (Enter para enviar, Shift+Enter nueva línea)"
             onkeydown="chatStaffInputKey(event)"
             style="flex:1;min-height:42px;max-height:160px;resize:vertical;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px;color:var(--text);font-family:var(--font-body);font-size:0.88rem;"></textarea>
@@ -7568,7 +7565,7 @@ function showSectionDirect(id) {
   if (id !== 'chat') {
     const sc = document.getElementById('sec-chat');
     if (sc) {
-      sc.classList.remove('chat-show-conv');
+      sc.dataset.chatStaffMode = 'band';
       sc.style.display = '';
     }
   }
@@ -32181,9 +32178,10 @@ function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
     const secChat = document.getElementById('sec-chat');
     const band = document.getElementById('chat-staff-band');
     const conv = document.getElementById('chat-staff-conv-wrap');
+    const modeFinal = (mode === 'conv') ? 'conv' : 'band';
     if (secChat) {
-      if (mode === 'conv') secChat.classList.add('chat-show-conv');
-      else secChat.classList.remove('chat-show-conv');
+      secChat.classList.remove('chat-show-conv');
+      secChat.dataset.chatStaffMode = modeFinal;
     }
     const isMob = (typeof _isMobileLike === 'function' && _isMobileLike()) || window.innerWidth <= 849;
     const card = document.getElementById('chat-staff-card');
@@ -32194,26 +32192,55 @@ function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
     }
     if (!isMob) {
       if (band) { band.style.display = ''; band.style.visibility = ''; band.style.opacity = ''; band.style.position = ''; band.style.pointerEvents = ''; }
-      if (conv) { conv.style.display = ''; conv.style.visibility = ''; conv.style.opacity = ''; conv.style.position = ''; conv.style.pointerEvents = ''; }
+      if (conv) { conv.style.display = ''; conv.style.visibility = ''; conv.style.opacity = ''; conv.style.position = ''; conv.style.pointerEvents = ''; conv.style.height = ''; conv.style.minHeight = ''; conv.style.flex = ''; conv.style.flexDirection = ''; }
       return;
     }
     if (band) {
-      band.style.display = (mode === 'conv') ? 'none' : 'flex';
-      band.style.visibility = (mode === 'conv') ? 'hidden' : 'visible';
-      band.style.opacity = (mode === 'conv') ? '0' : '1';
-      band.style.position = (mode === 'conv') ? 'absolute' : '';
-      band.style.pointerEvents = (mode === 'conv') ? 'none' : '';
+      band.style.display = (modeFinal === 'conv') ? 'none' : 'flex';
+      band.style.visibility = (modeFinal === 'conv') ? 'hidden' : 'visible';
+      band.style.opacity = (modeFinal === 'conv') ? '0' : '1';
+      band.style.position = (modeFinal === 'conv') ? 'absolute' : '';
+      band.style.pointerEvents = (modeFinal === 'conv') ? 'none' : '';
     }
     if (conv) {
-      conv.style.display = (mode === 'conv') ? 'flex' : 'none';
-      conv.style.visibility = (mode === 'conv') ? 'visible' : 'hidden';
-      conv.style.opacity = (mode === 'conv') ? '1' : '0';
-      conv.style.position = (mode === 'conv') ? 'relative' : '';
-      conv.style.pointerEvents = (mode === 'conv') ? '' : 'none';
-      if (mode === 'conv') { conv.style.flexDirection = 'column'; conv.style.height = '100%'; conv.style.minHeight = '0'; }
+      conv.style.display = (modeFinal === 'conv') ? 'flex' : 'none';
+      conv.style.visibility = (modeFinal === 'conv') ? 'visible' : 'hidden';
+      conv.style.opacity = (modeFinal === 'conv') ? '1' : '0';
+      conv.style.position = (modeFinal === 'conv') ? 'relative' : '';
+      conv.style.pointerEvents = (modeFinal === 'conv') ? '' : 'none';
+      if (modeFinal === 'conv') {
+        conv.style.flexDirection = 'column';
+        conv.style.height = '0';
+        conv.style.flex = '1';
+        conv.style.minHeight = '0';
+      } else {
+        conv.style.flexDirection = '';
+        conv.style.height = '';
+        conv.style.flex = '';
+        conv.style.minHeight = '';
+      }
     }
   } catch(_){}
 }
+
+(function(){
+  var _chatStaffResizeT = null;
+  var _chatStaffResizeFn = function(){
+    try {
+      var sc = document.getElementById('sec-chat');
+      var mode = (sc && sc.dataset && sc.dataset.chatStaffMode) ? sc.dataset.chatStaffMode : 'band';
+      _chatStaffMostrarVistaMovil(mode);
+    } catch(_){}
+  };
+  window.addEventListener('resize', function(){
+    clearTimeout(_chatStaffResizeT);
+    _chatStaffResizeT = setTimeout(_chatStaffResizeFn, 180);
+  }, { passive: true });
+  window.addEventListener('orientationchange', function(){
+    clearTimeout(_chatStaffResizeT);
+    _chatStaffResizeT = setTimeout(_chatStaffResizeFn, 350);
+  }, { passive: true });
+})();
 
 async function abrirConversacionStaff(convId) {
   let convFinalId = convId;
@@ -32469,10 +32496,15 @@ async function enviarChatStaffMsg() {
   if (!sb) return;
   inp.value = '';
   inp.style.height = '';
+  // ════════════════════════════════════════════════════════════════════
+  // Post-envío: NO colapse el input-wrap. Preserva altura y focus.
+  const wrap = document.getElementById('chat-staff-input-wrap');
+  const msgs = document.getElementById('chat-staff-msgs');
+  if (wrap) { wrap.style.display = 'flex'; wrap.style.minHeight = '62px'; wrap.style.flexShrink = '0'; }
+  // ════════════════════════════════════════════════════════════════════
   let convIdUsar = conv.id;
   try {
     if (conv.scope_type === 'STAFF_STAFF') {
-      // Resolver pareja UNICA cross-device (mergear duplicados históricos) → usar keeper.id
       const otroUid = _chatStaffGetOtroStaffUid(conv);
       if (otroUid) {
         try {
@@ -32495,11 +32527,18 @@ async function enviarChatStaffMsg() {
       texto: txt,
     });
     if (error) throw error;
-    // Fallback polling cross-device: si realtime no llega en 1.4s, refrescar mensajes a mano.
-    setTimeout(() => { try { chatStaffCargarMensajes(CHAT_STAFF.convActualId); } catch(_){} }, 1400);
+    setTimeout(() => {
+      try {
+        if (msgs) { msgs.scrollTop = msgs.scrollHeight; }
+        if (wrap) { wrap.style.minHeight = ''; wrap.style.flexShrink = ''; }
+      } catch(_){}
+      try { chatStaffCargarMensajes(CHAT_STAFF.convActualId); } catch(_){}
+    }, 1400);
+    try { if (inp) inp.focus(); } catch(e){}
   } catch(e) {
     toast('Error al enviar: ' + e.message, 'error');
     inp.value = txt;
+    try { if (wrap) { wrap.style.minHeight = ''; wrap.style.flexShrink = ''; } } catch(_){}
   }
 }
 
