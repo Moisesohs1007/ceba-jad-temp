@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=156"></script>
-<script src="db_supabase.js?v=156"></script>
+<script src="compat.js?v=157"></script>
+<script src="db_supabase.js?v=157"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -990,6 +990,80 @@
     from { opacity:0; transform: translateX(20px); }
     to   { opacity:1; transform: translateX(0); }
   }
+  /* ════════════════════════════════════════════════════════
+     NOTIFICACIÓN NUEVO MENSAJE CHAT (sticky + click abrir)
+     ════════════════════════════════════════════════════════ */
+  #chat-staff-alert-wrap {
+    position: fixed;
+    top: 24px; right: 24px;
+    z-index: 10001;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 360px;
+    pointer-events: none;
+  }
+  .chat-staff-alert {
+    pointer-events: auto;
+    background: linear-gradient(135deg, #1e3a8a 0%, #0f766e 100%);
+    color: #fff;
+    border-radius: 14px;
+    padding: 12px 14px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    cursor: pointer;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    border: 1px solid rgba(255,255,255,0.15);
+    animation: chatAlertIn 0.35s cubic-bezier(.2,.9,.3,1.2);
+  }
+  .chat-staff-alert .chat-alert-avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(255,255,255,0.2);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900; flex-shrink: 0;
+    border: 2px solid rgba(255,255,255,0.3);
+  }
+  .chat-staff-alert .chat-alert-body { flex: 1; min-width: 0; }
+  .chat-staff-alert .chat-alert-title { font-weight: 800; font-size: 0.86rem; margin-bottom: 2px; }
+  .chat-staff-alert .chat-alert-text {
+    font-size: 0.78rem; opacity: 0.94;
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .chat-staff-alert .chat-alert-close {
+    opacity: 0.75; cursor: pointer; padding: 2px 6px; border-radius: 6px;
+    font-size: 0.95rem; line-height: 1; flex-shrink: 0;
+  }
+  .chat-staff-alert .chat-alert-close:hover { opacity: 1; background: rgba(255,255,255,0.12); }
+  @keyframes chatAlertIn {
+    from { opacity: 0; transform: translateY(-14px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .chat-alert-badge-title {
+    animation: chatBadgeBlink 1.1s infinite ease-in-out;
+  }
+  @keyframes chatBadgeBlink {
+    0%,100% { opacity: 1; }
+    50%     { opacity: 0.45; }
+  }
+  /* Botón toggle audio en cabecera chat */
+  .chat-audio-toggle {
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 4px 8px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    font-weight: 700;
+    user-select: none;
+    transition: background 0.2s;
+  }
+  .chat-audio-toggle:hover { background: var(--surface); }
+  .chat-audio-toggle.on  { color: #22c55e; border-color: rgba(34,197,94,0.5); }
+  .chat-audio-toggle.off { color: #ef4444; border-color: rgba(239,68,68,0.5); }
 
   /* SEARCH BAR */
   .search-wrap { position: relative; margin-bottom: 16px; }
@@ -5062,6 +5136,8 @@
           <input id="chat-staff-buscar" placeholder="Buscar conversación..." oninput="renderChatStaffBandeja()"
             style="flex:1;min-width:140px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-family:var(--font-body);font-size:0.82rem;">
           <button class="btn btn-primary" onclick="abrirModalNuevoChatStaff()" style="padding:6px 10px;font-size:0.82rem;justify-content:center;" title="Nueva conversación">+ Nuevo</button>
+          <button id="chat-staff-audio-toggle" class="chat-audio-toggle on" onclick="_chatStaffToggleAudio()" title="Activar/desactivar sonido de notificaciones de chat">🔔</button>
+          <button class="chat-audio-toggle" onclick="chatStaffRequestNotifyPerms()" title="Solicitar permiso de notificaciones nativas del navegador" style="margin-left:auto;">🔕 Permisos</button>
         </div>
         <div id="chat-staff-lista" style="flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;">
           <div style="padding:24px;text-align:center;color:var(--muted);font-size:0.83rem;">Cargando...</div>
@@ -5618,6 +5694,8 @@
 
 <!-- TOAST CONTAINER -->
 <div id="toast-container"></div>
+<!-- NOTIFICACIÓN STICKY NUEVO MENSAJE CHAT (arriba-der, z-index 10001) -->
+<div id="chat-staff-alert-wrap"></div>
 
 <!-- INPUT CSV oculto -->
 <input type="file" id="excel-input" accept=".xlsx,.xls" style="display:none" onchange="handleExcel(event)">
@@ -31878,6 +31956,18 @@ function chatStaffInitShow() {
     CHAT_STAFF.rol = _normRol(currentRol);
     CHAT_STAFF.nombre = (window.currentUserData && (window.currentUserData.nombre || window.currentUserData.nombres)) || 'Usuario';
   }
+  // ════════════════════════════════════════════════════════════════
+  // 🔴 NOTIFICACIONES IN-APP: pedir permiso la 1ª vez al abrir chat,
+  //    inicializar beep audio context, sincronizar botón audio toggle.
+  //    Esto permite aviso aunque usuario esté en otra sección / pestaña.
+  // ════════════════════════════════════════════════════════════════
+  try {
+    _chatStaffSyncAudioToggleUI();
+    if (!window.__chatStaffNotifyPermAsked) {
+      window.__chatStaffNotifyPermAsked = true;
+      try { if (typeof chatStaffRequestNotifyPerms === 'function') chatStaffRequestNotifyPerms(true); } catch(_) {}
+    }
+  } catch(_ePerm){}
   // Visibilidad de opción ADMIN_APOD
   const optAdmin = document.getElementById('chat-nuevo-opt-admin');
   if (optAdmin) {
@@ -31948,6 +32038,7 @@ async function chatStaffCargarBandeja() {
       .order('last_message_at', { ascending: false })
       .limit(200);
     if (error) throw error;
+    const bandejaAntes = Array.isArray(CHAT_STAFF.bandeja) ? new Map(CHAT_STAFF.bandeja.map(c=>[String(c.id), c])) : new Map();
     CHAT_STAFF.bandeja = data || [];
     // Dedupe UI inmediato (antes de hidratar nombres) para no mostrar 2 filas misma pareja
     try {
@@ -31966,6 +32057,45 @@ async function chatStaffCargarBandeja() {
     //    Esto reduce demora ~30s a 5s (frecuencia polling bandeja 5s).
     // ══════════════════════════════════════════════════════════════════
     try { if (typeof window._chatStaffAsegurarConvActualEsKeeper === 'function') window._chatStaffAsegurarConvActualEsKeeper(); } catch(_){}
+    // ══════════════════════════════════════════════════════════════════
+    // 🔴 NUEVO v157: DIFF SNAPSHOT → si el loop de polling bandeja 5s /
+    //    loop 28s badge detecta NUEVOS mensajes para mi que no habian
+    //    sido alertados por Realtime muerto (Doze cerró websocket),
+    //    disparar alerta multi-canal. Así funciona aunque realtime no exista.
+    // ══════════════════════════════════════════════════════════════════
+    try {
+      if (bandejaAntes.size > 0 && CHAT_STAFF.bandeja && CHAT_STAFF.bandeja.length) {
+        const nuevosParaMi = [];
+        for (const conv of CHAT_STAFF.bandeja) {
+          if (!conv) continue;
+          const cid = String(conv.id || '');
+          const soyS2 = _chatStaffEsStaff2Yo(conv);
+          const unread = soyS2 ? (conv.read_by_apoderado != true) : (conv.read_by_staff != true);
+          if (!unread) continue;
+          const participa = (conv.staff_user_id === CHAT_STAFF.uid) ||
+            (conv.scope_type === 'STAFF_STAFF' && conv.apoderado_auth_uid === CHAT_STAFF.uid);
+          if (!participa) continue;
+          if (conv.last_sender_uid === CHAT_STAFF.uid) continue;
+          const prev = bandejaAntes.get(cid);
+          if (!prev) { nuevosParaMi.push(conv); continue; }
+          // Hay cambio real de last_message_at o last_message nuevo o last_sender nuevo?
+          const chgAt = String(conv.last_message_at||'') !== String(prev.last_message_at||'');
+          const chgTx = String(conv.last_message||'').slice(0,40) !== String(prev.last_message||'').slice(0,40);
+          const chgSe = String(conv.last_sender_uid||'') !== String(prev.last_sender_uid||'');
+          const chgRd =
+            (soyS2 ? (String(conv.read_by_apoderado||'') !== String(prev.read_by_apoderado||''))
+                   : (String(conv.read_by_staff||'')      !== String(prev.read_by_staff||'')));
+          if ((chgAt || chgTx || chgSe) && !chgRd) nuevosParaMi.push(conv);
+        }
+        if (nuevosParaMi.length) {
+          // Ordenar por más viejo primero para que el alert stack tenga la más reciente arriba (unshift)
+          nuevosParaMi.sort((a,b)=>new Date(a.last_message_at||0)-new Date(b.last_message_at||0));
+          for (let i=0;i<nuevosParaMi.length;i++) {
+            try { window._chatStaffAlertarNuevoMensaje && _chatStaffAlertarNuevoMensaje(nuevosParaMi[i]); } catch(_) {}
+          }
+        }
+      }
+    } catch(_eDiff){}
     await chatStaffHidratarNombres(CHAT_STAFF.bandeja);
     renderChatStaffBandeja();
     chatBadgeUpdateStaff();
@@ -32038,6 +32168,339 @@ function _chatStaffGetOtroStaffUid(conv) {
   if (conv.apoderado_auth_uid === CHAT_STAFF.uid) return conv.staff_user_id || '';
   return '';
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔔 SISTEMA DE NOTIFICACIONES IN-APP CHAT (usuario está en OTRA sección /
+//    otra pestaña, o tiene el chat abierto pero está mirando otra cosa).
+//    6 CANALES:
+//      1) Toast sticky clickeable arriba-der (nunca desaparece solo; user
+//         click → abre directamente la conversación).
+//      2) Notification API nativa del navegador (permiso granted).
+//      3) document.title parpadea: "(3) 💬 …AsistenciaQR …" hasta click.
+//      4) Beep audio suave cortito 0.18s (toggleable 🔔/🔕 en cabecera).
+//      5) Actualizar badges #nav-chat-badge + #msb-chat-badge inmediato.
+//      6) BroadcastChannel cross-tabs (evita duplicar beep/title en ventanas
+//         abiertas CEBA mismo usuario).
+//    DEDUP: Se guarda fingerprint msg = convId + last_message_at + last_sender
+//    en window.__chatStaffAlertados = Set. No alertar 2 veces mismo msg.
+// ═══════════════════════════════════════════════════════════════════════════
+function _chatStaffAudioPref() {
+  try {
+    const v = localStorage.getItem('chatStaffAudio');
+    if (v === '0') return false;
+    return true; // default: ON
+  } catch(_) { return true; }
+}
+function _chatStaffSyncAudioToggleUI() {
+  try {
+    const btn = document.getElementById('chat-staff-audio-toggle');
+    if (!btn) return;
+    const on = _chatStaffAudioPref();
+    btn.classList.toggle('on',  on);
+    btn.classList.toggle('off', !on);
+    btn.textContent = on ? '🔔' : '🔕';
+    btn.title = on ? 'Sonido notificaciones: ACTIVADO (click para desactivar)' : 'Sonido notificaciones: DESACTIVADO (click para activar)';
+  } catch(_) {}
+}
+function _chatStaffToggleAudio() {
+  try {
+    const now = !_chatStaffAudioPref();
+    localStorage.setItem('chatStaffAudio', now ? '1' : '0');
+    _chatStaffSyncAudioToggleUI();
+    if (now) { try { _chatStaffBeep(1); } catch(_){} }
+    try { toast(now ? '🔔 Sonido activado' : '🔕 Sonido desactivado', 'info'); } catch(_) {}
+  } catch(_) {}
+}
+window._chatStaffToggleAudio = _chatStaffToggleAudio;
+window._chatStaffSyncAudioToggleUI = _chatStaffSyncAudioToggleUI;
+
+function _chatStaffBeep(n=1) {
+  if (!_chatStaffAudioPref()) return;
+  try {
+    if (!window.AudioContext && !window.webkitAudioContext) return;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!window.__chatStaffAudioCtx) window.__chatStaffAudioCtx = new Ctx();
+    const ctx = window.__chatStaffAudioCtx;
+    if (ctx.state === 'suspended') try { ctx.resume(); } catch(_){}
+    for (let i=0;i<n;i++) {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + i*0.22);
+      g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + i*0.22 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + i*0.22 + 0.18);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(ctx.currentTime + i*0.22);
+      o.stop(ctx.currentTime + i*0.22 + 0.2);
+    }
+  } catch(_) {}
+}
+
+function chatStaffRequestNotifyPerms(silente=false) {
+  try {
+    if (!('Notification' in window)) {
+      if (!silente) toast('Tu navegador no soporta notificaciones nativas', 'warning');
+      return false;
+    }
+    if (Notification.permission === 'granted') {
+      if (!silente) toast('✅ Notificaciones ya permitidas', 'success');
+      return true;
+    }
+    if (Notification.permission === 'denied') {
+      if (!silente) toast('🔕 Notificaciones bloqueadas. Actívalas en el candado → Configuración sitio → Notificaciones.', 'warning');
+      return false;
+    }
+    Notification.requestPermission().then(p => {
+      try {
+        if (p === 'granted') {
+          if (!silente) toast('✅ Notificaciones nativas activadas', 'success');
+          try { new Notification('💬 Chat Interno CEBA', { body: 'Ahora recibirás alertas aunque estés en otra sección.', icon: 'img/logo-colegio.png' }); } catch(_) {}
+        } else if (!silente) toast('⚠ Notificaciones sin permiso: usa el toast sticky superior-derecho como aviso.', 'warning');
+      } catch(_) {}
+    }).catch(() => {});
+    return true;
+  } catch(e) { return false; }
+}
+window.chatStaffRequestNotifyPerms = chatStaffRequestNotifyPerms;
+
+// Title blink parpadeo "(3) 💬"
+function _chatStaffTitleBlinkStart(countTotal) {
+  try {
+    if (window.__chatStaffTitleTimer) return; // ya está corriendo
+    if (countTotal <= 0) return;
+    const original = 'AsistenciaQR — I.E. Nº 1049 Juana Alarco De Dammert';
+    window.__chatStaffTitleOrig = window.__chatStaffTitleOrig || document.title || original;
+    const pre = '(' + (countTotal>99?'99+':countTotal) + ') 💬 ';
+    const alt = pre + window.__chatStaffTitleOrig;
+    let state = 0;
+    window.__chatStaffTitleTimer = setInterval(() => {
+      try {
+        document.title = (state % 2 === 0) ? alt : window.__chatStaffTitleOrig;
+        state++;
+      } catch(_) {}
+    }, 1100);
+  } catch(_) {}
+}
+function _chatStaffTitleBlinkStop() {
+  try {
+    if (window.__chatStaffTitleTimer) {
+      clearInterval(window.__chatStaffTitleTimer);
+      window.__chatStaffTitleTimer = null;
+    }
+    if (window.__chatStaffTitleOrig) document.title = window.__chatStaffTitleOrig;
+  } catch(_) {}
+}
+
+// Detectar si el usuario está interactuando con la conversación (focus/click dentro)
+function _chatStaffEstaViendoConv(convId) {
+  try {
+    if (!document.hasFocus()) return false;
+    const sec = document.getElementById('sec-chat');
+    if (!sec) return false;
+    const st = window.getComputedStyle(sec);
+    if (!st || st.display === 'none' || (sec.offsetWidth < 10)) return false;
+    if (!CHAT_STAFF.convActualId) return false;
+    if (CHAT_STAFF.convActualId !== String(convId || '')) return false;
+    return true;
+  } catch(_) { return false; }
+}
+
+// Construir fingerprint de la última actualización de conversación para dedup
+function _chatStaffFingerprintConv(conv) {
+  if (!conv) return null;
+  const soyS2 = _chatStaffEsStaff2Yo(conv);
+  const otroUid  = _chatStaffGetOtroStaffUid(conv) || '';
+  const lastAt   = String(conv.last_message_at || conv.created_at || '');
+  const lastTxt  = String(conv.last_message || '').slice(0, 60);
+  const lastSen  = String(conv.last_sender_uid || '');
+  const readKey  = soyS2 ? String(conv.read_by_apoderado||'') : String(conv.read_by_staff||'');
+  return [conv.id, otroUid, lastAt, lastTxt, lastSen, readKey].join('|');
+}
+
+// 🔔 FUNCIÓN PRINCIPAL — dispara 6 canales.
+function _chatStaffAlertarNuevoMensaje(conv) {
+  if (!conv) return;
+  // Guard: yo soy el emisor? No me alerto a mí mismo.
+  if (CHAT_STAFF.uid && conv.last_sender_uid === CHAT_STAFF.uid) return;
+  // Guard: soy participante?
+  const scopeOk = (conv.staff_user_id === CHAT_STAFF.uid) ||
+    (conv.scope_type === 'STAFF_STAFF' && conv.apoderado_auth_uid === CHAT_STAFF.uid);
+  if (!scopeOk) return;
+  // Guard: no me alertan si NO es para mí (ya lo leí o soy staff equivocado slot)
+  const soyStaff2 = _chatStaffEsStaff2Yo(conv);
+  const unread = soyStaff2 ? (conv.read_by_apoderado != true) : (conv.read_by_staff != true);
+  if (!unread) return;
+
+  const fp = _chatStaffFingerprintConv(conv);
+  if (!fp) return;
+  if (!window.__chatStaffAlertados) window.__chatStaffAlertados = new Set();
+  if (window.__chatStaffAlertados.has(fp)) return; // dedup global
+  window.__chatStaffAlertados.add(fp);
+  // Evitar Set infinito: cap 400 entries
+  if (window.__chatStaffAlertados.size > 400) {
+    try {
+      const arr = [...window.__chatStaffAlertados];
+      window.__chatStaffAlertados = new Set(arr.slice(-200));
+    } catch(_) {}
+  }
+  // ══════════════════════════════════════════════════════
+  // BROADCAST cross-tab misma sesión Chrome: avisarle a
+  // las otras pestañas que ya alertamos, así no hacen doble beep.
+  // ══════════════════════════════════════════════════════
+  try {
+    if (CHAT_STAFF.bc && typeof CHAT_STAFF.bc.postMessage === 'function') {
+      CHAT_STAFF.bc.postMessage({ type:'CHAT_ALERT_DEDUP', fp, convId: String(conv.id||'') });
+    }
+  } catch(_) {}
+
+  const otroUid  = _chatStaffGetOtroStaffUid(conv) || '';
+  const nombreOtro = chatStaffNombreApoderado(conv);
+  const avatarIni = (nombreOtro || '?').toString().split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase();
+  const previewTxt = String(conv.last_message || '[imagen o archivo]').slice(0, 140);
+
+  // Si usuario ESTÁ VIENDO en PRIMER PLANO esta conversación → solo beep corto + badge, no sticky.
+  const viendoAhora = _chatStaffEstaViendoConv(conv.id);
+
+  // ══════════ CANAL 1: Badge NAV/MENÚ (siempre, incluso en otra sección)
+  try { chatBadgeUpdateStaff(); } catch(_) {}
+
+  // ══════════ CANAL 2: Count total para title blink
+  try {
+    const totalBadge = (() => {
+      const el = document.getElementById('nav-chat-badge');
+      if (!el) return 0;
+      const t = parseInt((el.textContent || '').trim(), 10);
+      return isNaN(t) ? 1 : Math.max(1, t);
+    })();
+    if (!viendoAhora) _chatStaffTitleBlinkStart(totalBadge);
+  } catch(_) {}
+
+  // ══════════ CANAL 3: Beep audio (siempre a menos que tenga el toggle off; y si viendoAhora solo 1 pip suave)
+  try {
+    if (viendoAhora) _chatStaffBeep(1);
+    else             _chatStaffBeep(2);
+  } catch(_) {}
+
+  // ══════════ CANAL 4: Toast sticky CLICKEABLE arriba-der (NO auto-dismiss; solo cierra user X o click)
+  if (!viendoAhora) {
+    try {
+      const wrap = document.getElementById('chat-staff-alert-wrap');
+      if (wrap) {
+        const id = 'chat-alert-' + Math.random().toString(36).slice(2,10);
+        const card = document.createElement('div');
+        card.className = 'chat-staff-alert';
+        card.dataset.convId = String(conv.id || '');
+        card.dataset.fp = fp;
+        card.id = id;
+        card.innerHTML =
+          `<div class="chat-alert-avatar">${avatarIni || '💬'}</div>` +
+          `<div class="chat-alert-body">` +
+            `<div class="chat-alert-title chat-alert-badge-title">💬 Nuevo mensaje · ${escapeHtml(nombreOtro)}</div>` +
+            `<div class="chat-alert-text">${escapeHtml(previewTxt)}</div>` +
+          `</div>` +
+          `<div class="chat-alert-close" title="Cerrar" aria-label="Cerrar">✕</div>`;
+        // Click en cualquier parte (menos X) → abre la conversación
+        card.addEventListener('click', (e) => {
+          try {
+            if (e.target.closest('.chat-alert-close')) {
+              card.remove();
+              return;
+            }
+            // Ir a sección chat + abrir la conversación
+            try {
+              if (typeof showSectionDirect === 'function') showSectionDirect('chat');
+              else if (typeof showSection === 'function') showSection('chat');
+            } catch(_) {}
+            setTimeout(() => {
+              try { _chatStaffTitleBlinkStop(); } catch(_) {}
+              try { abrirConversacionStaff(String(conv.id||'')); } catch(_) {}
+              try { card.remove(); } catch(_) {}
+            }, 120);
+          } catch(_) {}
+        }, { passive: true });
+        wrap.appendChild(card);
+        // Auto-dismis SUAVE solo después de 12 segundos (para que no se acumulen si está de vacaciones).
+        setTimeout(() => { try { if (card && card.parentNode) card.remove(); } catch(_){} }, 12000);
+        // Límite máximo: solo 4 notificaciones abiertas a la vez, quita la más vieja
+        while (wrap.children.length > 4) try { wrap.removeChild(wrap.firstChild); } catch(_) { break; }
+      }
+    } catch(_) {}
+  } else {
+    // ══════════ CANAL 4-BIS: usuario tiene la conv abierta, flash sutil en header conv para que note que llegó nuevo
+    try {
+      const head = document.getElementById('chat-staff-conv-header');
+      if (head) {
+        head.animate([
+          { background: 'rgba(16,185,129,0.18)' },
+          { background: 'transparent' }
+        ], { duration: 1400, iterations: 2 });
+      }
+    } catch(_) {}
+  }
+
+  // ══════════ CANAL 5: Notification API nativa (si tiene permiso granted y pestaña no focused)
+  if (!viendoAhora) {
+    try {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        const n = new Notification('💬 Nuevo mensaje · ' + nombreOtro, {
+          body: previewTxt || 'Abre para ver el mensaje.',
+          icon: 'img/logo-colegio.png',
+          badge: 'img/logo-colegio.png',
+          tag: 'chat-staff-' + conv.id,
+          requireInteraction: false,
+          silent: true, // beep lo hacemos nosotros para controlar volumen/toggle
+        });
+        try {
+          n.onclick = () => {
+            try { window.focus(); } catch(_) {}
+            try { _chatStaffTitleBlinkStop(); } catch(_) {}
+            try {
+              if (typeof showSectionDirect === 'function') showSectionDirect('chat');
+              else if (typeof showSection === 'function') showSection('chat');
+            } catch(_) {}
+            try { abrirConversacionStaff(String(conv.id||'')); } catch(_) {}
+            try { n.close(); } catch(_) {}
+          };
+        } catch(_) {}
+        setTimeout(() => { try { n.close(); } catch(_) {} }, 10000);
+      }
+    } catch(_) {}
+  }
+}
+window._chatStaffAlertarNuevoMensaje = _chatStaffAlertarNuevoMensaje;
+
+// Detectar cuando el usuario hace click/focus en el área chat → APAGAR title blink.
+try {
+  window.addEventListener('focus', () => { try {
+    const bad = document.getElementById('nav-chat-badge');
+    const count = parseInt(((bad && bad.textContent)||'').trim(), 10) || 0;
+    if (count <= 0) _chatStaffTitleBlinkStop();
+  } catch(_) {} }, { passive: true });
+  document.addEventListener('click', (e) => { try {
+    if (e.target.closest('#sec-chat') || e.target.closest('#nav-chat') || e.target.closest('#msb-sub-chat')) _chatStaffTitleBlinkStop();
+  } catch(_) {} }, { passive: true });
+} catch(_) {}
+
+// Dedupe cross-tab via Broadcast: si otra pestaña ya alertó, yo también marco dedup.
+try {
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      try {
+        if (!CHAT_STAFF.bc) return;
+        CHAT_STAFF.bc.onmessage = (ev) => {
+          try {
+            if (!ev || !ev.data) return;
+            if (ev.data.type === 'CHAT_ALERT_DEDUP' && ev.data.fp) {
+              if (!window.__chatStaffAlertados) window.__chatStaffAlertados = new Set();
+              window.__chatStaffAlertados.add(ev.data.fp);
+            }
+          } catch(_) {}
+        };
+      } catch(_) {}
+    }, 1200);
+  });
+} catch(_) {}
 
 function chatStaffNombreStaff(uid) {
   let u = CHAT_STAFF.usuariosCache.get(uid);
@@ -32543,15 +33006,19 @@ function chatStaffSuscribirBandeja() {
                 } catch(_){}
                 chatStaffMarcarLeido();
               }
-              // Toast si no es el emisor YO y hay nuevo mensaje no leído
-              if (ev === 'UPDATE' && CHAT_STAFF.convActualId !== newR.id) {
+              // 🔴 NUEVO v157: Alertar multi-canal (badge, title blink, beep, sticky toast, Notification API)
+              //   por SI O SI aunque estemos en otra sección.
+              //   Aplica tanto para INSERT conv nueva (nuevo chat inicial) como UPDATE (mensaje nuevo).
+              if ((ev === 'INSERT' || ev === 'UPDATE') && newR) {
                 const soyStaff2 = _chatStaffEsStaff2Yo(newR);
                 const unreadParaMi = soyStaff2 ? (newR.read_by_apoderado != true) : (newR.read_by_staff != true);
                 const elOtroMeEnvio = (newR.last_sender_uid && newR.last_sender_uid !== CHAT_STAFF.uid);
                 const scopeOkParticipa = (newR.staff_user_id === CHAT_STAFF.uid) ||
                   (newR.scope_type === 'STAFF_STAFF' && newR.apoderado_auth_uid === CHAT_STAFF.uid);
-                if (unreadParaMi && elOtroMeEnvio && scopeOkParticipa) {
-                  toast('Nuevo mensaje de ' + chatStaffNombreApoderado(newR), 'info');
+                if (unreadParaMi && scopeOkParticipa && (!newR.last_sender_uid || elOtroMeEnvio)) {
+                  // Fallback: toast pequeño info si falla el sistema principal (nunca debería)
+                  if (!window._chatStaffAlertarNuevoMensaje) toast('Nuevo mensaje de ' + chatStaffNombreApoderado(newR), 'info');
+                  try { window._chatStaffAlertarNuevoMensaje && _chatStaffAlertarNuevoMensaje(newR); } catch(_) {}
                 }
               }
             });
