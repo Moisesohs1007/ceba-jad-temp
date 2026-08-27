@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=148"></script>
-<script src="db_supabase.js?v=148"></script>
+<script src="compat.js?v=149"></script>
+<script src="db_supabase.js?v=149"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -219,20 +219,20 @@
     box-sizing: border-box !important;
   }
   #chat-staff-band {
-    display: grid !important;
-    grid-template-rows: auto 1fr !important;
-    min-height: 0 !important;
-    height: 100% !important;
-    overflow: hidden !important;
-    box-sizing: border-box !important;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
   }
   #chat-staff-conv-wrap {
-    display: grid !important;
-    grid-template-rows: auto 1fr auto !important;
-    min-height: 0 !important;
-    height: 100% !important;
-    overflow: hidden !important;
-    box-sizing: border-box !important;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
   }
   #chat-staff-lista {
     min-height: 0 !important;
@@ -257,6 +257,46 @@
   }
   #chat-staff-input {
     box-sizing: border-box !important;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     MÓDULO ESTADO CHAT INTERNO (SINGLE SOURCE OF TRUTH)
+     Todo control de visibilidad band vs conversación SE HACE POR ATRIBUTO
+     [data-chat-staff-mode] en #sec-chat. NO HAY inline styles sobre
+     #chat-staff-band ni #chat-staff-conv-wrap desde JavaScript. Así
+     ninguna reorientación / resize / reflow rompe la visibilidad.
+     ════════════════════════════════════════════════════════════════════ */
+  @media (max-width: 849px) {
+    /* Por defecto en móvil se ve la BANDEJA (attr = 'bandeja') */
+    #sec-chat[data-chat-staff-mode='bandeja'] #chat-staff-band {
+      display: grid !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      position: relative !important;
+      pointer-events: auto !important;
+    }
+    #sec-chat[data-chat-staff-mode='bandeja'] #chat-staff-conv-wrap {
+      display: none !important;
+      visibility: hidden !important;
+      opacity: 0 !important;
+      position: absolute !important;
+      pointer-events: none !important;
+    }
+    /* Modo CONVERSACIÓN abierta en móvil → solo panel conv */
+    #sec-chat[data-chat-staff-mode='conv'] #chat-staff-conv-wrap {
+      display: grid !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      position: relative !important;
+      pointer-events: auto !important;
+    }
+    #sec-chat[data-chat-staff-mode='conv'] #chat-staff-band {
+      display: none !important;
+      visibility: hidden !important;
+      opacity: 0 !important;
+      position: absolute !important;
+      pointer-events: none !important;
+    }
   }
 
   /* CARDS */
@@ -5011,7 +5051,7 @@
   </div>
 
   <!-- ===== CHAT INTERNO ===== -->
-  <div class="section" id="sec-chat">
+  <div class="section" id="sec-chat" data-chat-staff-mode="bandeja">
     <div class="page-title">💬 Chat Interno</div>
     <div class="page-sub">Comunícate con los apoderados de tus alumnos</div>
 
@@ -32260,115 +32300,41 @@ function chatStaffSuscribirBandeja() {
 function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
   try {
     const secChat = document.getElementById('sec-chat');
-    const band = document.getElementById('chat-staff-band');
-    const conv = document.getElementById('chat-staff-conv-wrap');
     // CÁLCULO DE MODO FINAL, FUERTE A CONTEXTO:
-    // 1) Si hay convActualId abierta → NUNCA volvemos a 'band' automáticamente (solo si mode explícito='band').
+    // 1) Si hay convActualId abierta → NUNCA volvemos a 'bandeja' automáticamente (solo si mode explícito='bandeja').
     // 2) Si mode NO se pasó, deducirlo de dataset o de CHAT_STAFF.convActualId.
     const convAbierta = !!(CHAT_STAFF && CHAT_STAFF.convActualId);
     let modeFinal;
-    if (mode === 'band') modeFinal = 'band';
+    if (mode === 'bandeja' || mode === 'band') modeFinal = 'bandeja';
     else if (mode === 'conv' || convAbierta) modeFinal = 'conv';
     else {
-      const dsMode = (secChat && secChat.dataset && secChat.dataset.chatStaffMode) ? secChat.dataset.chatStaffMode : 'band';
-      modeFinal = (dsMode === 'conv') ? 'conv' : 'band';
+      const dsMode = (secChat && secChat.dataset && secChat.dataset.chatStaffMode) ? secChat.dataset.chatStaffMode : 'bandeja';
+      modeFinal = (dsMode === 'conv') ? 'conv' : 'bandeja';
     }
-    if (secChat) {
-      secChat.classList.remove('chat-show-conv');
-      secChat.dataset.chatStaffMode = modeFinal;
+    // ════════════════════════════════════════════════════════════
+    // SINGLE SOURCE OF TRUTH: ATRIBUTO [data-chat-staff-mode]
+    // Ya no tocamos band.style.* ni conv.style.* para visibilidad.
+    // El CSS @media <=849px se encarga de mostrar/ocultar paneles
+    // según este atributo. Resize / orientation / reflow NO ROMPE la UI.
+    // ════════════════════════════════════════════════════════════
+    if (secChat && secChat.getAttribute('data-chat-staff-mode') !== modeFinal) {
+      secChat.setAttribute('data-chat-staff-mode', modeFinal);
+      try { secChat.classList.remove('chat-show-conv'); } catch(_){}
     }
     const isMob = (window.innerWidth <= 849);
     const card = document.getElementById('chat-staff-card');
     if (card) {
-      if (isMob) { card.style.maxHeight = '82vh'; card.style.height = '82vh'; }
-      else { card.style.maxHeight = '72vh'; card.style.height = '72vh'; }
-      card.style.overflow = 'hidden';
-    }
-    if (!isMob) {
-      if (band) {
-        band.style.display = '';
-        band.style.visibility = '';
-        band.style.opacity = '';
-        band.style.position = '';
-        band.style.pointerEvents = '';
-        band.style.height = '';
-        band.style.flex = '';
-        band.style.minHeight = '';
-      }
-      if (conv) {
-        conv.style.display = '';
-        conv.style.visibility = '';
-        conv.style.opacity = '';
-        conv.style.position = '';
-        conv.style.pointerEvents = '';
-        conv.style.height = '';
-        conv.style.minHeight = '';
-        conv.style.flex = '';
-        conv.style.flexDirection = '';
-      }
-      return;
-    }
-    // MODO MÓVIL: solo 1 panel a la vez (band O conv, NUNCA AMBOS visibles).
-    if (band) {
-      if (modeFinal === 'band') {
-        band.style.display = 'grid';
-        band.style.visibility = 'visible';
-        band.style.opacity = '1';
-        band.style.position = '';
-        band.style.pointerEvents = '';
-        band.style.height = '100%';
-        band.style.maxHeight = '100%';
-        band.style.minHeight = '0';
-        band.style.flex = '';
-        band.style.gridTemplateRows = 'auto 1fr';
+      if (isMob) {
+        if (card.style.maxHeight !== '82vh') card.style.maxHeight = '82vh';
+        if (card.style.height !== '82vh') card.style.height = '82vh';
       } else {
-        band.style.display = 'none';
-        band.style.visibility = 'hidden';
-        band.style.opacity = '0';
-        band.style.position = 'absolute';
-        band.style.pointerEvents = 'none';
+        if (card.style.maxHeight !== '72vh') card.style.maxHeight = '72vh';
+        if (card.style.height !== '72vh') card.style.height = '72vh';
       }
-    }
-    if (conv) {
-      if (modeFinal === 'conv') {
-        conv.style.display = 'grid';
-        conv.style.visibility = 'visible';
-        conv.style.opacity = '1';
-        conv.style.position = '';
-        conv.style.pointerEvents = '';
-        conv.style.gridTemplateRows = 'auto 1fr auto';
-        conv.style.height = '100%';
-        conv.style.maxHeight = '100%';
-        conv.style.minHeight = '0';
-        conv.style.flex = '';
-      } else {
-        conv.style.display = 'none';
-        conv.style.visibility = 'hidden';
-        conv.style.opacity = '0';
-        conv.style.position = 'absolute';
-        conv.style.pointerEvents = 'none';
-      }
+      if (card.style.overflow !== 'hidden') card.style.overflow = 'hidden';
     }
   } catch(_){}
 }
-
-(function(){
-  var _chatStaffResizeT = null;
-  var _chatStaffResizeFn = function(){
-    try {
-      // NO pasamos modo explícito → el helper deducirá: si CHAT_STAFF.convActualId existe → 'conv' automático (nunca se pierde).
-      _chatStaffMostrarVistaMovil(null);
-    } catch(_){}
-  };
-  window.addEventListener('resize', function(){
-    clearTimeout(_chatStaffResizeT);
-    _chatStaffResizeT = setTimeout(_chatStaffResizeFn, 180);
-  }, { passive: true });
-  window.addEventListener('orientationchange', function(){
-    clearTimeout(_chatStaffResizeT);
-    _chatStaffResizeT = setTimeout(_chatStaffResizeFn, 350);
-  }, { passive: true });
-})();
 
 async function abrirConversacionStaff(convId) {
   let convFinalId = convId;
