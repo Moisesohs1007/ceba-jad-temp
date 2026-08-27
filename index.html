@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=158"></script>
-<script src="db_supabase.js?v=158"></script>
+<script src="compat.js?v=159"></script>
+<script src="db_supabase.js?v=159"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -5177,6 +5177,10 @@
       <div id="chat-staff-conv-wrap" style="display:flex;flex-direction:column;min-height:0;max-height:100%;height:100%;overflow:hidden;">
         <div id="chat-staff-conv-header" style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;min-height:54px;flex-shrink:0;">
           <div style="color:var(--muted);font-size:0.85rem;">Selecciona una conversación o inicia una nueva</div>
+        </div>
+        <!-- 🔔 Tip Android v159: recordatorio "Mostrar ventana emergente" (solo Android y solo si NO esta visible la band) -->
+        <div id="chat-staff-android-tip" style="display:none;padding:8px 12px;background:rgba(59,130,246,0.10);color:#2563eb;border-bottom:1px solid rgba(59,130,246,0.25);font-size:0.78rem;line-height:1.35;">
+          💡 <strong>Tip móvil:</strong> Para ver la notificación emergente arriba mientras usas otras apps: 🔒 candado URL → <strong>Notificaciones</strong> → activa <strong>"Mostrar como ventana emergente"</strong>.
         </div>
         <div id="chat-staff-msgs" style="flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:16px 20px;display:flex;flex-direction:column;gap:10px;background:var(--surface2);scroll-behavior:smooth;">
         </div>
@@ -31993,6 +31997,22 @@ function chatStaffInitShow() {
   // ════════════════════════════════════════════════════════════════
   try {
     _chatStaffSyncAudioToggleUI();
+    // Tip v159 Android: mostrar recordatorio "Mostrar como ventana emergente" solo si Android Chrome móvil + granted.
+    try {
+      const ua = (navigator.userAgent || '').toLowerCase();
+      const esAndroid = ua.includes('android');
+      const esMovil = (window.innerWidth <= 849) || esAndroid || ua.includes('mobile');
+      const tip = document.getElementById('chat-staff-android-tip');
+      if (tip) {
+        if (esAndroid && esMovil) {
+          const granted = ('Notification' in window && Notification.permission === 'granted');
+          if (granted) tip.style.display = '';
+          else tip.style.display = 'none';
+        } else {
+          tip.style.display = 'none';
+        }
+      }
+    } catch(_){}
     if (!window.__chatStaffNotifyPermAsked) {
       window.__chatStaffNotifyPermAsked = true;
       try { if (typeof chatStaffRequestNotifyPerms === 'function') chatStaffRequestNotifyPerms(true); } catch(_) {}
@@ -32495,30 +32515,99 @@ function _chatStaffAlertarNuevoMensaje(conv) {
 
   // ══════════ CANAL 5: Notification API nativa
   // Regla1 USER: SÓLO si el usuario NO está DENTRO DE LA VENTANA DEL CHAT.
+  // Mejoras v159 Android (user granted Alerta + Sonido Spaceline):
+  //   - silent=false (usa tono Android Spaceline); vibrate patrón 3 pulsos; renotify=true para que cada nuevo mensaje vuelva a sonar;
+  //   - PREFERIR ServiceWorkerRegistration.showNotification (Android Chrome entrega 2do plano con más fiabilidad que new Notification);
+  //   - onclick handler centralizado: window.focus → parar title blink → abrir conv.
   if (!dentroDelChat) {
     try {
       if ('Notification' in window && Notification.permission === 'granted') {
-        const n = new Notification('💬 Nuevo mensaje · ' + nombreOtro, {
-          body: previewTxt || 'Abre para ver el mensaje.',
+        const titulo = '💬 Nuevo mensaje · ' + nombreOtro;
+        const cuerpo = previewTxt || 'Abre para ver el mensaje.';
+        const notifTag = 'chat-staff-' + conv.id;
+        const convIdStr = String(conv.id || '');
+        const opts = {
+          body: cuerpo,
           icon: 'img/logo-colegio.png',
           badge: 'img/logo-colegio.png',
-          tag: 'chat-staff-' + conv.id,
+          image: 'img/logo-colegio.png',
+          tag: notifTag,
+          renotify: true,
+          timestamp: Date.now(),
           requireInteraction: false,
-          silent: true, // beep lo hacemos nosotros para controlar volumen/toggle
-        });
+          silent: false,
+          vibrate: [300, 120, 300, 120, 300],
+        };
+        const abrirConvDesdeNotif = () => {
+          try { window.focus(); } catch(_) {}
+          try { _chatStaffTitleBlinkStop(); } catch(_) {}
+          try {
+            if (typeof showSectionDirect === 'function') showSectionDirect('chat');
+            else if (typeof showSection === 'function') showSection('chat');
+          } catch(_) {}
+          setTimeout(() => {
+            try { abrirConversacionStaff(convIdStr); } catch(_) {}
+          }, 140);
+        };
         try {
-          n.onclick = () => {
-            try { window.focus(); } catch(_) {}
-            try { _chatStaffTitleBlinkStop(); } catch(_) {}
-            try {
-              if (typeof showSectionDirect === 'function') showSectionDirect('chat');
-              else if (typeof showSection === 'function') showSection('chat');
-            } catch(_) {}
-            try { abrirConversacionStaff(String(conv.id||'')); } catch(_) {}
-            try { n.close(); } catch(_) {}
-          };
-        } catch(_) {}
-        setTimeout(() => { try { n.close(); } catch(_) {} }, 10000);
+          if ('serviceWorker' in navigator && navigator.serviceWorker && navigator.serviceWorker.controller) {
+            const attachSwClick = () => {
+              try {
+                const _h = (event) => {
+                  try {
+                    if (!event || !event.notification) return;
+                    const n = event.notification;
+                    if (n && n.tag && String(n.tag) === String(notifTag)) {
+                      try { event.preventDefault(); } catch(_) {}
+                      abrirConvDesdeNotif();
+                      try { n.close && n.close(); } catch(_) {}
+                    }
+                  } catch(_) {}
+                };
+                navigator.serviceWorker.addEventListener('notificationclick', _h, { once: true });
+                // Autolimpieza listener pasados 12s
+                setTimeout(() => {
+                  try { navigator.serviceWorker.removeEventListener('notificationclick', _h); } catch(_){}
+                }, 12000);
+              } catch(_) {}
+            };
+            Promise.resolve(navigator.serviceWorker.ready).then((reg) => {
+              try {
+                attachSwClick();
+                reg.showNotification(titulo, opts);
+                setTimeout(() => {
+                  try { reg.getNotifications({ tag: notifTag }).then((list) => { (list||[]).forEach(n => { try { n.close(); } catch(_){} }); }).catch(()=>{}); } catch(_) {}
+                }, 10000);
+              } catch(_) {
+                // Fallback: new Notification clásico
+                try {
+                  const n = new Notification(titulo, opts);
+                  try { n.onclick = () => { try { n.close(); } catch(_){} abrirConvDesdeNotif(); }; } catch(_) {}
+                  setTimeout(() => { try { n.close(); } catch(_) {} }, 10000);
+                } catch(_){}
+              }
+            }).catch(() => {
+              // Fallback SW promise reject: new Notification clásico
+              try {
+                const n = new Notification(titulo, opts);
+                try { n.onclick = () => { try { n.close(); } catch(_){} abrirConvDesdeNotif(); }; } catch(_) {}
+                setTimeout(() => { try { n.close(); } catch(_) {} }, 10000);
+              } catch(_){}
+            });
+          } else {
+            // Sin SW: new Notification clásico (desktop Firefox)
+            const n = new Notification(titulo, opts);
+            try { n.onclick = () => { try { n.close(); } catch(_){} abrirConvDesdeNotif(); }; } catch(_) {}
+            setTimeout(() => { try { n.close(); } catch(_) {} }, 10000);
+          }
+        } catch(_) {
+          // Catch total: new Notification clásico fallback
+          try {
+            const n = new Notification(titulo, opts);
+            try { n.onclick = () => { try { n.close(); } catch(_){} abrirConvDesdeNotif(); }; } catch(_) {}
+            setTimeout(() => { try { n.close(); } catch(_) {} }, 10000);
+          } catch(_) {}
+        }
       }
     } catch(_) {}
   }
