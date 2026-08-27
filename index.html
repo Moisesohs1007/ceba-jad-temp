@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=145"></script>
-<script src="db_supabase.js?v=145"></script>
+<script src="compat.js?v=146"></script>
+<script src="db_supabase.js?v=146"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -4969,7 +4969,7 @@
 
     <div class="card" id="chat-staff-card" style="display:grid;grid-template-columns:300px 1fr;grid-template-rows:1fr;gap:0;padding:0;overflow:hidden;min-height:62vh;max-height:72vh;height:72vh;">
       <!-- Bandeja de conversaciones -->
-      <div id="chat-staff-band" style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;max-height:100%;height:0;flex:1;overflow:hidden;">
+      <div id="chat-staff-band" style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;max-height:100%;height:100%;overflow:hidden;">
         <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0;">
           <input id="chat-staff-buscar" placeholder="Buscar conversación..." oninput="renderChatStaffBandeja()"
             style="flex:1;min-width:140px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-family:var(--font-body);font-size:0.82rem;">
@@ -4980,7 +4980,7 @@
         </div>
       </div>
       <!-- Vista de conversación -->
-      <div id="chat-staff-conv-wrap" style="display:flex;flex-direction:column;min-height:0;max-height:100%;height:0;flex:1;overflow:hidden;">
+      <div id="chat-staff-conv-wrap" style="display:flex;flex-direction:column;min-height:0;max-height:100%;height:100%;overflow:hidden;">
         <div id="chat-staff-conv-header" style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;min-height:54px;flex-shrink:0;">
           <div style="color:var(--muted);font-size:0.85rem;">Selecciona una conversación o inicia una nueva</div>
         </div>
@@ -32178,7 +32178,17 @@ function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
     const secChat = document.getElementById('sec-chat');
     const band = document.getElementById('chat-staff-band');
     const conv = document.getElementById('chat-staff-conv-wrap');
-    const modeFinal = (mode === 'conv') ? 'conv' : 'band';
+    // CÁLCULO DE MODO FINAL, FUERTE A CONTEXTO:
+    // 1) Si hay convActualId abierta → NUNCA volvemos a 'band' automáticamente (solo si mode explícito='band').
+    // 2) Si mode NO se pasó, deducirlo de dataset o de CHAT_STAFF.convActualId.
+    const convAbierta = !!(CHAT_STAFF && CHAT_STAFF.convActualId);
+    let modeFinal;
+    if (mode === 'band') modeFinal = 'band';
+    else if (mode === 'conv' || convAbierta) modeFinal = 'conv';
+    else {
+      const dsMode = (secChat && secChat.dataset && secChat.dataset.chatStaffMode) ? secChat.dataset.chatStaffMode : 'band';
+      modeFinal = (dsMode === 'conv') ? 'conv' : 'band';
+    }
     if (secChat) {
       secChat.classList.remove('chat-show-conv');
       secChat.dataset.chatStaffMode = modeFinal;
@@ -32191,33 +32201,68 @@ function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
       card.style.overflow = 'hidden';
     }
     if (!isMob) {
-      if (band) { band.style.display = ''; band.style.visibility = ''; band.style.opacity = ''; band.style.position = ''; band.style.pointerEvents = ''; }
-      if (conv) { conv.style.display = ''; conv.style.visibility = ''; conv.style.opacity = ''; conv.style.position = ''; conv.style.pointerEvents = ''; conv.style.height = ''; conv.style.minHeight = ''; conv.style.flex = ''; conv.style.flexDirection = ''; }
+      if (band) {
+        band.style.display = '';
+        band.style.visibility = '';
+        band.style.opacity = '';
+        band.style.position = '';
+        band.style.pointerEvents = '';
+        band.style.height = '';
+        band.style.flex = '';
+        band.style.minHeight = '';
+      }
+      if (conv) {
+        conv.style.display = '';
+        conv.style.visibility = '';
+        conv.style.opacity = '';
+        conv.style.position = '';
+        conv.style.pointerEvents = '';
+        conv.style.height = '';
+        conv.style.minHeight = '';
+        conv.style.flex = '';
+        conv.style.flexDirection = '';
+      }
       return;
     }
+    // MODO MÓVIL: solo 1 panel a la vez (band O conv, NUNCA AMBOS visibles).
     if (band) {
-      band.style.display = (modeFinal === 'conv') ? 'none' : 'flex';
-      band.style.visibility = (modeFinal === 'conv') ? 'hidden' : 'visible';
-      band.style.opacity = (modeFinal === 'conv') ? '0' : '1';
-      band.style.position = (modeFinal === 'conv') ? 'absolute' : '';
-      band.style.pointerEvents = (modeFinal === 'conv') ? 'none' : '';
+      if (modeFinal === 'band') {
+        band.style.display = 'flex';
+        band.style.visibility = 'visible';
+        band.style.opacity = '1';
+        band.style.position = '';
+        band.style.pointerEvents = '';
+        band.style.height = '100%';
+        band.style.maxHeight = '100%';
+        band.style.minHeight = '0';
+        band.style.flex = '';
+        band.style.flexDirection = 'column';
+      } else {
+        band.style.display = 'none';
+        band.style.visibility = 'hidden';
+        band.style.opacity = '0';
+        band.style.position = 'absolute';
+        band.style.pointerEvents = 'none';
+      }
     }
     if (conv) {
-      conv.style.display = (modeFinal === 'conv') ? 'flex' : 'none';
-      conv.style.visibility = (modeFinal === 'conv') ? 'visible' : 'hidden';
-      conv.style.opacity = (modeFinal === 'conv') ? '1' : '0';
-      conv.style.position = (modeFinal === 'conv') ? 'relative' : '';
-      conv.style.pointerEvents = (modeFinal === 'conv') ? '' : 'none';
       if (modeFinal === 'conv') {
+        conv.style.display = 'flex';
+        conv.style.visibility = 'visible';
+        conv.style.opacity = '1';
+        conv.style.position = 'relative';
+        conv.style.pointerEvents = '';
         conv.style.flexDirection = 'column';
-        conv.style.height = '0';
-        conv.style.flex = '1';
+        conv.style.height = '100%';
+        conv.style.maxHeight = '100%';
         conv.style.minHeight = '0';
-      } else {
-        conv.style.flexDirection = '';
-        conv.style.height = '';
         conv.style.flex = '';
-        conv.style.minHeight = '';
+      } else {
+        conv.style.display = 'none';
+        conv.style.visibility = 'hidden';
+        conv.style.opacity = '0';
+        conv.style.position = 'absolute';
+        conv.style.pointerEvents = 'none';
       }
     }
   } catch(_){}
@@ -32227,9 +32272,8 @@ function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
   var _chatStaffResizeT = null;
   var _chatStaffResizeFn = function(){
     try {
-      var sc = document.getElementById('sec-chat');
-      var mode = (sc && sc.dataset && sc.dataset.chatStaffMode) ? sc.dataset.chatStaffMode : 'band';
-      _chatStaffMostrarVistaMovil(mode);
+      // NO pasamos modo explícito → el helper deducirá: si CHAT_STAFF.convActualId existe → 'conv' automático (nunca se pierde).
+      _chatStaffMostrarVistaMovil(null);
     } catch(_){}
   };
   window.addEventListener('resize', function(){
