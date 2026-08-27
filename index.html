@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=146"></script>
-<script src="db_supabase.js?v=146"></script>
+<script src="compat.js?v=147"></script>
+<script src="db_supabase.js?v=147"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -209,6 +209,54 @@
     color: var(--muted);
     font-size: 0.9rem;
     margin-bottom: 28px;
+  }
+
+  /* FIX CHAT INTERNO #chat-staff-card: padding global .card 24px cortaba input-wrap.
+     Override !important + grid interno 3 filas = header / msgs / inputwrap siempre visibles sin overflow corte. */
+  #chat-staff-card.card {
+    padding: 0 !important;
+    margin-bottom: 20px !important;
+    box-sizing: border-box !important;
+  }
+  #chat-staff-band {
+    display: grid !important;
+    grid-template-rows: auto 1fr !important;
+    min-height: 0 !important;
+    height: 100% !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+  #chat-staff-conv-wrap {
+    display: grid !important;
+    grid-template-rows: auto 1fr auto !important;
+    min-height: 0 !important;
+    height: 100% !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+  #chat-staff-lista {
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: thin !important;
+  }
+  #chat-staff-msgs {
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: thin !important;
+  }
+  #chat-staff-input-wrap {
+    position: sticky;
+    bottom: 0;
+    z-index: 20 !important;
+    background: var(--surface) !important;
+    box-sizing: border-box !important;
+  }
+  #chat-staff-input {
+    box-sizing: border-box !important;
   }
 
   /* CARDS */
@@ -32227,7 +32275,7 @@ function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
     // MODO MÓVIL: solo 1 panel a la vez (band O conv, NUNCA AMBOS visibles).
     if (band) {
       if (modeFinal === 'band') {
-        band.style.display = 'flex';
+        band.style.display = 'grid';
         band.style.visibility = 'visible';
         band.style.opacity = '1';
         band.style.position = '';
@@ -32236,7 +32284,7 @@ function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
         band.style.maxHeight = '100%';
         band.style.minHeight = '0';
         band.style.flex = '';
-        band.style.flexDirection = 'column';
+        band.style.gridTemplateRows = 'auto 1fr';
       } else {
         band.style.display = 'none';
         band.style.visibility = 'hidden';
@@ -32247,12 +32295,12 @@ function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
     }
     if (conv) {
       if (modeFinal === 'conv') {
-        conv.style.display = 'flex';
+        conv.style.display = 'grid';
         conv.style.visibility = 'visible';
         conv.style.opacity = '1';
-        conv.style.position = 'relative';
+        conv.style.position = '';
         conv.style.pointerEvents = '';
-        conv.style.flexDirection = 'column';
+        conv.style.gridTemplateRows = 'auto 1fr auto';
         conv.style.height = '100%';
         conv.style.maxHeight = '100%';
         conv.style.minHeight = '0';
@@ -32289,23 +32337,39 @@ function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
 async function abrirConversacionStaff(convId) {
   let convFinalId = convId;
   let conv = CHAT_STAFF.bandeja.find(c => c.id === convId) || null;
-  // Si la conversación es STAFF_STAFF → RESOLVER la pareja única cross-device (mergear otras conv_ids sobrantes a KEEPER).
-  if (conv && conv.scope_type === 'STAFF_STAFF') {
-    const otroUid = _chatStaffGetOtroStaffUid(conv);
-    if (otroUid) {
-      try {
-        const resuelta = await _chatStaffResolverIdUnicaPareja(otroUid);
-        if (resuelta && String(resuelta.id) !== String(convId)) {
-          convFinalId = resuelta.id;
-          conv = resuelta;
-        } else if (resuelta) {
-          conv = resuelta;
+  // ════════════════════════════════════════════════════════════════════════
+  // Prevenir que móvil intercambie vista (llena ↔ vacía):
+  // SIEMPRE resolvemos pareja canónica ANTES de setear convActualId.
+  // Así nunca usamos la conv vieja (79D46D) cuando ya existe la KEEPER (48BBF5).
+  // Incluso si la conv NO es STAFF_STAFF, seguimos siendo seguros.
+  if (conv) {
+    try {
+      if (conv.scope_type === 'STAFF_STAFF') {
+        const otroUid = _chatStaffGetOtroStaffUid(conv);
+        if (otroUid) {
+          const resuelta = await _chatStaffResolverIdUnicaPareja(otroUid);
+          if (resuelta && resuelta.id) {
+            convFinalId = resuelta.id;
+            conv = resuelta;
+          }
         }
-      } catch(_){}
-    }
+      } else {
+        // Para otras conversaciones aseguramos pareja/álbum único si existe wrapper.
+        try {
+          const r2 = await _chatStaffResolverIdUnicaPareja((conv.alumno_id || conv.apoderado_auth_uid || conv.id));
+          if (r2 && r2.id) { convFinalId = r2.id; conv = r2; }
+        } catch(_){}
+      }
+    } catch(_){}
   }
   CHAT_STAFF.convActualId = convFinalId;
   CHAT_STAFF.convActual = conv;
+  try {
+    // Asegurarse de que la bandeja UI contenga la conv resuelta (no la vieja)
+    if (conv && !CHAT_STAFF.bandeja.find(c => String(c.id) === String(convFinalId))) {
+      CHAT_STAFF.bandeja = [conv].concat(CHAT_STAFF.bandeja.filter(c => String(c.id) !== String(convId)));
+    }
+  } catch(_){}
   renderChatStaffBandeja();
   const isMob = (typeof _isMobileLike === 'function' && _isMobileLike()) || window.innerWidth <= 849;
   if (isMob && convFinalId) _chatStaffMostrarVistaMovil('conv');
@@ -32348,9 +32412,20 @@ async function abrirConversacionStaff(convId) {
   const sendBtn = document.getElementById('chat-staff-send');
   if (sendBtn) sendBtn.disabled = !conv;
   chatStaffSuscribirMensajes(convFinalId);
-  await chatStaffCargarMensajes(convFinalId);
+  // ════════════════════════════════════════════════════════════════════
+  // Force render al abrir conv: evita cache dedupe "igual que antes"
+  // cuando cambiamos de convId a keeper. Así la UI NUNCA se queda con
+  // placeholder vacío si la conv resuelta tiene msgs.
+  await chatStaffCargarMensajes(convFinalId, { force: true });
   chatStaffMarcarLeido();
-  setTimeout(() => { try { document.getElementById('chat-staff-input')?.focus(); } catch(e){} }, 50);
+  // Scroll al fondo FORZADO (incluso si los mensajes eran "iguales").
+  setTimeout(() => {
+    try {
+      const msgs = document.getElementById('chat-staff-msgs');
+      if (msgs) msgs.scrollTop = msgs.scrollHeight;
+    } catch(_){}
+    try { document.getElementById('chat-staff-input')?.focus(); } catch(e){}
+  }, 120);
 }
 
 async function chatStaffCargarMensajes(convId, opts) {
