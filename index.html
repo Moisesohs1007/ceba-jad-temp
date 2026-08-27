@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=139"></script>
-<script src="db_supabase.js?v=139"></script>
+<script src="compat.js?v=140"></script>
+<script src="db_supabase.js?v=140"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -32162,6 +32162,12 @@ async function enviarChatStaffMsg() {
   inp.value = '';
   inp.style.height = '';
   try {
+    // STAFF_STAFF: si la conversación me tiene en apoderado_auth_uid,
+    // RLS de chat_mensajes NO me permite enviar sender_type='staff' con mi uid.
+    // Solución: SWAP roles en chat_conversaciones para que yo sea staff_user_id ANTES de enviar.
+    if (conv.scope_type === 'STAFF_STAFF') {
+      try { await _chatStaffEnsureSoyStaff(conv.id); } catch(_){}
+    }
     const { error } = await sb.from('chat_mensajes').insert({
       colegio_id: chatStaffColegioId(),
       conversacion_id: conv.id,
@@ -32170,7 +32176,6 @@ async function enviarChatStaffMsg() {
       texto: txt,
     });
     if (error) throw error;
-    // Optimista (el listener realtime lo agrega también)
   } catch(e) {
     toast('Error al enviar: ' + e.message, 'error');
     inp.value = txt;
@@ -32376,6 +32381,31 @@ function renderChatNuevoStaff() {
   el.innerHTML = parts.join('');
 }
 
+async function _chatStaffEnsureSoyStaff(convId) {
+  if (!convId) return false;
+  const sb = chatStaffGetSB(); if (!sb) return false;
+  const uidYo = chatStaffResolveUidYo(); if (!uidYo) return false;
+  try {
+    const { data: rows } = await sb.from('chat_conversaciones').select('*').eq('id', convId).eq('colegio_id', chatStaffColegioId()).limit(1);
+    const c = rows && rows[0]; if (!c) return false;
+    if (String(c.staff_user_id) === String(uidYo)) return true; // soy staff OK
+    if (String(c.apoderado_auth_uid) !== String(uidYo)) return false; // no soy participante
+    if (c.scope_type !== 'STAFF_STAFF') return false;
+    const otroUid = String(c.staff_user_id || '');
+    const { error } = await sb.from('chat_conversaciones')
+      .update({ staff_user_id: uidYo, apoderado_auth_uid: otroUid })
+      .eq('id', convId).eq('colegio_id', chatStaffColegioId());
+    if (error) return false;
+    if (CHAT_STAFF.convActual && String(CHAT_STAFF.convActual.id) === String(convId)) {
+      CHAT_STAFF.convActual.staff_user_id = uidYo;
+      CHAT_STAFF.convActual.apoderado_auth_uid = otroUid;
+    }
+    const bi = CHAT_STAFF.bandeja.findIndex(x => String(x.id) === String(convId));
+    if (bi >= 0) { CHAT_STAFF.bandeja[bi].staff_user_id = uidYo; CHAT_STAFF.bandeja[bi].apoderado_auth_uid = otroUid; }
+    return true;
+  } catch(e) { try { console.error('ensureSoyStaff', e); } catch(_){} return false; }
+}
+
 async function iniciarChatStaffConStaff(targetStaffUid) {
   if (!targetStaffUid) { toast('Usuario inválido', 'warning'); return; }
   const uidYo = chatStaffResolveUidYo();
@@ -32389,7 +32419,6 @@ async function iniciarChatStaffConStaff(targetStaffUid) {
   if (!sb) { toast('No hay conexión a la base de datos', 'error'); return; }
   const targetStaff = (Array.isArray(CHAT_STAFF.staffCache) && CHAT_STAFF.staffCache.find(u => String(u.id) === String(targetStaffUid))) || CHAT_STAFF.usuariosCache.get(targetStaffUid);
   if (!targetStaff) {
-    // Forzar recarga de staff por si acaso está en cache usuarios
     try { await chatStaffPrecargarListaStaff(false); } catch(_){}
     const retryTarget = (Array.isArray(CHAT_STAFF.staffCache) && CHAT_STAFF.staffCache.find(u => String(u.id) === String(targetStaffUid))) || CHAT_STAFF.usuariosCache.get(targetStaffUid);
     if (!retryTarget) { toast('Usuario no encontrado', 'error'); return; }
@@ -32407,7 +32436,7 @@ async function iniciarChatStaffConStaff(targetStaffUid) {
     toast('Iniciando conversación...', 'info');
     const colegio = chatStaffColegioId();
     const scope = 'STAFF_STAFF';
-    // Buscar conversación existente EN AMBOS SENTIDOS ANTES de intentar insert
+    // Dedupe previo: buscar EXISTENTE en AMBOS sentidos (bidireccional)
     let conv = null;
     try {
       const { data: listP } = await sb
@@ -32419,30 +32448,24 @@ async function iniciarChatStaffConStaff(targetStaffUid) {
         (String(c.staff_user_id) === String(targetStaffUid) && String(c.apoderado_auth_uid) === String(uidYo))
       ) || null;
     } catch(_preErr){ /* ignore */ }
-    // Si no existe, insertamos ambos órdenes (fallback por unique index mixto)
+    // Si NO existe: INSERT 1 SOLA fila (no 2 payloads) con yo como staff_user_id.
+    // El NO insertar 2 evita el duplicado en bandeja.
     if (!conv) {
-      const payloads = [
-        { colegio_id: colegio, scope_type: scope, staff_user_id: uidYo, apoderado_auth_uid: targetStaffUid,
-          alumno_id: null, grado: '', seccion: '', ciclo: '' },
-        { colegio_id: colegio, scope_type: scope, staff_user_id: targetStaffUid, apoderado_auth_uid: uidYo,
-          alumno_id: null, grado: '', seccion: '', ciclo: '' },
-      ];
-      for (let i=0;i<payloads.length;i++) {
-        try {
-          const { error: errI } = await sb.from('chat_conversaciones').insert(payloads[i]);
-          if (errI && String(errI.code || '') !== '23505' && !/unique/i.test(String(errI.message || ''))) {
-            // 23505 = unique violation (ya existía otro orden, continuamos)
-            if (i === 1) throw errI;
-          }
-        } catch(eIn) {
-          // Solo propagar si último intento
-          if (i === 1) {
-            const msg = String(eIn?.message || eIn || '');
-            if (!/unique|23505/i.test(msg)) throw eIn;
-          }
+      const payload = {
+        colegio_id: colegio, scope_type: scope,
+        staff_user_id: uidYo, apoderado_auth_uid: targetStaffUid,
+        alumno_id: null, grado: '', seccion: '', ciclo: ''
+      };
+      try {
+        const { error: errI } = await sb.from('chat_conversaciones').insert(payload);
+        if (errI && String(errI.code || '') !== '23505' && !/unique/i.test(String(errI.message || ''))) {
+          throw errI;
         }
+      } catch(eIn) {
+        const msg = String(eIn?.message || eIn || '');
+        if (!/unique|23505/i.test(msg)) throw eIn;
       }
-      // Re-buscar después de inserts
+      // Re-buscar (puede haber sido creado o existía otra ocurrencia)
       try {
         const { data: listC } = await sb
           .from('chat_conversaciones').select('*')
@@ -32453,7 +32476,32 @@ async function iniciarChatStaffConStaff(targetStaffUid) {
         ) || null;
       } catch(_e2){}
     }
-    // Si todo OK: cerrar modal, abrir conversación
+    // Cleanup defensivo: si quedaron DUPLICADAS (por payloads históricos v137-v138), borrar la sobrante.
+    if (conv) {
+      try {
+        const { data: listD } = await sb
+          .from('chat_conversaciones').select('*')
+          .eq('colegio_id', colegio).eq('scope_type', scope).limit(600);
+        const todas = (listD || []).filter(c =>
+          (String(c.staff_user_id) === String(uidYo) && String(c.apoderado_auth_uid) === String(targetStaffUid)) ||
+          (String(c.staff_user_id) === String(targetStaffUid) && String(c.apoderado_auth_uid) === String(uidYo))
+        );
+        if (todas.length >= 2) {
+          todas.sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+          const keeperId = String(conv.id || todas[0].id);
+          for (let i=0;i<todas.length;i++) {
+            const rid = String(todas[i].id);
+            if (rid === keeperId) continue;
+            try { await sb.from('chat_mensajes').delete().eq('conversacion_id', rid).eq('colegio_id', colegio); } catch(_){}
+            try { await sb.from('chat_conversaciones').delete().eq('id', rid).eq('colegio_id', colegio); } catch(_){}
+            const bi = CHAT_STAFF.bandeja.findIndex(x => String(x.id) === rid);
+            if (bi >= 0) CHAT_STAFF.bandeja.splice(bi, 1);
+          }
+        }
+      } catch(_eCleanup){ /* ignore cleanup */ }
+    }
+    // Garantizar que SOY staff_user_id en esta conversación (para RLS mensajes)
+    if (conv) { try { await _chatStaffEnsureSoyStaff(conv.id); } catch(_){} }
     closeModal('modal-nuevo-chat-staff');
     if (conv) {
       if (!CHAT_STAFF.bandeja.find(c => String(c.id) === String(conv.id))) {
