@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=143"></script>
-<script src="db_supabase.js?v=143"></script>
+<script src="compat.js?v=144"></script>
+<script src="db_supabase.js?v=144"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -4972,28 +4972,28 @@
 
     <div class="card" id="chat-staff-card" style="display:grid;grid-template-columns:300px 1fr;gap:0;padding:0;overflow:hidden;min-height:62vh;max-height:72vh;height:72vh;">
       <!-- Bandeja de conversaciones -->
-      <div id="chat-staff-band" style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;">
+      <div id="chat-staff-band" style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;max-height:100%;height:100%;overflow:hidden;">
         <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <input id="chat-staff-buscar" placeholder="Buscar conversación..." oninput="renderChatStaffBandeja()"
             style="flex:1;min-width:140px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-family:var(--font-body);font-size:0.82rem;">
           <button class="btn btn-primary" onclick="abrirModalNuevoChatStaff()" style="padding:6px 10px;font-size:0.82rem;justify-content:center;" title="Nueva conversación">+ Nuevo</button>
         </div>
-        <div id="chat-staff-lista" style="flex:1;min-height:0;overflow:auto;">
+        <div id="chat-staff-lista" style="flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;">
           <div style="padding:24px;text-align:center;color:var(--muted);font-size:0.83rem;">Cargando...</div>
         </div>
       </div>
       <!-- Vista de conversación -->
-      <div id="chat-staff-conv-wrap" style="display:flex;flex-direction:column;min-height:0;">
-        <div id="chat-staff-conv-header" style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;min-height:54px;">
+      <div id="chat-staff-conv-wrap" style="display:flex;flex-direction:column;min-height:0;max-height:100%;height:100%;overflow:hidden;">
+        <div id="chat-staff-conv-header" style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;min-height:54px;flex-shrink:0;">
           <div style="color:var(--muted);font-size:0.85rem;">Selecciona una conversación o inicia una nueva</div>
         </div>
-        <div id="chat-staff-msgs" style="flex:1;min-height:0;overflow:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px;background:var(--surface2);">
+        <div id="chat-staff-msgs" style="flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:16px 20px;display:flex;flex-direction:column;gap:10px;background:var(--surface2);scroll-behavior:smooth;">
         </div>
-        <div style="padding:10px 16px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:flex-end;">
+        <div id="chat-staff-input-wrap" style="padding:10px 16px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:flex-end;flex-shrink:0;z-index:3;">
           <textarea id="chat-staff-input" placeholder="Escribe un mensaje... (Enter para enviar, Shift+Enter nueva línea)"
             onkeydown="chatStaffInputKey(event)"
             style="flex:1;min-height:42px;max-height:160px;resize:vertical;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px;color:var(--text);font-family:var(--font-body);font-size:0.88rem;"></textarea>
-          <button class="btn btn-primary" onclick="enviarChatStaffMsg()" id="chat-staff-send" style="justify-content:center;padding:10px 14px;" disabled>Enviar</button>
+          <button class="btn btn-primary" onclick="enviarChatStaffMsg()" id="chat-staff-send" style="justify-content:center;padding:10px 14px;flex-shrink:0;" disabled>Enviar</button>
         </div>
       </div>
     </div>
@@ -31636,16 +31636,16 @@ function _chatStaffIniciarLoopFondo() {
       if (document.hidden) return;
       chatStaffCargarMensajes(convId);
     } catch(_){}
-  }, 2500);
+  }, 5000);
   setInterval(() => {
     try {
       if (!CHAT_STAFF || !CHAT_STAFF.uid) return;
       if (document.hidden) return;
       t1++;
-      if (t1 % 3 === 0) _chatStaffResolverTodasParejasUnicas().then(() => {}).catch(() => {});
+      if (t1 % 6 === 0) _chatStaffResolverTodasParejasUnicas().then(() => {}).catch(() => {});
       else _chatStaffDedupeGlobalSTAFF_STAFF();
     } catch(_){}
-  }, 3500);
+  }, 7000);
 }
 
 function chatStaffInitShow() {
@@ -32282,31 +32282,69 @@ async function abrirConversacionStaff(convId) {
   setTimeout(() => { try { document.getElementById('chat-staff-input')?.focus(); } catch(e){} }, 50);
 }
 
-async function chatStaffCargarMensajes(convId) {
+async function chatStaffCargarMensajes(convId, opts) {
+  const forceRender = !!(opts && opts.force);
   const sb = chatStaffGetSB();
   if (!sb || !convId) return;
   const el = document.getElementById('chat-staff-msgs');
-  if (el) el.innerHTML = `<div style="padding:16px;text-align:center;color:var(--muted);font-size:0.82rem;">Cargando...</div>`;
+  // NOTA: NO ponemos "Cargando..." en cada polling porque causa parpadeo/reflow constante.
+  // Solo mostrar placeholder si la conversación ESTÁ VACÍA (nunca se cargó).
+  if (el && !forceRender && !CHAT_STAFF.mensajes.length && (/Cargando|Sin mensajes|Aún no hay mensajes/).test(el.textContent || '')) {
+    // Ya está mostrando placeholder, no tocar.
+  }
   try {
     const { data, error } = await sb
       .from('chat_mensajes')
       .select('*')
       .eq('conversacion_id', convId)
       .order('created_at', { ascending: true })
-      .limit(400);
+      .limit(500);
     if (error) throw error;
-    CHAT_STAFF.mensajes = data || [];
-    renderChatStaffMensajes();
+    const nuevos = data || [];
+    // Dedupe pre-render: si los IDs son exactamente los mismos en orden, NO re-render (previene parpadeo polling loop)
+    if (!forceRender) {
+      const prev = CHAT_STAFF.mensajes || [];
+      if (prev.length === nuevos.length) {
+        let iguales = true;
+        for (let i = 0; i < prev.length; i++) {
+          if (String(prev[i].id) !== String(nuevos[i].id)) { iguales = false; break; }
+          if (String(prev[i].texto || '') !== String(nuevos[i].texto || '')) { iguales = false; break; }
+        }
+        if (iguales) return;
+      }
+    }
+    const cantAntes = (CHAT_STAFF.mensajes || []).length;
+    CHAT_STAFF.mensajes = nuevos;
+    renderChatStaffMensajes({ soloSiCambio: !forceRender });
+    if (nuevos.length > cantAntes) {
+      try { if (el) el.scrollTop = el.scrollHeight; } catch(_){}
+    }
   } catch(e) {
     console.error(e);
-    if (el) el.innerHTML = `<div style="padding:16px;color:#ef4444;font-size:0.82rem;">Error: ${e.message}</div>`;
+    if (el) {
+      // Solo mostrar error si es la carga inicial (no hay mensajes previos), para no parpadear en polling.
+      if (!CHAT_STAFF.mensajes.length) {
+        el.innerHTML = `<div style="padding:16px;color:#ef4444;font-size:0.82rem;">Error: ${e.message}</div>`;
+      }
+    }
   }
 }
 
-function renderChatStaffMensajes() {
+function renderChatStaffMensajes(opts) {
   const el = document.getElementById('chat-staff-msgs');
   if (!el) return;
   const list = CHAT_STAFF.mensajes || [];
+  const soloSiCambio = !!(opts && opts.soloSiCambio);
+  // Dedupe fingerprint (IDs ordenados concatenados) para NO re-render si es la misma lista.
+  if (soloSiCambio) {
+    try {
+      const fp = list.map(m => String(m.id) + ':' + String(m.texto||'').length).join('|');
+      if (el.dataset.lastFp && el.dataset.lastFp === fp) return;
+      el.dataset.lastFp = fp;
+    } catch(_){}
+  } else {
+    try { delete el.dataset.lastFp; } catch(_){}
+  }
   if (!list.length) {
     el.innerHTML = `<div style="padding:24px;text-align:center;color:var(--muted);font-size:0.82rem;">Aún no hay mensajes. Escribe el primero.</div>`;
     return;
