@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=140"></script>
-<script src="db_supabase.js?v=140"></script>
+<script src="compat.js?v=141"></script>
+<script src="db_supabase.js?v=141"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -31673,6 +31673,7 @@ function chatStaffInitShow() {
       .catch(e => console.error('chatStaffInitShow', e));
   } else {
     renderChatStaffBandeja();
+    setTimeout(() => { try { _chatStaffDedupeGlobalSTAFF_STAFF(); } catch(_){} }, 500);
   }
 }
 
@@ -31696,9 +31697,21 @@ async function chatStaffCargarBandeja() {
       .limit(200);
     if (error) throw error;
     CHAT_STAFF.bandeja = data || [];
+    // Dedupe UI inmediato (antes de hidratar nombres) para no mostrar 2 filas misma pareja
+    try {
+      const seen = new Set();
+      CHAT_STAFF.bandeja = (CHAT_STAFF.bandeja || []).filter(c => {
+        if (c.scope_type !== 'STAFF_STAFF') return true;
+        const k = _chatStaffParejaKey(c); if (!k) return true;
+        if (seen.has(k)) return false;
+        seen.add(k); return true;
+      });
+    } catch(_){}
     await chatStaffHidratarNombres(CHAT_STAFF.bandeja);
     renderChatStaffBandeja();
     chatBadgeUpdateStaff();
+    // Dedupe global DB (merge mensajes, eliminar convs duplicadas históricas) en background
+    setTimeout(() => { try { _chatStaffDedupeGlobalSTAFF_STAFF(); } catch(_){} }, 350);
   } catch(e) {
     console.error(e);
     const el = document.getElementById('chat-staff-lista');
@@ -31748,8 +31761,91 @@ function _chatStaffGetOtroStaffUid(conv) {
 
 function chatStaffNombreStaff(uid) {
   const u = CHAT_STAFF.usuariosCache.get(uid);
-  if (!u) return 'Personal';
-  return (u.nombre || [u.nombres, u.apellidos].filter(Boolean).join(' ')).trim() || 'Personal';
+  if (!u) {
+    const s = String(uid || '').trim();
+    if (!s) return 'Personal';
+    if (s.length <= 8) return 'Staff ' + s.toUpperCase();
+    return 'Staff ' + s.slice(0, 6).toUpperCase();
+  }
+  const nom = (u.nombre || [u.nombres, u.apellidos].filter(Boolean).join(' ')).trim();
+  return nom || 'Personal';
+}
+
+function _chatStaffParejaKey(conv) {
+  if (!conv || conv.scope_type !== 'STAFF_STAFF') return null;
+  const a = String(conv.staff_user_id || '');
+  const b = String(conv.apoderado_auth_uid || '');
+  if (!a || !b) return null;
+  return a.localeCompare(b) <= 0 ? (a + '||' + b) : (b + '||' + a);
+}
+
+async function _chatStaffDedupeGlobalSTAFF_STAFF() {
+  try {
+    const sb = chatStaffGetSB(); if (!sb) return false;
+    const colegio = chatStaffColegioId();
+    const uidYo = chatStaffResolveUidYo();
+    const { data, error } = await sb.from('chat_conversaciones').select('*')
+      .eq('colegio_id', colegio).eq('scope_type', 'STAFF_STAFF').limit(800);
+    if (error) return false;
+    const todas = (data || []).filter(c => c && _chatStaffParejaKey(c));
+    if (!todas.length) return false;
+    const grupos = new Map();
+    todas.forEach(c => {
+      const k = _chatStaffParejaKey(c);
+      if (!k) return;
+      if (!grupos.has(k)) grupos.set(k, []);
+      grupos.get(k).push(c);
+    });
+    let cambióAlgo = false;
+    const idsBorrar = new Set();
+    for (const [k, arr] of grupos.entries()) {
+      if (arr.length <= 1) continue;
+      arr.sort((x, y) => {
+        const tx = new Date(x.last_message_at || x.created_at || 0).getTime();
+        const ty = new Date(y.last_message_at || y.created_at || 0).getTime();
+        return ty - tx;
+      });
+      const keeper = arr[0];
+      for (let i = 1; i < arr.length; i++) {
+        const dup = arr[i];
+        try {
+          const { data: msgs } = await sb.from('chat_mensajes').select('id')
+            .eq('conversacion_id', dup.id).eq('colegio_id', colegio).limit(500);
+          if (msgs && msgs.length) {
+            const ids = msgs.map(m => m.id);
+            try {
+              await sb.from('chat_mensajes').update({ conversacion_id: keeper.id })
+                .in('id', ids).eq('colegio_id', colegio);
+            } catch(_uErr) { /* fallback: delete then insert no es viable, skip update individual */ }
+          }
+          try { await sb.from('chat_mensajes').delete().eq('conversacion_id', dup.id).eq('colegio_id', colegio); } catch(_){}
+          try { await sb.from('chat_conversaciones').delete().eq('id', dup.id).eq('colegio_id', colegio); } catch(_){}
+          idsBorrar.add(String(dup.id));
+          cambióAlgo = true;
+        } catch(_dupErr){}
+      }
+    }
+    // Dedupe UI: remover idsBorrar de CHAT_STAFF.bandeja y por pareja key dentro de la bandeja
+    if (Array.isArray(CHAT_STAFF.bandeja) && CHAT_STAFF.bandeja.length) {
+      const antes = CHAT_STAFF.bandeja.length;
+      CHAT_STAFF.bandeja = CHAT_STAFF.bandeja.filter(c => !idsBorrar.has(String(c.id)));
+      const seenKeys = new Set();
+      CHAT_STAFF.bandeja = CHAT_STAFF.bandeja.filter(c => {
+        if (c.scope_type !== 'STAFF_STAFF') return true;
+        const k = _chatStaffParejaKey(c);
+        if (!k) return true;
+        if (seenKeys.has(k)) return false;
+        seenKeys.add(k);
+        return true;
+      });
+      CHAT_STAFF.bandeja.sort((a,b) => new Date(b.last_message_at||0) - new Date(a.last_message_at||0));
+      if (CHAT_STAFF.bandeja.length !== antes) cambióAlgo = true;
+    }
+    if (cambióAlgo) {
+      try { renderChatStaffBandeja(); } catch(_){}
+    }
+    return cambióAlgo;
+  } catch(e) { try { console.error('dedupeGlobalSTAFF', e); } catch(_){} return false; }
 }
 
 function chatStaffNombreApoderado(conv) {
@@ -32502,6 +32598,8 @@ async function iniciarChatStaffConStaff(targetStaffUid) {
     }
     // Garantizar que SOY staff_user_id en esta conversación (para RLS mensajes)
     if (conv) { try { await _chatStaffEnsureSoyStaff(conv.id); } catch(_){} }
+    // Dedupe global (por si había varias Orlando/ Personal históricas):
+    try { await _chatStaffDedupeGlobalSTAFF_STAFF(); } catch(_){}
     closeModal('modal-nuevo-chat-staff');
     if (conv) {
       if (!CHAT_STAFF.bandeja.find(c => String(c.id) === String(conv.id))) {
