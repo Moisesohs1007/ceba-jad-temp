@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=136"></script>
-<script src="db_supabase.js?v=136"></script>
+<script src="compat.js?v=137"></script>
+<script src="db_supabase.js?v=137"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -7771,6 +7771,45 @@ document.addEventListener('DOMContentLoaded', function() {
     if(login)  { login.style.display = 'flex'; login.style.zIndex = '10005'; }
   }
 });
+
+// ================================================================
+// DELEGADO EVENTOS CLICK (estable, mobile-friendly, NO onclick string).
+// Previene bubbling hacia modal-bg que cierra el modal sin ejecutar acción
+// (problema del click "no hace nada"). Click simple = acción inmediata.
+// Doble click = misma acción (evitar spam: 600ms debounce por uid).
+// ================================================================
+document.addEventListener('click', function(e) {
+  try {
+    // 1) Fila modal Staff ↔ Staff: iniciar chat directo
+    const row = e.target.closest('[data-action="chat-staff-row"]');
+    if (row) {
+      e.stopPropagation();
+      e.preventDefault();
+      const uid = String(row.getAttribute('data-uid') || '').trim();
+      if (!uid) return;
+      // Debounce: no 2x clicks en <600ms
+      const nowTs = Date.now();
+      const last = parseInt(String(window.__chatStaffLastClickTs || '0'), 10) || 0;
+      const lastUid = String(window.__chatStaffLastClickUid || '');
+      if (lastUid === uid && (nowTs - last) < 600) return;
+      window.__chatStaffLastClickTs = nowTs;
+      window.__chatStaffLastClickUid = uid;
+      // Efecto visual: flash azul claro para feedback inmediato (no silent click)
+      const origBg = row.style.background || '';
+      row.style.background = 'rgba(24, 95, 165, 0.18)';
+      row.style.transition = 'background 120ms';
+      setTimeout(() => { row.style.background = origBg; }, 150);
+      try {
+        (async () => {
+          try { await iniciarChatStaffConStaff(uid); } catch(err) {
+            try { toast('Error: ' + (err && err.message || err), 'error'); } catch(_){}
+          }
+        })();
+      } catch(_aSyncErr){}
+      return;
+    }
+  } catch(_eErr) { try { console.error('delegado click chat', _eErr); } catch(_){} }
+}, true); // useCapture = true para capturar antes de que closeModal() lo atrape
 
 if(typeof window.ASMQR_CONFIRM_ON_LEAVE === 'undefined') window.ASMQR_CONFIRM_ON_LEAVE = true;
 let _asmqrSkipUnloadOnce = false;
@@ -32267,94 +32306,124 @@ function renderChatNuevoStaff() {
     const tagColor = (u.rol && _normRol(u.rol) === 'admin') ? '#ef4444' :
                      (u.rol && (_normRol(u.rol) === 'director' || _normRol(u.rol) === 'coordinador')) ? '#F59E0B' :
                      (u.rol && _normRol(u.rol) === 'psicologo') ? '#8B5CF6' : '#185FA5';
-    return `<div onclick="iniciarChatStaffConStaff('${u.id}')" style="padding:10px 12px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:10px;margin-bottom:4px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
-      <div style="width:38px;height:38px;border-radius:50%;background:${tagColor};color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">${chatStaffIniciales(nom)}</div>
-      <div style="flex:1;min-width:0;">
+    return `<div data-action="chat-staff-row" data-uid="${String(u.id||'')}" style="padding:10px 12px;border-radius:10px;cursor:pointer;touch-action:manipulation;display:flex;align-items:center;gap:10px;margin-bottom:4px;user-select:none;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      <div style="pointer-events:none;width:38px;height:38px;border-radius:50%;background:${tagColor};color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">${chatStaffIniciales(nom)}</div>
+      <div style="flex:1;min-width:0;pointer-events:none;">
         <div style="font-size:0.85rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nom}</div>
         <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
           <span style="font-size:0.68rem;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--surface2);color:${tagColor};">${tag}</span>
           ${u.cargo && u.cargo !== u.rol ? `<span style="font-size:0.7rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${String(u.cargo)}</span>` : ''}
         </div>
       </div>
-      <div style="color:var(--accent);font-size:1.1rem;">›</div>
+      <div style="pointer-events:none;color:var(--accent);font-size:1.1rem;">›</div>
     </div>`;
   });
   el.innerHTML = parts.join('');
 }
 
 async function iniciarChatStaffConStaff(targetStaffUid) {
-  if (!targetStaffUid) return;
-  if (targetStaffUid === CHAT_STAFF.uid) { toast('No puedes iniciar un chat contigo mismo', 'warning'); return; }
+  if (!targetStaffUid) { toast('Usuario inválido', 'warning'); return; }
+  // Asegurar uid del staff logueado (race condition fallback)
+  if (!CHAT_STAFF.uid) {
+    CHAT_STAFF.uid = (window.currentUser && window.currentUser.uid) || null;
+    CHAT_STAFF.rol = _normRol(currentRol);
+    CHAT_STAFF.nombre = (window.currentUserData && (window.currentUserData.nombre || window.currentUserData.nombres)) || 'Usuario';
+  }
+  const uidYo = CHAT_STAFF.uid;
+  if (!uidYo) { toast('Sesión no iniciada. Recarga la página.', 'error'); return; }
+  if (String(targetStaffUid) === String(uidYo)) { toast('No puedes iniciar un chat contigo mismo', 'warning'); return; }
   const sb = chatStaffGetSB();
-  if (!sb) return;
-  const targetStaff = (CHAT_STAFF.staffCache || []).find(u => u.id === targetStaffUid) || CHAT_STAFF.usuariosCache.get(targetStaffUid);
-  if (!targetStaff) { toast('Usuario no encontrado', 'error'); return; }
+  if (!sb) { toast('No hay conexión a la base de datos', 'error'); return; }
+  const targetStaff = (Array.isArray(CHAT_STAFF.staffCache) && CHAT_STAFF.staffCache.find(u => String(u.id) === String(targetStaffUid))) || CHAT_STAFF.usuariosCache.get(targetStaffUid);
+  if (!targetStaff) {
+    // Forzar recarga de staff por si acaso está en cache usuarios
+    try { await chatStaffPrecargarListaStaff(false); } catch(_){}
+    const retryTarget = (Array.isArray(CHAT_STAFF.staffCache) && CHAT_STAFF.staffCache.find(u => String(u.id) === String(targetStaffUid))) || CHAT_STAFF.usuariosCache.get(targetStaffUid);
+    if (!retryTarget) { toast('Usuario no encontrado', 'error'); return; }
+  }
+  const loadingId = '__chat_init_loading_' + String(targetStaffUid).slice(0,8);
+  const loadingOk = (() => {
+    try {
+      const tEl = document.querySelector(`[data-action="chat-staff-row"][data-uid="${targetStaffUid}"]`);
+      if (!tEl) return false;
+      tEl.setAttribute('aria-busy', 'true');
+      return true;
+    } catch(_){ return false; }
+  })();
   try {
+    toast('Iniciando conversación...', 'info');
     const colegio = chatStaffColegioId();
     const scope = 'STAFF_STAFF';
-    // Upsert: staff_user_id = YO, apoderado_auth_uid = OTRO STAFF.
-    // Para búsqueda bidireccional luego buscamos por (staff=YO OR apoderado=OTRO) AND (staff=OTRO OR apoderado=YO)
-    const insertData = {
-      colegio_id: colegio,
-      scope_type: scope,
-      staff_user_id: CHAT_STAFF.uid,
-      apoderado_auth_uid: targetStaffUid,
-      alumno_id: '',
-      grado: '',
-      seccion: '',
-      ciclo: '',
-    };
-    try {
-      const { error: errI } = await sb.from('chat_conversaciones').insert(insertData);
-      if (errI && errI.code !== '23505') throw errI;
-    } catch(e1) {
-      // Intentar el orden inverso (puede que exista con staff/target invertidos)
-      if (String(e1.message || '').includes('23505') === false && !/unique/i.test(String(e1.message||''))) throw e1;
-    }
-    // Buscar conversación existente en AMBOS sentidos
+    // Buscar conversación existente EN AMBOS SENTIDOS ANTES de intentar insert
     let conv = null;
-    const { data: listC } = await sb
-      .from('chat_conversaciones')
-      .select('*')
-      .eq('colegio_id', colegio)
-      .eq('scope_type', scope)
-      .limit(500);
-    const rows = listC || [];
-    conv = rows.find(c =>
-      (c.staff_user_id === CHAT_STAFF.uid && c.apoderado_auth_uid === targetStaffUid) ||
-      (c.staff_user_id === targetStaffUid && c.apoderado_auth_uid === CHAT_STAFF.uid)
-    ) || null;
+    try {
+      const { data: listP } = await sb
+        .from('chat_conversaciones').select('*')
+        .eq('colegio_id', colegio).eq('scope_type', scope).limit(600);
+      const rowsP = listP || [];
+      conv = rowsP.find(c =>
+        (String(c.staff_user_id) === String(uidYo) && String(c.apoderado_auth_uid) === String(targetStaffUid)) ||
+        (String(c.staff_user_id) === String(targetStaffUid) && String(c.apoderado_auth_uid) === String(uidYo))
+      ) || null;
+    } catch(_preErr){ /* ignore */ }
+    // Si no existe, insertamos ambos órdenes (fallback por unique index mixto)
     if (!conv) {
-      // Fallback: reintento INSERT orden inverso (target->yo)
+      const payloads = [
+        { colegio_id: colegio, scope_type: scope, staff_user_id: uidYo, apoderado_auth_uid: targetStaffUid,
+          alumno_id: null, grado: '', seccion: '', ciclo: '' },
+        { colegio_id: colegio, scope_type: scope, staff_user_id: targetStaffUid, apoderado_auth_uid: uidYo,
+          alumno_id: null, grado: '', seccion: '', ciclo: '' },
+      ];
+      for (let i=0;i<payloads.length;i++) {
+        try {
+          const { error: errI } = await sb.from('chat_conversaciones').insert(payloads[i]);
+          if (errI && String(errI.code || '') !== '23505' && !/unique/i.test(String(errI.message || ''))) {
+            // 23505 = unique violation (ya existía otro orden, continuamos)
+            if (i === 1) throw errI;
+          }
+        } catch(eIn) {
+          // Solo propagar si último intento
+          if (i === 1) {
+            const msg = String(eIn?.message || eIn || '');
+            if (!/unique|23505/i.test(msg)) throw eIn;
+          }
+        }
+      }
+      // Re-buscar después de inserts
       try {
-        const { error: errI2 } = await sb.from('chat_conversaciones').insert({
-          ...insertData,
-          staff_user_id: targetStaffUid,
-          apoderado_auth_uid: CHAT_STAFF.uid,
-        });
-        if (errI2 && errI2.code !== '23505') throw errI2;
-        const { data: listC2 } = await sb.from('chat_conversaciones').select('*').eq('colegio_id', colegio).eq('scope_type', scope).limit(500);
-        conv = (listC2 || []).find(c =>
-          (c.staff_user_id === CHAT_STAFF.uid && c.apoderado_auth_uid === targetStaffUid) ||
-          (c.staff_user_id === targetStaffUid && c.apoderado_auth_uid === CHAT_STAFF.uid)
+        const { data: listC } = await sb
+          .from('chat_conversaciones').select('*')
+          .eq('colegio_id', colegio).eq('scope_type', scope).limit(600);
+        conv = (listC || []).find(c =>
+          (String(c.staff_user_id) === String(uidYo) && String(c.apoderado_auth_uid) === String(targetStaffUid)) ||
+          (String(c.staff_user_id) === String(targetStaffUid) && String(c.apoderado_auth_uid) === String(uidYo))
         ) || null;
-      } catch(e2) { /* ignore */ }
+      } catch(_e2){}
     }
+    // Si todo OK: cerrar modal, abrir conversación
     closeModal('modal-nuevo-chat-staff');
     if (conv) {
-      if (!CHAT_STAFF.bandeja.find(c => c.id === conv.id)) {
+      if (!CHAT_STAFF.bandeja.find(c => String(c.id) === String(conv.id))) {
         CHAT_STAFF.bandeja.unshift(conv);
         CHAT_STAFF.bandeja.sort((a,b) => new Date(b.last_message_at||0) - new Date(a.last_message_at||0));
       }
-      await chatStaffHidratarNombres([conv]);
+      try { await chatStaffHidratarNombres([conv]); } catch(_){}
       renderChatStaffBandeja();
-      abrirConversacionStaff(conv.id);
+      try { abrirConversacionStaff(conv.id); } catch(_){}
+      toast('Conversación iniciada', 'success');
     } else {
-      toast('No se pudo iniciar la conversación', 'error');
+      toast('No se pudo iniciar la conversación (error al guardar en la base)', 'error');
     }
   } catch(e) {
     console.error(e);
-    toast('Error: ' + e.message, 'error');
+    toast('Error al iniciar chat: ' + (e?.message || e), 'error');
+  } finally {
+    if (loadingOk) {
+      try {
+        const tEl = document.querySelector(`[data-action="chat-staff-row"][data-uid="${targetStaffUid}"]`);
+        if (tEl) tEl.removeAttribute('aria-busy');
+      } catch(_){}
+    }
   }
 }
 
