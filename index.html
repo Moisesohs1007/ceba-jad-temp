@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=159"></script>
-<script src="db_supabase.js?v=159"></script>
+<script src="compat.js?v=160"></script>
+<script src="db_supabase.js?v=160"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -32342,18 +32342,19 @@ function _chatStaffTitleBlinkStop() {
   } catch(_) {}
 }
 
-// Detectar si la VENTANA DE CHAT EN GENERAL está visible y en primer plano
-// (independientemente de la conversación abierta: bandeja o conv abierta).
+// Detectar si la VENTANA DE CHAT EN GENERAL está visible y EN PRIMER PLANO (Chrome visible, focus).
 // Regla1: si esto es true → NO mostrar toast sticky arriba ni Notification nativa.
+// Hotfix v160 CRÍTICO ANDROID: si document.hasFocus() === FALSE (Chrome minimizado / otra app como WhatsApp) → retornar FALSE
+// aunque el #sec-chat aún tenga class=active. Porque el usuario se fue a otra app y necesita la notif.
 function _chatStaffEstoyDentroDelChat() {
   try {
+    // ↓↓↓ HOTFIX v160: SI NO HAY FOCUS, CHROME ESTÁ EN SEGUNDO PLANO (otro app WhatsApp/pantalla bloqueada) → FUERA DEL CHAT
     if (!document.hasFocus()) return false;
     const sec = document.getElementById('sec-chat');
     if (!sec) return false;
     if (!sec.classList.contains('active')) return false;
     const st = window.getComputedStyle(sec);
     if (!st || st.display === 'none' || (sec.offsetWidth < 10)) return false;
-    // Si el elemento está dentro del viewport y visible, está dentro del chat.
     return true;
   } catch(_) { return false; }
 }
@@ -32526,6 +32527,9 @@ function _chatStaffAlertarNuevoMensaje(conv) {
         const cuerpo = previewTxt || 'Abre para ver el mensaje.';
         const notifTag = 'chat-staff-' + conv.id;
         const convIdStr = String(conv.id || '');
+        // Hotfix v160 Android: detectar móvil para requireInteraction=true (mostrar tarjeta más tiempo flotante)
+        const _ua = (navigator.userAgent || '').toLowerCase();
+        const _esMovilAndroid = _ua.includes('android') && (_ua.includes('mobile') || window.innerWidth <= 980);
         const opts = {
           body: cuerpo,
           icon: 'img/logo-colegio.png',
@@ -32534,7 +32538,7 @@ function _chatStaffAlertarNuevoMensaje(conv) {
           tag: notifTag,
           renotify: true,
           timestamp: Date.now(),
-          requireInteraction: false,
+          requireInteraction: _esMovilAndroid ? true : false,
           silent: false,
           vibrate: [300, 120, 300, 120, 300],
         };
