@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=137"></script>
-<script src="db_supabase.js?v=137"></script>
+<script src="compat.js?v=138"></script>
+<script src="db_supabase.js?v=138"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -31565,13 +31565,61 @@ function chatStaffGetSB() {
   return (window._sb && window._sb.supabase) ? window._sb.supabase : null;
 }
 
+function chatStaffResolveUidYo() {
+  // Multi-fallback sincero robusto. Orden por probabilidad + confiabilidad:
+  let uid = (CHAT_STAFF && CHAT_STAFF.uid) || null;
+  if (!uid && window.currentUser) uid = window.currentUser.uid || window.currentUser.id || null;
+  if (!uid && typeof auth !== 'undefined' && auth && auth.currentUser) {
+    uid = auth.currentUser.uid || auth.currentUser.id || null;
+  }
+  if (!uid && window.auth && window.auth.currentUser) {
+    uid = window.auth.currentUser.uid || window.auth.currentUser.id || null;
+  }
+  // Fallback localStorage Firebase auth keys
+  if (!uid && typeof localStorage !== 'undefined') {
+    try {
+      const keys = Object.keys(localStorage);
+      for (let i=0;i<keys.length;i++) {
+        const k = keys[i];
+        if (!k || typeof k !== 'string') continue;
+        if (k.indexOf('firebase:authUser:') === 0 || k.indexOf('authUser') === 0) {
+          try {
+            const raw = localStorage.getItem(k);
+            if (raw) {
+              const p = JSON.parse(raw);
+              if (p && (p.uid || p.id)) { uid = String(p.uid || p.id); break; }
+            }
+          } catch(_){}
+        }
+      }
+    } catch(_eLs){}
+  }
+  // Fallback storage Supabase backup
+  if (!uid && typeof localStorage !== 'undefined') {
+    try {
+      const backupK = 'sb-' + (chatStaffColegioId() || 'sigece') + '-session::backup';
+      const raw = localStorage.getItem(backupK) || localStorage.getItem('sb-session') || localStorage.getItem('sb-auth-token');
+      if (raw) {
+        try {
+          const p = JSON.parse(raw);
+          if (p && p.user) uid = String(p.user.uid || p.user.id || '');
+        } catch(_){}
+      }
+    } catch(_e2){}
+  }
+  if (uid) uid = String(uid).trim();
+  if (uid && CHAT_STAFF) CHAT_STAFF.uid = uid;
+  return uid || null;
+}
+
 function chatStaffColegioId() {
   return window.COLEGIO_ID || (window._cfg && window._cfg.colegio_id) || 'sigece';
 }
 
 function chatStaffInitShow() {
   if (!CHAT_STAFF.uid) {
-    CHAT_STAFF.uid = (window.currentUser && window.currentUser.uid) ? window.currentUser.uid : null;
+    const uidR = chatStaffResolveUidYo();
+    CHAT_STAFF.uid = uidR;
     CHAT_STAFF.rol = _normRol(currentRol);
     CHAT_STAFF.nombre = (window.currentUserData && (window.currentUserData.nombre || window.currentUserData.nombres)) || 'Usuario';
   }
@@ -32144,7 +32192,7 @@ function chatNuevoSetTab(tab) {
 function abrirModalNuevoChatStaff() {
   const modal = document.getElementById('modal-nuevo-chat-staff');
   if (!modal) return;
-  // Reset tab a Alumno
+  chatStaffResolveUidYo();
   try { chatNuevoSetTab('alumno'); } catch(_){}
   document.getElementById('chat-nuevo-buscar').value = '';
   const bsn = document.getElementById('chat-staff-buscar-nuevo'); if (bsn) bsn.value = '';
@@ -32155,8 +32203,7 @@ function abrirModalNuevoChatStaff() {
 }
 
 async function chatStaffPrecargarListaStaff(force) {
-  // Inicializar uid de forma robusta: CHAT_STAFF.uid si hay, sino currentUser.uid
-  const uidYo = CHAT_STAFF.uid || (window.currentUser && window.currentUser.uid) || null;
+  const uidYo = chatStaffResolveUidYo();
   if (!CHAT_STAFF.uid && uidYo) CHAT_STAFF.uid = uidYo;
   CHAT_STAFF.staffError = null;
 
@@ -32323,13 +32370,11 @@ function renderChatNuevoStaff() {
 
 async function iniciarChatStaffConStaff(targetStaffUid) {
   if (!targetStaffUid) { toast('Usuario inválido', 'warning'); return; }
-  // Asegurar uid del staff logueado (race condition fallback)
-  if (!CHAT_STAFF.uid) {
-    CHAT_STAFF.uid = (window.currentUser && window.currentUser.uid) || null;
+  const uidYo = chatStaffResolveUidYo();
+  try {
     CHAT_STAFF.rol = _normRol(currentRol);
     CHAT_STAFF.nombre = (window.currentUserData && (window.currentUserData.nombre || window.currentUserData.nombres)) || 'Usuario';
-  }
-  const uidYo = CHAT_STAFF.uid;
+  } catch(_){}
   if (!uidYo) { toast('Sesión no iniciada. Recarga la página.', 'error'); return; }
   if (String(targetStaffUid) === String(uidYo)) { toast('No puedes iniciar un chat contigo mismo', 'warning'); return; }
   const sb = chatStaffGetSB();
