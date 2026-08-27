@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=142"></script>
-<script src="db_supabase.js?v=142"></script>
+<script src="compat.js?v=143"></script>
+<script src="db_supabase.js?v=143"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -4970,7 +4970,7 @@
     <div class="page-title">💬 Chat Interno</div>
     <div class="page-sub">Comunícate con los apoderados de tus alumnos</div>
 
-    <div class="card" id="chat-staff-card" style="display:grid;grid-template-columns:300px 1fr;gap:0;padding:0;overflow:hidden;min-height:62vh;">
+    <div class="card" id="chat-staff-card" style="display:grid;grid-template-columns:300px 1fr;gap:0;padding:0;overflow:hidden;min-height:62vh;max-height:72vh;height:72vh;">
       <!-- Bandeja de conversaciones -->
       <div id="chat-staff-band" style="border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;">
         <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -31624,6 +31624,30 @@ function chatStaffColegioId() {
   return window.COLEGIO_ID || (window._cfg && window._cfg.colegio_id) || 'sigece';
 }
 
+function _chatStaffIniciarLoopFondo() {
+  if (window.__chatStaffLoopFondo) return;
+  window.__chatStaffLoopFondo = true;
+  let t1 = 0;
+  setInterval(() => {
+    try {
+      if (!CHAT_STAFF || !CHAT_STAFF.uid) return;
+      const convId = String(CHAT_STAFF.convActualId || '');
+      if (!convId) return;
+      if (document.hidden) return;
+      chatStaffCargarMensajes(convId);
+    } catch(_){}
+  }, 2500);
+  setInterval(() => {
+    try {
+      if (!CHAT_STAFF || !CHAT_STAFF.uid) return;
+      if (document.hidden) return;
+      t1++;
+      if (t1 % 3 === 0) _chatStaffResolverTodasParejasUnicas().then(() => {}).catch(() => {});
+      else _chatStaffDedupeGlobalSTAFF_STAFF();
+    } catch(_){}
+  }, 3500);
+}
+
 function chatStaffInitShow() {
   if (!CHAT_STAFF.uid) {
     const uidR = chatStaffResolveUidYo();
@@ -31648,8 +31672,9 @@ function chatStaffInitShow() {
   const card = document.getElementById('chat-staff-card');
   if (card) {
     const isMob = (typeof _isMobileLike === 'function' && _isMobileLike()) || window.innerWidth <= 849;
-    card.style.display = isMob ? 'flex' : 'grid';
-    if (isMob) card.style.flexDirection = 'column';
+    if (isMob) { card.style.maxHeight = '82vh'; card.style.height = '82vh'; card.style.display = 'flex'; card.style.flexDirection = 'column'; }
+    else { card.style.maxHeight = '72vh'; card.style.height = '72vh'; card.style.display = 'grid'; card.style.flexDirection = ''; }
+    card.style.overflow = 'hidden';
     card.style.visibility = 'visible';
     card.style.opacity = '1';
     card.style.zIndex = '2';
@@ -31668,10 +31693,12 @@ function chatStaffInitShow() {
   }
   if (!CHAT_STAFF.initDone) {
     CHAT_STAFF.initDone = true;
+    _chatStaffIniciarLoopFondo();
     chatStaffCargarBandeja()
       .then(() => chatStaffSuscribirBandeja())
       .catch(e => console.error('chatStaffInitShow', e));
   } else {
+    _chatStaffIniciarLoopFondo();
     renderChatStaffBandeja();
     setTimeout(() => { try { _chatStaffDedupeGlobalSTAFF_STAFF(); } catch(_){} }, 500);
   }
@@ -32153,20 +32180,25 @@ function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
   try {
     const secChat = document.getElementById('sec-chat');
     const band = document.getElementById('chat-staff-band');
-    const conv = document.getElementById('chat-staff-conv');
+    const conv = document.getElementById('chat-staff-conv-wrap');
     if (secChat) {
       if (mode === 'conv') secChat.classList.add('chat-show-conv');
       else secChat.classList.remove('chat-show-conv');
     }
     const isMob = (typeof _isMobileLike === 'function' && _isMobileLike()) || window.innerWidth <= 849;
+    const card = document.getElementById('chat-staff-card');
+    if (card) {
+      if (isMob) { card.style.maxHeight = '82vh'; card.style.height = '82vh'; }
+      else { card.style.maxHeight = '72vh'; card.style.height = '72vh'; }
+      card.style.overflow = 'hidden';
+    }
     if (!isMob) {
-      if (band) { band.style.display = ''; band.style.visibility = ''; band.style.opacity = ''; }
-      if (conv) { conv.style.display = ''; conv.style.visibility = ''; conv.style.opacity = ''; }
+      if (band) { band.style.display = ''; band.style.visibility = ''; band.style.opacity = ''; band.style.position = ''; band.style.pointerEvents = ''; }
+      if (conv) { conv.style.display = ''; conv.style.visibility = ''; conv.style.opacity = ''; conv.style.position = ''; conv.style.pointerEvents = ''; }
       return;
     }
-    // En móvil: overrides inline (como showSectionDirect) para NO depender de clases .section CSS
     if (band) {
-      band.style.display = (mode === 'conv') ? 'none' : 'block';
+      band.style.display = (mode === 'conv') ? 'none' : 'flex';
       band.style.visibility = (mode === 'conv') ? 'hidden' : 'visible';
       band.style.opacity = (mode === 'conv') ? '0' : '1';
       band.style.position = (mode === 'conv') ? 'absolute' : '';
@@ -32178,7 +32210,7 @@ function _chatStaffMostrarVistaMovil(mode /* 'bandeja' | 'conv' */) {
       conv.style.opacity = (mode === 'conv') ? '1' : '0';
       conv.style.position = (mode === 'conv') ? 'relative' : '';
       conv.style.pointerEvents = (mode === 'conv') ? '' : 'none';
-      if (mode === 'conv') { conv.style.flexDirection = 'column'; conv.style.height = '100%'; }
+      if (mode === 'conv') { conv.style.flexDirection = 'column'; conv.style.height = '100%'; conv.style.minHeight = '0'; }
     }
   } catch(_){}
 }
