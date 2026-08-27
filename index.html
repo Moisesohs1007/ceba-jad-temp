@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=154"></script>
-<script src="db_supabase.js?v=154"></script>
+<script src="compat.js?v=155"></script>
+<script src="db_supabase.js?v=155"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -31793,6 +31793,22 @@ function _chatStaffIniciarLoopFondo() {
     } catch(_){ try { window.__chatStaffBgRunning = false; } catch(_2){} }
   }, 9000);
   // ════════════════════════════════════════════════════════════════════
+  // 🔴 POLLING BANDEJA PERIÓDICO 5 SEGUNDOS (FALLBACK DOZE ANTI-REALTIME MUERTO)
+  //    Chat Staff Init solo llamaba 1 vez a chatStaffCargarBandeja. Después NUNCA.
+  //    En móvil Android Doze/Data Saver, 3 min después Realtime se desconecta
+  //    (socket cerrado por ahorro). Los UPDATE de chat_conversaciones NO LLEGAN.
+  //    Resultado: el usuario NO VE badge, NO VE preview nuevo mensaje, NO VE
+  //    la conv subir al top de la bandeja. Hasta que no clickea o vuelve visible
+  //    la pestaña. Este setInterval 5s hace fallback de bandeja independiente
+  //    a Realtime. Garantiza: si hay nuevo msg, bandeja se actualiza en MAX 5s.
+  // ════════════════════════════════════════════════════════════════════
+  setInterval(() => {
+    try {
+      if (!CHAT_STAFF || !CHAT_STAFF.uid) return;
+      chatStaffCargarBandeja();
+    } catch(_){}
+  }, 5000);
+  // ════════════════════════════════════════════════════════════════════
   // BroadcastChannel: notificaciones cross-tab / cross-ventana mismo navegador
   // (no cross-dispositivo, pero útil si user abre 2 ventanas CEBA en su PC/movil).
   try {
@@ -31917,6 +31933,13 @@ async function chatStaffCargarBandeja() {
         seen.add(k); return true;
       });
     } catch(_){}
+    // ══════════════════════════════════════════════════════════════════
+    // 🔴 DESPUÉS DE REFRESH BANDEJA: asegurarConvActualKeeper
+    //    Si tenemos abierta una conv DUP (79D46D) y el polling de
+    //    bandeja acaba de traer la KEEPER (48BBF5) → REDIRIGIR AUTOMÁTICO.
+    //    Esto reduce demora ~30s a 5s (frecuencia polling bandeja 5s).
+    // ══════════════════════════════════════════════════════════════════
+    try { if (typeof window._chatStaffAsegurarConvActualEsKeeper === 'function') window._chatStaffAsegurarConvActualEsKeeper(); } catch(_){}
     await chatStaffHidratarNombres(CHAT_STAFF.bandeja);
     renderChatStaffBandeja();
     chatBadgeUpdateStaff();
@@ -33003,6 +33026,35 @@ async function enviarChatStaffMsg() {
         });
       }
     } catch(_uErr){}
+    // ════════════════════════════════════════════════════════════════
+    // 🔴 INMEDIATAMENTE DESPUÉS DE ENVIAR: lanzar dedupe global y
+    //    resolver pareja. NO esperar loop 9s (antes esperaba 9s y
+    //    durante ese tiempo la DUP seguía visible en móvil receptor).
+    //    Esto corrige race donde móvil tenía DUP abierta y PC enviaba
+    //    a KEEPER: el receptor móvil recibe el nuevo last_message_at
+    //    de KEEPER por Realtime CONV UPDATE y polling bandeja 5s,
+    //    luego asegurarConvActualEsKeeper redirige automáticamente.
+    // ════════════════════════════════════════════════════════════════
+    try {
+      if (!window.__chatStaffBgRunning) {
+        window.__chatStaffBgRunning = true;
+        Promise.resolve().then(() => _chatStaffDedupeGlobalSTAFF_STAFF())
+          .then(() => {}).catch(() => {})
+          .finally(() => { try { window.__chatStaffBgRunning = false; } catch(_){} });
+      }
+    } catch(_){}
+    try {
+      setTimeout(() => {
+        try {
+          if (!window.__chatStaffBgRunning) {
+            window.__chatStaffBgRunning = true;
+            _chatStaffResolverTodasParejasUnicas()
+              .then(() => {}).catch(() => {})
+              .finally(() => { try { window.__chatStaffBgRunning = false; } catch(_){} });
+          }
+        } catch(_){}
+      }, 300);
+    } catch(_){}
     // Broadcast (cross-tab / cross-ventana) para que otras pestañas CEBA del mismo navegador se enteren INSTANTÁNEAMENTE
     try {
       if (window.__chatStaffBC && typeof window.__chatStaffBC.postMessage === 'function') {
