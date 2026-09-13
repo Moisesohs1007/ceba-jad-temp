@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=160"></script>
-<script src="db_supabase.js?v=160"></script>
+<script src="compat.js?v=161"></script>
+<script src="db_supabase.js?v=161"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -7835,10 +7835,15 @@ function showSectionDirect(id) {
   }
   if(id==='registro') {
     poblarSelectorMes('reg-mes-select');
-    Promise.resolve().then(() => limpiarFiltrosRegistro());
+    Promise.resolve().then(async () => {
+      await limpiarFiltrosRegistro();
+      // Fix v161: al entrar a Registro por 1ª vez, pre-seleccionar HOY en DESDE/HASTA
+      // para que NO aparezca vacío el menú y muestre automáticamente los asistentes de hoy (QR/DNI).
+      setTodayFilter();
+      try { renderRegistro(); } catch(_) {}
+    });
     const btnBorrar = document.getElementById('btn-borrar-registros-hoy');
     if(btnBorrar) {
-      // Solo administrador puede borrar registros (user instruction)
       btnBorrar.style.display = (_normRol(currentRol) === 'admin') ? '' : 'none';
     }
   }
@@ -10761,7 +10766,6 @@ async function limpiarFiltrosRegistro() {
   document.getElementById('filter-seccion').value = '';
   document.getElementById('filter-tipo').value    = '';
   document.getElementById('filter-search').value  = '';
-  // Repoblar y deshabilitar grado y sección (requieren nivel primero)
   await poblarFiltroGrado('filter-grado', null);
   await poblarFiltroSeccion('filter-seccion', null);
   _disableSelect('filter-grado');
@@ -10770,8 +10774,13 @@ async function limpiarFiltrosRegistro() {
   const n = document.getElementById('filter-nivel').value;
   const g = document.getElementById('filter-grado').value;
   const s = document.getElementById('filter-seccion').value;
-  if(n || g || s) {
-    renderRegistros();
+  const d = document.getElementById('filter-desde').value;
+  const h = document.getElementById('filter-hasta').value;
+  // Fix v161: si existe rango de fechas (por ej. HOY después setTodayFilter)
+  // → llamar renderRegistro aunque el usuario NO tenga tutoría asignada (n/g/s vacíos).
+  // Antes: solo render si tenía tutoría, dejaba la pantalla vacía para directivos/admin.
+  if(n || g || s || d || h) {
+    renderRegistro();
   } else {
     document.getElementById('registro-tbody').innerHTML = '';
     document.getElementById('registro-empty').style.display = 'block';
