@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=161"></script>
-<script src="db_supabase.js?v=161"></script>
+<script src="compat.js?v=162"></script>
+<script src="db_supabase.js?v=162"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -10794,31 +10794,12 @@ function validarRangoFecha(desdeId = 'filter-desde', hastaId = 'filter-hasta') {
   const hastaEl = document.getElementById(hastaId);
   const desde = desdeEl ? (desdeEl.value || '') : '';
   const hasta = hastaEl ? (hastaEl.value || '') : '';
-  // Si desde > hasta, corregir automáticamente
+  // Si desde > hasta, corregir automáticamente para que el rango no sea inválido.
   if(desde && hasta && desde > hasta) {
     if(hastaEl) hastaEl.value = desde;
   }
-  // Saltar fines de semana en el campo desde
-  if(desde) {
-    const d = new Date(desde + 'T00:00:00');
-    if(d.getDay() === 6) { // sábado → lunes
-      d.setDate(d.getDate() + 2);
-      if(desdeEl) desdeEl.value = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    } else if(d.getDay() === 0) { // domingo → lunes
-      d.setDate(d.getDate() + 1);
-      if(desdeEl) desdeEl.value = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    }
-  }
-  if(hasta) {
-    const h = new Date(hasta + 'T00:00:00');
-    if(h.getDay() === 6) { // sábado → viernes
-      h.setDate(h.getDate() - 1);
-      if(hastaEl) hastaEl.value = h.getFullYear()+'-'+String(h.getMonth()+1).padStart(2,'0')+'-'+String(h.getDate()).padStart(2,'0');
-    } else if(h.getDay() === 0) { // domingo → viernes
-      h.setDate(h.getDate() - 2);
-      if(hastaEl) hastaEl.value = h.getFullYear()+'-'+String(h.getMonth()+1).padStart(2,'0')+'-'+String(h.getDate()).padStart(2,'0');
-    }
-  }
+  // Fix v162: ELIMINADO el "salto fines de semana" automático (sáb→lunes y dom→viernes) que borraba la fecha seleccionada por el usuario.
+  // Ahora el usuario selecciona cualquier fecha (incl sáb/dom) y el sistema muestra lo que haya guardado sin tocar su elección.
 }
 
 // ── FILTROS DE REGISTRO — lógica en cascada ──
@@ -11001,7 +10982,9 @@ async function renderRegistro() {
     let filtroDb = {
       grado: (grado && grado !== 'TODOS') ? grado : undefined,
       seccion: (seccion && seccion !== 'TODOS') ? seccion : undefined,
-      turno: (nivel && nivel !== 'TODOS') ? nivel : undefined,
+      // Fix v162: NO usamos filtroDb.turno a nivel SQL aquí.
+      // Porque al guardar un registro QR/DNI a veces el campo "turno" está vacío o guarda "Mañana/Tarde" y no coincide con "Avanzado/Inicial/Intermedio (el NIVEL del sistema).
+      // El filtro por NIVEL se aplica DESPUÉS con _matchNivel (L11075) igual que ya se hace con el resto. Así NO excluye 0 resultados por mismatch nombre campo turno undefined.
       tipo: tipo || undefined
     };
     if(desde || hasta) {
@@ -11027,12 +11010,13 @@ async function renderRegistro() {
     }
     if(window._renderRegistroRun !== _run) return;
 
-    // Filtrar por rango de fechas y excluir siempre sábado y domingo
+    // Filtrar por rango de fechas.
+    // Fix v162: YA NO excluimos sábado y domingo automáticamente. Antes: if(dia 0/6 return false).
+    // Problema: si hoy es sábado/domingo y hay registro de alumnos que vinieron (ej: matrícula, actividades, CEBA sábado),
+    // el filtro los BORRABA y el usuario veía "0 registros a pesar de haber escaneado QR".
+    // Ahora se muestran todos los registros guardados según la fecha.
     regs = regs.filter(r => {
       if(!r.fecha) return false;
-      const d = new Date(r.fecha + 'T12:00:00');
-      const dia = d.getDay();
-      if(dia === 0 || dia === 6) return false;
       if(desde && r.fecha < desde) return false;
       if(hasta && r.fecha > hasta) return false;
       return true;
@@ -11120,8 +11104,10 @@ async function renderRegistro() {
       let cur = new Date(rangoDesde + 'T12:00:00');
       const fin = new Date(rangoHasta + 'T12:00:00');
       while(cur <= fin) {
-        const dia = cur.getDay();
-        if(dia !== 0 && dia !== 6) fechasHabiles.push(cur.toISOString().slice(0,10));
+        // Fix v162: NO excluimos sáb/dom de fechasHabiles.
+        // Antes: if(dia !== 0 && dia !== 6) fechasHabiles.push(...) → si hoy era sábado/domingo, Sin registro NO se armaba fila y usuario decia "no veo al alumno que asitió".
+        // Ahora: TODAS las fechas del rango entran.
+        fechasHabiles.push(cur.toISOString().slice(0,10));
         cur.setDate(cur.getDate() + 1);
       }
 
@@ -11174,8 +11160,10 @@ async function renderRegistro() {
       let cur = new Date(rangoDesde + 'T12:00:00');
       const fin = new Date(rangoHasta + 'T12:00:00');
       while(cur <= fin) {
-        const dia = cur.getDay();
-        if(dia !== 0 && dia !== 6) fechasHabiles.push(cur.toISOString().slice(0,10));
+        // Fix v162: NO excluimos sáb/dom de fechasHabiles.
+        // Antes: if(dia !== 0 && dia !== 6) fechasHabiles.push(...) → si hoy era sábado/domingo, Sin registro NO se armaba fila y usuario decia "no veo al alumno que asitió".
+        // Ahora: TODAS las fechas del rango entran.
+        fechasHabiles.push(cur.toISOString().slice(0,10));
         cur.setDate(cur.getDate() + 1);
       }
 
