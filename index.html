@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=162"></script>
-<script src="db_supabase.js?v=162"></script>
+<script src="compat.js?v=163"></script>
+<script src="db_supabase.js?v=163"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -944,6 +944,26 @@
     border-bottom: 1px solid var(--border);
     font-weight: 600;
   }
+  /* v163: sort columnas clickeables Registro */
+  thead th.reg-sort-col {
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s ease, color 0.15s ease;
+    white-space: nowrap;
+  }
+  thead th.reg-sort-col:hover { background: rgba(37,99,235,0.12); color: #e2e8f0; }
+  thead th.reg-sort-col.reg-sort-active { color: var(--accent); }
+  thead th .reg-sort-arrow {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 0.72rem;
+    opacity: 0.4;
+    font-weight: 900;
+    transition: opacity 0.15s;
+  }
+  thead th.reg-sort-active .reg-sort-arrow { opacity: 1; }
+  thead th .reg-sort-arrow.reg-sort-asc::before { content: '▲'; }
+  thead th .reg-sort-arrow.reg-sort-desc::before { content: '▼'; }
   tbody tr {
     border-bottom: 1px solid rgba(31,45,69,0.6);
     transition: background 0.15s;
@@ -3307,14 +3327,14 @@
         <table>
           <thead>
             <tr>
-              <th>Fecha</th>
-              <th>DNI</th>
-              <th>Nombre</th>
-              <th>Grado</th>
-              <th>Nivel</th>
-              <th>Ingreso</th>
-              <th>Estado Ingreso</th>
-              <th>Salida</th>
+              <th class="reg-sort-col" data-col="fecha" onclick="regOrdenarPor('fecha')">Fecha<span class="reg-sort-arrow"></span></th>
+              <th class="reg-sort-col" data-col="alumnoId" onclick="regOrdenarPor('alumnoId')">DNI<span class="reg-sort-arrow"></span></th>
+              <th class="reg-sort-col" data-col="nombre" onclick="regOrdenarPor('nombre')">Nombre<span class="reg-sort-arrow"></span></th>
+              <th class="reg-sort-col" data-col="grado" onclick="regOrdenarPor('grado')">Grado<span class="reg-sort-arrow"></span></th>
+              <th class="reg-sort-col" data-col="turno" onclick="regOrdenarPor('turno')">Nivel<span class="reg-sort-arrow"></span></th>
+              <th class="reg-sort-col" data-col="ingreso" onclick="regOrdenarPor('ingreso')">Ingreso<span class="reg-sort-arrow"></span></th>
+              <th class="reg-sort-col" data-col="estadoIngreso" onclick="regOrdenarPor('estadoIngreso')">Estado Ingreso<span class="reg-sort-arrow"></span></th>
+              <th class="reg-sort-col" data-col="salida" onclick="regOrdenarPor('salida')">Salida<span class="reg-sort-arrow"></span></th>
             </tr>
           </thead>
           <tbody id="registro-tbody"></tbody>
@@ -10938,6 +10958,81 @@ function onSearchRegistro() {
   }, 220);
 }
 
+// v163: ORDEN POR DEFECTO del Registro del día: Fecha DESC (nuevo a viejo) → luego Hora INGRESO ASC (quién llegó primero en ese día)
+// Estado sort clickeable columnas:
+let _regSortCol = '';    // col activa clickeada x el user; si vacío -> default sort
+let _regSortDir = 'asc'; // 'asc' | 'desc'
+
+// Normaliza hora tipo "07:57:13 p. m." o "08:13" a número float (hora*100 + min + sec/60) para ordenar correctamente.
+function _regHoraANum(hh) {
+  if(!hh || typeof hh!=='string') return -1;
+  const s = String(hh).trim().toLowerCase();
+  if(!s || s === '-') return 9999999; // las vacías/faltantes al final
+  try {
+    let pm = false;
+    let t = s;
+    if(t.includes('p.m') || t.includes('pm')) { pm = true; t = t.replace(/p\.?\s*m\.?/g,'').trim(); }
+    else if(t.includes('a.m') || t.includes('am')) { t = t.replace(/a\.?\s*m\.?/g,'').trim(); }
+    const parts = t.split(':').map(p => parseInt(p.replace(/\D/g,'') || '0', 10));
+    let h = parts[0] || 0; let m = parts[1] || 0; let s2 = parts[2] || 0;
+    if(pm && h < 12) h += 12;
+    if(!pm && h === 12) h = 0;
+    return h * 10000 + m * 100 + s2;
+  } catch(_) { return 9999999; }
+}
+
+// Devuelve el valor "comparable" de una fila según la columna (string, fecha, hora).
+function _regValorCol(fila, col) {
+  switch(col) {
+    case 'fecha':         return String(fila.fecha || '').padStart(10,'0');
+    case 'alumnoId':      return String(fila.alumnoId || '').trim().padStart(12,'0');
+    case 'nombre':        return String(fila.nombre || '').trim().toLowerCase();
+    case 'grado':         return (String(fila.grado || '').trim() + ' ' + String(fila.seccion || '').trim()).toLowerCase();
+    case 'turno':         return String(fila.turno || '').trim().toLowerCase();
+    case 'ingreso':       return _regHoraANum(fila.ingreso);
+    case 'salida':        return _regHoraANum(fila.salida);
+    case 'estadoIngreso': return String(fila.estadoIngreso || '').trim().toLowerCase();
+    default: return String(fila[col] ?? '').trim().toLowerCase();
+  }
+}
+
+// Comparador ASC de 2 filas por columna.
+function _regCmpAsc(a, b, col) {
+  const va = _regValorCol(a, col);
+  const vb = _regValorCol(b, col);
+  if(typeof va === 'number' && typeof vb === 'number') return va - vb;
+  return String(va).localeCompare(String(vb), 'es-PE', { sensitivity: 'base' });
+}
+
+// Setter click del encabezado. Si mismo col -> toggle asc/desc. Sino default dir segun tipo col.
+function regOrdenarPor(col) {
+  if(!col) return;
+  if(_regSortCol === col) {
+    _regSortDir = (_regSortDir === 'asc') ? 'desc' : 'asc';
+  } else {
+    _regSortCol = col;
+    // Default direccion segun sentido natural: Fecha/Ingreso/Salida DESC nuevo primero; texto ASC.
+    if(col === 'fecha' || col === 'ingreso' || col === 'salida') _regSortDir = 'desc';
+    else _regSortDir = 'asc';
+  }
+  renderRegistro();
+}
+
+// Actualiza UI flecha ▲▼ en los th del encabezado según _regSortCol/_regSortDir.
+function _regRefrescarUIOrden() {
+  try {
+    const ths = document.querySelectorAll('#sec-registro thead th.reg-sort-col');
+    ths.forEach(th => {
+      const col = th.getAttribute('data-col') || '';
+      const arrow = th.querySelector('.reg-sort-arrow');
+      th.classList.toggle('reg-sort-active', col && (col === _regSortCol));
+      if(!arrow) return;
+      arrow.classList.remove('reg-sort-asc','reg-sort-desc');
+      if(col === _regSortCol) arrow.classList.add((_regSortDir === 'asc') ? 'reg-sort-asc' : 'reg-sort-desc');
+    });
+  } catch(_) {}
+}
+
 async function renderRegistro() {
   const desde   = document.getElementById('filter-desde').value;
   const hasta   = document.getElementById('filter-hasta').value;
@@ -11187,18 +11282,28 @@ async function renderRegistro() {
     }
 
 
-    // Ordenar: nivel → grado numérico → sección → apellido
-    // Para vista de grado específico: fecha desc → apellido → nombre
-    const esTodos = (!grado || grado === 'TODOS');
-    if(esTodos) {
-      filas.sort(_cmpFilaReporte);
+    // Ordenar. 2 modos:
+    // A) Usuario clickeó columna → usa orden personalizado (_regSortCol) ASC o DESC.
+    // B) DEFAULT (lo que tu pediste): PRIMERO Fecha DESC (día más reciente primero) → SEGUNDO Hora INGRESO ASC (quién llegó primero dentro de la misma fecha).
+    // NOTA: Eliminamos el viejo orden alfabetico por nivel/grado/seccion/nombre, tu dijiste que no querías.
+    if(_regSortCol) {
+      const dir = (_regSortDir === 'asc') ? 1 : -1;
+      filas.sort((a, b) => dir * _regCmpAsc(a, b, _regSortCol));
     } else {
       filas.sort((a, b) => {
-        const fc = (b.fecha||'').localeCompare(a.fecha||'');
-        if(fc !== 0) return fc;
+        // 1. Fecha DESC
+        const cmpFecha = (b.fecha||'').localeCompare(a.fecha||'');
+        if(cmpFecha !== 0) return cmpFecha;
+        // 2. Ingreso ASC (7am → 8am → ...; las horas nulas/faltantes van al final)
+        const va = _regHoraANum(a.ingreso);
+        const vb = _regHoraANum(b.ingreso);
+        if(va !== vb) return va - vb;
+        // 3. Tie-breaker estabilidad: nombre ASC
         return (a.nombre||'').localeCompare(b.nombre||'');
       });
     }
+    // Actualizar UI flechas ▲▼ en el encabezado
+    _regRefrescarUIOrden();
 
     // Filtrar por tipo si está seleccionado
     if(tipo && tipo !== 'TODOS') {
