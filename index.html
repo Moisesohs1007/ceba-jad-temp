@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=168"></script>
-<script src="db_supabase.js?v=168"></script>
+<script src="compat.js?v=169"></script>
+<script src="db_supabase.js?v=169"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -11862,11 +11862,15 @@ async function exportPDFRegistro() {
     function _weekNumISO(dStr){ try { const d = new Date(dStr + 'T12:00:00'); const t = new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())); const dayNum = (t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-dayNum+3); const y=new Date(Date.UTC(t.getUTCFullYear(),0,4)); return 1+Math.round((((t-y.getTime())/86400000)-3+((y.getUTCDay()+6)%7))/7); } catch(_){ return 0; } }
     // Grupo de fondo SÚTIL por semana (par/impar). Muy suave, casi no se nota pero agrupa visualmente.
     function _weekBgTone(dFecha){ const w = _weekNumISO(dFecha); return (w % 2 === 0) ? [246,249,253] : [240,244,251]; }
-    // v168 — SEPARADORES VERTICALES SÓLIDOS POR CADA DÍA (sin punteado).
-    // Chrome PDF viewer NO renderiza bien setLineDashPattern([0.5,1.2]) → no se veía nada.
-    // Solución: LÍNEA SÓLIDA + COLOR MUY CLARO (casi blanco) + ANCHO 0.22mm.
+    // v169 — CUADRÍCULA COMPLETA tipo Excel en zona (alumno × día).
+    // ¿Por qué no se veía la grilla? Antes solo pintábamos LA DERECHA de cada columna día.
+    // Ahora SÍ pintamos (1) el IZQUIERDO de la 1ª columna día + (2) la DERECHA de cada columna día.
+    // + (3) horizontales inferior de cada fila alumno (ya existían, coloreamos para unificar).
     function _isWeekBoundaryRight(){ return true; }  // ¡SIEMPRE! Por cada día.
     const _primeraFecha = (diasHabiles[0] && diasHabiles[0].fecha) || '';
+    // Color unificado de CUADRÍCULA (sólido, Chrome muestra bien). Gris-azul claro visible.
+    const GRID_RGB = [220, 228, 240];   // #dce4f0 — visible pero no abruma.
+    const GRID_W = 0.22;                 // ancho línea celdas.
 
     const landscape=diasHabiles.length>12;
     const doc=new jsPDF({orientation:landscape?'landscape':'portrait',unit:'mm',format:'a4'});
@@ -11895,8 +11899,12 @@ async function exportPDFRegistro() {
       let cx=TABLE_X;
       doc.text('DNI',cx+COL_DNI/2,curY+HEAD_H/2+2,{align:'center'});cx+=COL_DNI;
       doc.text('Alumno',cx+4,curY+HEAD_H/2+2);cx+=COL_NOMBRE;
-      // v166: Encabezado — RAYITA PUNTEADA VERTICAL a la DERECHA de cada columna que es FIN de semana
-      // (viernes o último día antes del hueco). Así se ve el "corte" semanal MUY suave.
+      // v169: LÍNEA IZQUIERDA de la 1ª columna día (cierra la cuadrícula por la izquierda)
+      if(diasHabiles.length){
+        doc.setDrawColor(...GRID_RGB); doc.setLineDashPattern([], 0); doc.setLineWidth(GRID_W);
+        doc.line(cx, curY - 0.1, cx, curY + HEAD_H + 0.1);
+      }
+      // v169: Encabezado — LÍNEA VERTICAL DERECHA por cada día (cierra la cuadrícula a la derecha de cada día)
       diasHabiles.forEach(d=>{
         const parts = d.label.split(' ');
         if(parts.length === 2) {
@@ -11905,11 +11913,11 @@ async function exportPDFRegistro() {
         } else {
           doc.text(d.label, cx+COL_DIA/2, curY+HEAD_H/2+2, {align:'center'});
         }
-        // v168: separador SÓLIDO (no punteado, Chrome no veía punteado) POR CADA DÍA. Muy suave.
+        // v169: separador SÓLIDO (GRID) a la DERECHA de cada día (todos los días).
         if(_isWeekBoundaryRight(d.fecha)){
-          doc.setDrawColor(230,236,245);      // gris-AZUL casi blanco #e6ecf5 (230,236,245)
-          doc.setLineDashPattern([], 0);        // SÓLIDO (reset a S )
-          doc.setLineWidth(0.22);              // 0.22mm muy delgadita, casi invisible
+          doc.setDrawColor(...GRID_RGB);
+          doc.setLineDashPattern([], 0);
+          doc.setLineWidth(GRID_W);
           doc.line(cx + COL_DIA, curY - 0.1, cx + COL_DIA, curY + HEAD_H + 0.1);
         }
         cx+=COL_DIA;
@@ -11928,6 +11936,11 @@ async function exportPDFRegistro() {
       // v166: FONDO SEMANAL SÚTIL (par/impar) EN TODAS LAS FILAS (par/impar) — no solo impares.
       // Para no "matar" el bandeo gris par: se mezcla. fila par (GRAY #F0F2F8) → pinta ENCIMA un tono 243/237 ajustado; fila impar (blanco) → tono 246/240.
       { let cx2Dia = TABLE_X + COL_DNI + COL_NOMBRE;
+        // v169: LÍNEA IZQUIERDA de la 1ª columna día (izq de Mar 01, Lun 07, etc.)
+        if(diasHabiles.length){
+          doc.setDrawColor(...GRID_RGB); doc.setLineDashPattern([], 0); doc.setLineWidth(GRID_W);
+          doc.line(cx2Dia, curY, cx2Dia, curY + ROW_H);
+        }
         diasHabiles.forEach(d=>{
           const tono = _weekBgTone(d.fecha);
           // Si la fila es par (ya gris GRAY), bajamos un pelín el tono base para que se note el agrupamiento PERO no tape el bandeo.
@@ -11937,17 +11950,17 @@ async function exportPDFRegistro() {
             : tono;
           doc.setFillColor(...paint);
           doc.rect(cx2Dia, curY, COL_DIA, ROW_H, 'F');
-          // v168: Raya vertical SÓLIDA POR CADA DÍA (Chrome no mostraba punteado [0.5,1.2]
+          // v169: LÍNEA VERTICAL DERECHA de cada día (cierra el cuadrito).
           if(_isWeekBoundaryRight(d.fecha)){
-            doc.setDrawColor(230,236,245);     // gris MUY MUY claro, casi blanco.
-            doc.setLineDashPattern([], 0);     // SÓLIDO
-            doc.setLineWidth(0.22);
+            doc.setDrawColor(...GRID_RGB);
+            doc.setLineDashPattern([], 0);
+            doc.setLineWidth(GRID_W);
             doc.line(cx2Dia + COL_DIA, curY, cx2Dia + COL_DIA, curY + ROW_H);
           }
           cx2Dia += COL_DIA;
         });
       }
-      doc.setDrawColor(220,226,238);doc.setLineWidth(0.15);doc.line(TABLE_X,curY+ROW_H,TABLE_X+TABLE_W,curY+ROW_H);
+      doc.setDrawColor(...GRID_RGB); doc.setLineWidth(GRID_W); doc.line(TABLE_X,curY+ROW_H,TABLE_X+TABLE_W,curY+ROW_H);
       let cx=TABLE_X;
       doc.setTextColor(...MUTED);doc.setFontSize(5.6);doc.setFont('helvetica','normal');
       doc.text(a.id||'-',cx+COL_DNI/2,curY+ROW_H/2+2,{align:'center'});cx+=COL_DNI;
@@ -11973,13 +11986,20 @@ async function exportPDFRegistro() {
     // Fila presentes
     chk();
     doc.setFillColor(...NAVY);doc.rect(TABLE_X,curY,TABLE_W,ROW_H,'F');
-    // v168: Raya SÓLIDA POR CADA DÍA en la fila Presentes (alineada con el resto).
+    // v169: CUADRÍCULA en fila Presentes (alineada con zona datos). Dorado sobre navy.
+    const GOLD_GRID = [205, 190, 135];
     { let cxP = TABLE_X + COL_DNI + COL_NOMBRE;
+      // (1) LÍNEA IZQUIERDA 1ª columna día
+      if(diasHabiles.length){
+        doc.setDrawColor(...GOLD_GRID); doc.setLineDashPattern([], 0); doc.setLineWidth(GRID_W);
+        doc.line(cxP, curY - 0.1, cxP, curY + ROW_H + 0.1);
+      }
+      // (2) LÍNEA DERECHA por cada día
       diasHabiles.forEach(d=>{
         if(_isWeekBoundaryRight(d.fecha)){
-          doc.setDrawColor(205,190,135);    // dorado suave
-          doc.setLineDashPattern([], 0);     // sólido
-          doc.setLineWidth(0.26);
+          doc.setDrawColor(...GOLD_GRID);
+          doc.setLineDashPattern([], 0);
+          doc.setLineWidth(GRID_W);
           doc.line(cxP + COL_DIA, curY - 0.1, cxP + COL_DIA, curY + ROW_H + 0.1);
         }
         cxP += COL_DIA;
