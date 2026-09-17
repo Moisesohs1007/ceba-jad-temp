@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=167"></script>
-<script src="db_supabase.js?v=167"></script>
+<script src="compat.js?v=168"></script>
+<script src="db_supabase.js?v=168"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -11862,11 +11862,10 @@ async function exportPDFRegistro() {
     function _weekNumISO(dStr){ try { const d = new Date(dStr + 'T12:00:00'); const t = new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())); const dayNum = (t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-dayNum+3); const y=new Date(Date.UTC(t.getUTCFullYear(),0,4)); return 1+Math.round((((t-y.getTime())/86400000)-3+((y.getUTCDay()+6)%7))/7); } catch(_){ return 0; } }
     // Grupo de fondo SÚTIL por semana (par/impar). Muy suave, casi no se nota pero agrupa visualmente.
     function _weekBgTone(dFecha){ const w = _weekNumISO(dFecha); return (w % 2 === 0) ? [246,249,253] : [240,244,251]; }
-    // v167 — SEPARADORES VERTICALES POR CADA DÍA (tal como pediste).
-    // Cada columna "día" tendrá una rayita delgada punteada MUY SUAVE a su derecha.
-    // Color gris-azul casi transparente. En la fila "Presentes" lo hacemos ligeramente dorado.
-    const _fechasHabilesSet = new Set(diasHabiles.map(d=>d.fecha));
-    function _isWeekBoundaryRight(){ return true; }  // v167: ¡SIEMPRE! Un separador por cada día.
+    // v168 — SEPARADORES VERTICALES SÓLIDOS POR CADA DÍA (sin punteado).
+    // Chrome PDF viewer NO renderiza bien setLineDashPattern([0.5,1.2]) → no se veía nada.
+    // Solución: LÍNEA SÓLIDA + COLOR MUY CLARO (casi blanco) + ANCHO 0.22mm.
+    function _isWeekBoundaryRight(){ return true; }  // ¡SIEMPRE! Por cada día.
     const _primeraFecha = (diasHabiles[0] && diasHabiles[0].fecha) || '';
 
     const landscape=diasHabiles.length>12;
@@ -11906,13 +11905,12 @@ async function exportPDFRegistro() {
         } else {
           doc.text(d.label, cx+COL_DIA/2, curY+HEAD_H/2+2, {align:'center'});
         }
-        // separador a la DERECHA (¡POR CADA DÍA! tal como pediste v167). Muy suave para no ensuciar.
+        // v168: separador SÓLIDO (no punteado, Chrome no veía punteado) POR CADA DÍA. Muy suave.
         if(_isWeekBoundaryRight(d.fecha)){
-          doc.setDrawColor(215,224,238);      // gris MUY MUY claro #d7e0ee, casi transparente
-          doc.setLineDashPattern([0.5, 1.2], 0);   // punteado muy fino (raya 0.5, hueco 1.2)
-          doc.setLineWidth(0.28);                  // 0.28mm -> no abulta
+          doc.setDrawColor(230,236,245);      // gris-AZUL casi blanco #e6ecf5 (230,236,245)
+          doc.setLineDashPattern([], 0);        // SÓLIDO (reset a S )
+          doc.setLineWidth(0.22);              // 0.22mm muy delgadita, casi invisible
           doc.line(cx + COL_DIA, curY - 0.1, cx + COL_DIA, curY + HEAD_H + 0.1);
-          doc.setLineDashPattern([], 0);
         }
         cx+=COL_DIA;
       });
@@ -11939,13 +11937,12 @@ async function exportPDFRegistro() {
             : tono;
           doc.setFillColor(...paint);
           doc.rect(cx2Dia, curY, COL_DIA, ROW_H, 'F');
-          // Raya vertical punteada POR CADA DÍA (v167) — separador a la DERECHA de la celda.
+          // v168: Raya vertical SÓLIDA POR CADA DÍA (Chrome no mostraba punteado [0.5,1.2]
           if(_isWeekBoundaryRight(d.fecha)){
-            doc.setDrawColor(215,224,238);     // gris MUY claro, casi transparente.
-            doc.setLineDashPattern([0.5, 1.2], 0);
-            doc.setLineWidth(0.28);
+            doc.setDrawColor(230,236,245);     // gris MUY MUY claro, casi blanco.
+            doc.setLineDashPattern([], 0);     // SÓLIDO
+            doc.setLineWidth(0.22);
             doc.line(cx2Dia + COL_DIA, curY, cx2Dia + COL_DIA, curY + ROW_H);
-            doc.setLineDashPattern([], 0);
           }
           cx2Dia += COL_DIA;
         });
@@ -11976,15 +11973,14 @@ async function exportPDFRegistro() {
     // Fila presentes
     chk();
     doc.setFillColor(...NAVY);doc.rect(TABLE_X,curY,TABLE_W,ROW_H,'F');
-    // v167: también rayita punteada POR CADA DÍA en la fila "Presentes" — misma alineación que el resto.
+    // v168: Raya SÓLIDA POR CADA DÍA en la fila Presentes (alineada con el resto).
     { let cxP = TABLE_X + COL_DNI + COL_NOMBRE;
       diasHabiles.forEach(d=>{
         if(_isWeekBoundaryRight(d.fecha)){
-          doc.setDrawColor(205,190,135);    // dorado suave (no tan oscuro como el anterior)
-          doc.setLineDashPattern([0.5, 1.2], 0);
-          doc.setLineWidth(0.32);
+          doc.setDrawColor(205,190,135);    // dorado suave
+          doc.setLineDashPattern([], 0);     // sólido
+          doc.setLineWidth(0.26);
           doc.line(cxP + COL_DIA, curY - 0.1, cxP + COL_DIA, curY + ROW_H + 0.1);
-          doc.setLineDashPattern([], 0);
         }
         cxP += COL_DIA;
       });
