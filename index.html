@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=163"></script>
-<script src="db_supabase.js?v=163"></script>
+<script src="compat.js?v=164"></script>
+<script src="db_supabase.js?v=164"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -9614,32 +9614,38 @@ async function deleteAlumno(id) {
   if(!confirm('¿Eliminar este alumno y todos sus registros de asistencia?')) return;
   try {
     toast('Eliminando...','info');
-    // Eliminar registros de asistencia del alumno
-    const regsSnap = await db.collection('registros').where('alumnoId','==',id).get();
-    if(!regsSnap.empty) {
-      // Firestore permite máx 500 por batch
-      const batches = [];
-      let batch = db.batch();
-      let count = 0;
-      regsSnap.docs.forEach(doc => {
-        batch.delete(doc.ref);
-        count++;
-        if(count === 499) {
-          batches.push(batch.commit());
-          batch = db.batch();
-          count = 0;
-        }
-      });
-      if(count > 0) batches.push(batch.commit());
-      await Promise.all(batches);
-    }
-    // Eliminar incidentes del alumno
-    const incSnap = await db.collection('incidentes').where('alumnoId','==',id).get();
-    if(!incSnap.empty) {
-      const batchInc = db.batch();
-      incSnap.docs.forEach(doc => batchInc.delete(doc.ref));
-      await batchInc.commit();
-    }
+    // Eliminar registros de asistencia del alumno (protegido: si tabla no existe no aborta)
+    try {
+      const regsSnap = await db.collection('registros').where('alumnoId','==',id).get();
+      if(!regsSnap.empty) {
+        // Firestore permite máx 500 por batch
+        const batches = [];
+        let batch = db.batch();
+        let count = 0;
+        regsSnap.docs.forEach(doc => {
+          batch.delete(doc.ref);
+          count++;
+          if(count === 499) {
+            batches.push(batch.commit());
+            batch = db.batch();
+            count = 0;
+          }
+        });
+        if(count > 0) batches.push(batch.commit());
+        await Promise.all(batches);
+      }
+    } catch(errReg) { console.warn('Borrar registros alumno (no fatal):', errReg); }
+    // Eliminar incidentes del alumno — PROTEGIDO. La tabla "incidentes" puede NO existir
+    // en Supabase (error típico "Could not find the table 'public.incidentes'").
+    // Si no hay incidentes / no existe tabla → saltar sin romper el delete total.
+    try {
+      const incSnap = await db.collection('incidentes').where('alumnoId','==',id).get();
+      if(!incSnap.empty) {
+        const batchInc = db.batch();
+        incSnap.docs.forEach(doc => batchInc.delete(doc.ref));
+        await batchInc.commit();
+      }
+    } catch(errInc) { console.warn('Borrar incidentes alumno (no fatal, tabla quizá no existe):', errInc); }
     // Eliminar cuenta de apoderado si existe
     await db.collection('apoderados').doc(id).delete().catch(()=>{});
     // Eliminar alumno
