@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=166"></script>
-<script src="db_supabase.js?v=166"></script>
+<script src="compat.js?v=167"></script>
+<script src="db_supabase.js?v=167"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -11862,23 +11862,11 @@ async function exportPDFRegistro() {
     function _weekNumISO(dStr){ try { const d = new Date(dStr + 'T12:00:00'); const t = new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())); const dayNum = (t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-dayNum+3); const y=new Date(Date.UTC(t.getUTCFullYear(),0,4)); return 1+Math.round((((t-y.getTime())/86400000)-3+((y.getUTCDay()+6)%7))/7); } catch(_){ return 0; } }
     // Grupo de fondo SÚTIL por semana (par/impar). Muy suave, casi no se nota pero agrupa visualmente.
     function _weekBgTone(dFecha){ const w = _weekNumISO(dFecha); return (w % 2 === 0) ? [246,249,253] : [240,244,251]; }
-    // v166 — ¿Este día es el ÚLTIMO día hábil de la SEMANA? -> pinta RAYITA PUNTEADA VERTICAL a su DERECHA.
-    // (criterio: viernes, o último día del rango, o el día ANTES de que empiece un nuevo lunes en la lista diasHabiles)
+    // v167 — SEPARADORES VERTICALES POR CADA DÍA (tal como pediste).
+    // Cada columna "día" tendrá una rayita delgada punteada MUY SUAVE a su derecha.
+    // Color gris-azul casi transparente. En la fila "Presentes" lo hacemos ligeramente dorado.
     const _fechasHabilesSet = new Set(diasHabiles.map(d=>d.fecha));
-    function _isWeekBoundaryRight(iFecha){
-      const dow = new Date(iFecha + 'T12:00:00').getDay();
-      if(dow === 5) return true;  // VIERNES = fin de semana laboral.
-      // Si NO hay día hábil mañana y mañana no está en la lista → fin de semana / fin rango.
-      const next = new Date(iFecha + 'T12:00:00');
-      next.setDate(next.getDate()+1);
-      const iso = next.toISOString().slice(0,10);
-      if(!_fechasHabilesSet.has(iso)) return true;
-      // Si mañana es lunes → éste es el último del grupo (incluso si se exportó sáb/dom luego, no pasa nada)
-      const dowNext = new Date(iso + 'T12:00:00').getDay();
-      if(dowNext === 1) return true;
-      return false;
-    }
-    // ¿Es el PRIMER día del rango? -> no pintar a la izquierda de la 1era columna (quedaría borde izquierdo raro).
+    function _isWeekBoundaryRight(){ return true; }  // v167: ¡SIEMPRE! Un separador por cada día.
     const _primeraFecha = (diasHabiles[0] && diasHabiles[0].fecha) || '';
 
     const landscape=diasHabiles.length>12;
@@ -11918,12 +11906,12 @@ async function exportPDFRegistro() {
         } else {
           doc.text(d.label, cx+COL_DIA/2, curY+HEAD_H/2+2, {align:'center'});
         }
-        // separador a la DERECHA (fin semana)
+        // separador a la DERECHA (¡POR CADA DÍA! tal como pediste v167). Muy suave para no ensuciar.
         if(_isWeekBoundaryRight(d.fecha)){
-          doc.setDrawColor(176,192,220);      // gris azulado MUY suave #b0c0dc
-          doc.setLineDashPattern([0.9,0.9], 0);
-          doc.setLineWidth(0.45);
-          doc.line(cx + COL_DIA, curY - 0.2, cx + COL_DIA, curY + HEAD_H + 0.2);
+          doc.setDrawColor(215,224,238);      // gris MUY MUY claro #d7e0ee, casi transparente
+          doc.setLineDashPattern([0.5, 1.2], 0);   // punteado muy fino (raya 0.5, hueco 1.2)
+          doc.setLineWidth(0.28);                  // 0.28mm -> no abulta
+          doc.line(cx + COL_DIA, curY - 0.1, cx + COL_DIA, curY + HEAD_H + 0.1);
           doc.setLineDashPattern([], 0);
         }
         cx+=COL_DIA;
@@ -11951,12 +11939,12 @@ async function exportPDFRegistro() {
             : tono;
           doc.setFillColor(...paint);
           doc.rect(cx2Dia, curY, COL_DIA, ROW_H, 'F');
-          // Raya vertical punteada al FINAL de esta columna si es fin de semana.
+          // Raya vertical punteada POR CADA DÍA (v167) — separador a la DERECHA de la celda.
           if(_isWeekBoundaryRight(d.fecha)){
-            doc.setDrawColor(176,192,220);
-            doc.setLineDashPattern([0.9,0.9], 0);
-            doc.setLineWidth(0.45);
-            doc.line(cx2Dia + COL_DIA, curY - 0.1, cx2Dia + COL_DIA, curY + ROW_H + 0.1);
+            doc.setDrawColor(215,224,238);     // gris MUY claro, casi transparente.
+            doc.setLineDashPattern([0.5, 1.2], 0);
+            doc.setLineWidth(0.28);
+            doc.line(cx2Dia + COL_DIA, curY, cx2Dia + COL_DIA, curY + ROW_H);
             doc.setLineDashPattern([], 0);
           }
           cx2Dia += COL_DIA;
@@ -11988,14 +11976,14 @@ async function exportPDFRegistro() {
     // Fila presentes
     chk();
     doc.setFillColor(...NAVY);doc.rect(TABLE_X,curY,TABLE_W,ROW_H,'F');
-    // v166: también rayita punteada vertical en la fila "Presentes" — MISMA alineación que encabezado + celdas.
+    // v167: también rayita punteada POR CADA DÍA en la fila "Presentes" — misma alineación que el resto.
     { let cxP = TABLE_X + COL_DNI + COL_NOMBRE;
       diasHabiles.forEach(d=>{
         if(_isWeekBoundaryRight(d.fecha)){
-          doc.setDrawColor(214,186,108);     // dorado claro, acorde con navy+gold del encabezado
-          doc.setLineDashPattern([0.9,0.9], 0);
-          doc.setLineWidth(0.55);
-          doc.line(cxP + COL_DIA, curY - 0.2, cxP + COL_DIA, curY + ROW_H + 0.2);
+          doc.setDrawColor(205,190,135);    // dorado suave (no tan oscuro como el anterior)
+          doc.setLineDashPattern([0.5, 1.2], 0);
+          doc.setLineWidth(0.32);
+          doc.line(cxP + COL_DIA, curY - 0.1, cxP + COL_DIA, curY + ROW_H + 0.1);
           doc.setLineDashPattern([], 0);
         }
         cxP += COL_DIA;
