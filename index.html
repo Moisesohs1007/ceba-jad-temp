@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=165"></script>
-<script src="db_supabase.js?v=165"></script>
+<script src="compat.js?v=166"></script>
+<script src="db_supabase.js?v=166"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -11858,6 +11858,29 @@ async function exportPDFRegistro() {
     const mapa={};
     regs.forEach(r=>{if(!mapa[r.dni])mapa[r.dni]={};const st=(r.estado||'').toLowerCase();let cod='F';if(st.includes('tardanza'))cod='T';else if(st.includes('tiempo')||st.includes('puntual')||r.ingreso)cod='P';mapa[r.dni][r.fecha]=cod;});
 
+    // Helper: número de semana ISO (para agrupar días por semana y darle fondo sutil alternado)
+    function _weekNumISO(dStr){ try { const d = new Date(dStr + 'T12:00:00'); const t = new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())); const dayNum = (t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-dayNum+3); const y=new Date(Date.UTC(t.getUTCFullYear(),0,4)); return 1+Math.round((((t-y.getTime())/86400000)-3+((y.getUTCDay()+6)%7))/7); } catch(_){ return 0; } }
+    // Grupo de fondo SÚTIL por semana (par/impar). Muy suave, casi no se nota pero agrupa visualmente.
+    function _weekBgTone(dFecha){ const w = _weekNumISO(dFecha); return (w % 2 === 0) ? [246,249,253] : [240,244,251]; }
+    // v166 — ¿Este día es el ÚLTIMO día hábil de la SEMANA? -> pinta RAYITA PUNTEADA VERTICAL a su DERECHA.
+    // (criterio: viernes, o último día del rango, o el día ANTES de que empiece un nuevo lunes en la lista diasHabiles)
+    const _fechasHabilesSet = new Set(diasHabiles.map(d=>d.fecha));
+    function _isWeekBoundaryRight(iFecha){
+      const dow = new Date(iFecha + 'T12:00:00').getDay();
+      if(dow === 5) return true;  // VIERNES = fin de semana laboral.
+      // Si NO hay día hábil mañana y mañana no está en la lista → fin de semana / fin rango.
+      const next = new Date(iFecha + 'T12:00:00');
+      next.setDate(next.getDate()+1);
+      const iso = next.toISOString().slice(0,10);
+      if(!_fechasHabilesSet.has(iso)) return true;
+      // Si mañana es lunes → éste es el último del grupo (incluso si se exportó sáb/dom luego, no pasa nada)
+      const dowNext = new Date(iso + 'T12:00:00').getDay();
+      if(dowNext === 1) return true;
+      return false;
+    }
+    // ¿Es el PRIMER día del rango? -> no pintar a la izquierda de la 1era columna (quedaría borde izquierdo raro).
+    const _primeraFecha = (diasHabiles[0] && diasHabiles[0].fecha) || '';
+
     const landscape=diasHabiles.length>12;
     const doc=new jsPDF({orientation:landscape?'landscape':'portrait',unit:'mm',format:'a4'});
     const PW=landscape?297:210,PH=landscape?210:297;
@@ -11885,14 +11908,23 @@ async function exportPDFRegistro() {
       let cx=TABLE_X;
       doc.text('DNI',cx+COL_DNI/2,curY+HEAD_H/2+2,{align:'center'});cx+=COL_DNI;
       doc.text('Alumno',cx+4,curY+HEAD_H/2+2);cx+=COL_NOMBRE;
+      // v166: Encabezado — RAYITA PUNTEADA VERTICAL a la DERECHA de cada columna que es FIN de semana
+      // (viernes o último día antes del hueco). Así se ve el "corte" semanal MUY suave.
       diasHabiles.forEach(d=>{
         const parts = d.label.split(' ');
         if(parts.length === 2) {
-          // Día semana arriba, número abajo para evitar superposición (User instruction)
           doc.text(parts[0], cx+COL_DIA/2, curY+HEAD_H/2 - 0.5, {align:'center'});
           doc.text(parts[1], cx+COL_DIA/2, curY+HEAD_H/2 + 2.5, {align:'center'});
         } else {
           doc.text(d.label, cx+COL_DIA/2, curY+HEAD_H/2+2, {align:'center'});
+        }
+        // separador a la DERECHA (fin semana)
+        if(_isWeekBoundaryRight(d.fecha)){
+          doc.setDrawColor(176,192,220);      // gris azulado MUY suave #b0c0dc
+          doc.setLineDashPattern([0.9,0.9], 0);
+          doc.setLineWidth(0.45);
+          doc.line(cx + COL_DIA, curY - 0.2, cx + COL_DIA, curY + HEAD_H + 0.2);
+          doc.setLineDashPattern([], 0);
         }
         cx+=COL_DIA;
       });
@@ -11907,6 +11939,29 @@ async function exportPDFRegistro() {
     alumnosAula.forEach((a,ai)=>{
       chk();
       if(ai%2===0){doc.setFillColor(...GRAY);doc.rect(TABLE_X,curY,TABLE_W,ROW_H,'F');}
+      // v166: FONDO SEMANAL SÚTIL (par/impar) EN TODAS LAS FILAS (par/impar) — no solo impares.
+      // Para no "matar" el bandeo gris par: se mezcla. fila par (GRAY #F0F2F8) → pinta ENCIMA un tono 243/237 ajustado; fila impar (blanco) → tono 246/240.
+      { let cx2Dia = TABLE_X + COL_DNI + COL_NOMBRE;
+        diasHabiles.forEach(d=>{
+          const tono = _weekBgTone(d.fecha);
+          // Si la fila es par (ya gris GRAY), bajamos un pelín el tono base para que se note el agrupamiento PERO no tape el bandeo.
+          const bgPar = (ai % 2 === 0);
+          const paint = bgPar
+            ? [ Math.max(230, tono[0]-10), Math.max(234, tono[1]-8), Math.max(240, tono[2]-8) ]
+            : tono;
+          doc.setFillColor(...paint);
+          doc.rect(cx2Dia, curY, COL_DIA, ROW_H, 'F');
+          // Raya vertical punteada al FINAL de esta columna si es fin de semana.
+          if(_isWeekBoundaryRight(d.fecha)){
+            doc.setDrawColor(176,192,220);
+            doc.setLineDashPattern([0.9,0.9], 0);
+            doc.setLineWidth(0.45);
+            doc.line(cx2Dia + COL_DIA, curY - 0.1, cx2Dia + COL_DIA, curY + ROW_H + 0.1);
+            doc.setLineDashPattern([], 0);
+          }
+          cx2Dia += COL_DIA;
+        });
+      }
       doc.setDrawColor(220,226,238);doc.setLineWidth(0.15);doc.line(TABLE_X,curY+ROW_H,TABLE_X+TABLE_W,curY+ROW_H);
       let cx=TABLE_X;
       doc.setTextColor(...MUTED);doc.setFontSize(5.6);doc.setFont('helvetica','normal');
@@ -11933,6 +11988,19 @@ async function exportPDFRegistro() {
     // Fila presentes
     chk();
     doc.setFillColor(...NAVY);doc.rect(TABLE_X,curY,TABLE_W,ROW_H,'F');
+    // v166: también rayita punteada vertical en la fila "Presentes" — MISMA alineación que encabezado + celdas.
+    { let cxP = TABLE_X + COL_DNI + COL_NOMBRE;
+      diasHabiles.forEach(d=>{
+        if(_isWeekBoundaryRight(d.fecha)){
+          doc.setDrawColor(214,186,108);     // dorado claro, acorde con navy+gold del encabezado
+          doc.setLineDashPattern([0.9,0.9], 0);
+          doc.setLineWidth(0.55);
+          doc.line(cxP + COL_DIA, curY - 0.2, cxP + COL_DIA, curY + ROW_H + 0.2);
+          doc.setLineDashPattern([], 0);
+        }
+        cxP += COL_DIA;
+      });
+    }
     let cx2=TABLE_X;
     doc.setTextColor(...GOLD);doc.setFontSize(6);doc.setFont('helvetica','bold');
     doc.text('',cx2+COL_DNI/2,curY+ROW_H/2+2,{align:'center'});cx2+=COL_DNI;
