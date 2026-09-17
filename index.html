@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=164"></script>
-<script src="db_supabase.js?v=164"></script>
+<script src="compat.js?v=165"></script>
+<script src="db_supabase.js?v=165"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -11426,9 +11426,11 @@ async function getRegistrosFiltrados() {
   } else {
     filtroDb = { mes: mesSel };
   }
-  if(nivel   && nivel   !== 'TODOS') filtroDb.turno = nivel;
   if(grado   && grado   !== 'TODOS') filtroDb.grado = grado;
   if(seccion && seccion !== 'TODOS') filtroDb.seccion = seccion;
+  // v165: NO enviamos filtroDb.turno a SQL — FIX v162 mismo error registro
+  // El campo turno en registros viene vacío o con "Mañana/Tarde" al escanear QR,
+  // NO coincide con "Avanzado" del select. Aplicar NIVEL en el filtro JS de abajo.
   let regs = await DB.getRegistros(filtroDb);
 
   // Aplicar filtros adicionales en cliente (nivel, grado, sección, búsqueda)
@@ -11478,12 +11480,9 @@ async function getRegistrosFiltrados() {
 
   let filasPDF = Object.values(grupos);
 
-  // Excluir sábados y domingos
-  filasPDF = filasPDF.filter(f => {
-    if(!f.fecha) return true;
-    const d = new Date(f.fecha + 'T12:00:00');
-    return d.getDay() !== 0 && d.getDay() !== 6;
-  });
+  // v165: NO excluir sábados/domingos. El usuario pidió en v162 que se vean los registros
+  // aunque el día de la semana sea fin de semana (hay CEBA que dictan sáb/dom o hubo recuperación).
+  // Si se quiere solo días hábiles se filtra después.
 
   // Generar ausentes si hay filtro individual (alumno) o por nivel/grado/sección
   // No generar si no hay filtro — evita 14k+ filas
@@ -11518,8 +11517,9 @@ async function getRegistrosFiltrados() {
     let cur = new Date(rangoDesde + 'T12:00:00');
     const fin = new Date(rangoHasta + 'T12:00:00');
     while(cur <= fin) {
-      const dia = cur.getDay();
-      if(dia !== 0 && dia !== 6) fechasHabiles.push(cur.toISOString().slice(0,10));
+      // v165: NO saltear sáb/dom. Misma lógica v162 Registro. Incluir todos los días
+      // del rango para rellenar "Sin registro" si corresponde.
+      fechasHabiles.push(cur.toISOString().slice(0,10));
       cur.setDate(cur.getDate() + 1);
     }
 
@@ -11624,12 +11624,13 @@ async function exportXLSX() {
       .filter(a => a.grado===grado && a.seccion===seccion)
       .sort((a,b)=>(a.apellidos||'').localeCompare(b.apellidos||'')||( a.nombres||'').localeCompare(b.nombres||''));
 
-    // Días hábiles del rango
+    // Días del rango para exportación matricial Excel
+    // v165: NO excluir sáb/dom, misma consistencia v162 Registro.
     const diasHabiles=[];
     let cur=new Date(desde+'T12:00:00'), fin=new Date(hasta+'T12:00:00');
     while(cur<=fin) {
       const dow=cur.getDay();
-      if(dow!==0&&dow!==6) diasHabiles.push({
+      diasHabiles.push({
         fecha:cur.toISOString().slice(0,10),
         label:diasSemana[dow].substring(0,3)+' '+String(cur.getDate()).padStart(2,'0')
       });
@@ -20091,13 +20092,17 @@ async function renderReportes(anioCompleto=false) {
   let _soloResumen = false;
   const _isAD = _isAdminDirector();
 
-  // Optimización: pasar filtros de nivel/grado/sección a la DB para reducir transferencia
+  // Optimización: pasar filtros de grado/sección a la DB para reducir transferencia
+  // v165 FIX (igual Registro v162): NO pasamos filtroDb.turno a SQL (nivel).
+  // Motivo: al guardar registro QR el campo turno en la tabla puede venir vacío, o como "Mañana/Tarde",
+  // NO coincide exactamente con el label "Avanzado" del select Nivel. Si lo enviamos en WHERE devuelve 0 rows.
+  // El filtro por NIVEL se aplica 100% en cliente DESPUÉS con _matchNivel (siguiente líneas), que es inteligente.
   const filtrosDbBase = {
     tipo: 'INGRESO',
     columns: 'alumno_id,fecha,tipo,estado,hora',
     grado: (grado && grado !== 'TODOS') ? grado : undefined,
     seccion: (seccion && seccion !== 'TODOS') ? seccion : undefined,
-    turno: (nivel && nivel !== 'TODOS') ? nivel : undefined,
+    // turno: → ¡QUITADO v165! para no excluir registros sin turno / Mal nombre
     alumnoIds: repAlumnoIds || undefined
   };
   if(anioCompleto && _isAD) {
@@ -20144,8 +20149,8 @@ async function renderReportes(anioCompleto=false) {
         const end = _repIsoToDate(hastaEff);
         if(!start || !end) return out;
         for(let d = new Date(start); d <= end; d.setDate(d.getDate()+1)) {
-          const dow = d.getDay();
-          if(dow===0 || dow===6) continue;
+          // v165: NO saltar sáb/dom, mismo fix v162 registro.
+          // El usuario pidió ver asistencia de fin de semana si hubo (recuperación / CEBA sábados).
           out.push(_repDateToIso(d));
         }
         return out;
@@ -20156,8 +20161,8 @@ async function renderReportes(anioCompleto=false) {
         const primerDia = new Date(yy, mm-1, 1);
         const ultimoDia = new Date(yy, mm, 0);
         for(let d=new Date(primerDia); d<=ultimoDia; d.setDate(d.getDate()+1)) {
-          const dow = d.getDay();
-          if(dow!==0&&dow!==6) out.push(_repDateToIso(d));
+          // v165: NO excluir sáb/dom en reportes mensuales tampoco.
+          out.push(_repDateToIso(d));
         }
         return out;
       })();
