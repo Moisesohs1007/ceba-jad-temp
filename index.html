@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=169"></script>
-<script src="db_supabase.js?v=169"></script>
+<script src="compat.js?v=170"></script>
+<script src="db_supabase.js?v=170"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -6867,7 +6867,7 @@ function _abrirRecuperacionPass() {
 window.doLogin = function() {
   if(_loginBusyPersonal) return;
   const email  = _normLoginEmail(document.getElementById('login-email').value);
-  const pass   = document.getElementById('login-pass').value;
+  const pass   = String(document.getElementById('login-pass').value || '').trim();
   const errEl  = document.getElementById('login-error');
   const loadEl = document.getElementById('login-loading');
   document.getElementById('login-email').value = email;
@@ -22592,7 +22592,7 @@ async function openModalUsuario(uid, nombre, rol, email) {
 async function saveUsuario() {
   const nombre = document.getElementById('u-nombre').value.trim();
   const email  = _sanitizeEmail(document.getElementById('u-email').value);
-  const pass   = document.getElementById('u-pass').value;
+  const pass   = String(document.getElementById('u-pass').value || '').trim();
   const rol    = _normRol(document.getElementById('u-rol').value);
   // Sync cargo hidden field
   toggleCargoCustum();
@@ -22967,13 +22967,16 @@ async function saveUsuario() {
       if (editingUsuarioId) _setPxBackup(editingUsuarioId, permisosExtra);
       _invalidarUsuarios();
       setTimeout(() => { _resetPxCheckboxesDOMToFalse(); editingUsuarioId = null; }, 60);
-      // Mostrar/ocultar botón recuperar según teléfono
-      // Si se ingresó nueva contraseña, cambiarla
       if(pass && pass.length >= 6) {
-        // Re-autenticar como admin no es posible en client SDK para otros usuarios
-        // Usamos workaround: crear app secundaria con las credenciales actuales no es posible
-        // Mejor opción: mostrar mensaje informativo
-        toast('Datos actualizados. Para cambiar la contraseña el usuario debe usar "¿Olvidé mi contraseña?" en el login.','info');
+        try {
+          // v170: ya NO mostramos toast que dice "lo guardamos" cuando NO. 
+          // Admin SDK es el único que puede cambiar pass de otro user.
+          // Enviamos link Reset Password al correo en su lugar.
+          await auth.sendPasswordResetEmail(email);
+          toast('Datos actualizados. Se envió un correo a ' + email + ' con link para cambiar la contraseña.','info');
+        } catch(eReset) {
+          toast('Datos actualizados. Para cambiar la contraseña usa el botón 🔑 Reset Pass en la fila del usuario (envía link por correo).','info');
+        }
       } else {
         toast('Usuario actualizado correctamente','success');
       }
@@ -23542,6 +23545,7 @@ async function renderUsuarios() {
         <td style="color:var(--muted);font-size:0.85rem;">${u.email}</td>
         <td><span style="color:${rolColors[rol]||'#fff'};font-weight:600;">${rolLabels[rol]||rol}</span>${u.cargo?`<br><span style="font-size:0.72rem;color:var(--muted);">${u.cargo}</span>`:''}${asigTxt}${tutTxt}</td>
         <td style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-ghost btn-usuario-reset-pass" style="padding:5px 10px;font-size:0.78rem;background:#60a5fa !important;color:#fff !important;" title="Enviar correo para restablecer contraseña" data-email="${encodeURIComponent(u.email||'')}" data-uname="${encodeURIComponent(u.nombre||'')}">🔑</button>
           <button class="btn btn-ghost btn-usuario-edit" style="padding:5px 10px;font-size:0.78rem;" title="Editar usuario" data-uid="${u.uid}" data-uname="${encodeURIComponent(u.nombre||'')}" data-urol="${encodeURIComponent(rol||'')}" data-uemail="${encodeURIComponent(u.email||'')}">✏</button>
           ${rolProfLike ? `<button class="btn btn-primary btn-usuario-asig" style="padding:5px 10px;font-size:0.78rem;background:#10b981 !important;" title="Configurar aulas (asignaciones)" data-uid="${u.uid}" data-uname="${encodeURIComponent(u.nombre||'')}" data-urol="${encodeURIComponent(rol||'')}" data-uemail="${encodeURIComponent(u.email||'')}">⚙ Aulas</button>` : ''}
           ${u.uid !== currentUser.uid ? `<button class="btn btn-danger btn-usuario-delete" style="padding:5px 10px;font-size:0.78rem;" title="Eliminar usuario" data-uid="${u.uid}">✕</button>` : ''}
@@ -23553,6 +23557,15 @@ async function renderUsuarios() {
 
 // Delegado global para botones de la tabla usuarios (evita onclick inline roto por tildes/comillas)
 document.addEventListener('click', function(e){
+  const btn0 = e.target && e.target.closest && e.target.closest('.btn-usuario-reset-pass');
+  if (btn0) {
+    e.preventDefault();
+    const uemail = decodeURIComponent(btn0.getAttribute('data-email') || '');
+    const uname = decodeURIComponent(btn0.getAttribute('data-uname') || '');
+    if(!uemail) { toast('Este usuario no tiene correo registrado','warning'); return; }
+    try { resetUsuarioPass(uemail, uname); } catch(err){ console.error(err); }
+    return;
+  }
   const btn1 = e.target && e.target.closest && e.target.closest('.btn-usuario-edit');
   if (btn1) {
     e.preventDefault();
@@ -23581,6 +23594,28 @@ document.addEventListener('click', function(e){
     return;
   }
 });
+
+// ===== Botón 🔑 Reset Pass por usuario =====
+async function resetUsuarioPass(email, nombreDisplay) {
+  const emailVal = String(email || '').trim().toLowerCase();
+  if(!emailVal) { toast('Ingresa un correo válido','warning'); return; }
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailVal)) { toast('Correo inválido','warning'); return; }
+  try {
+    await auth.sendPasswordResetEmail(emailVal);
+    const quien = nombreDisplay ? `de ${nombreDisplay}` : '';
+    toast('Correo enviado ✉. Revisa la bandeja ' + quien + ' (incluye Spam). Allí puede cambiar la contraseña.','success');
+  } catch(e) {
+    console.warn('resetUsuarioPass', e);
+    const msgs = {
+      'auth/user-not-found': 'No existe usuario con ese correo en Firebase/Supabase. Borra y vuelve a crear el usuario desde el panel.',
+      'auth/invalid-email': 'Correo inválido',
+      'auth/too-many-requests': 'Demasiados intentos, espera 1 minuto',
+      'auth/network-request-failed': 'Sin internet o firewall bloquea'
+    };
+    const msg = msgs[e.code] || ('Error: ' + (e.message || e.code));
+    toast(msg,'error');
+  }
+}
 
 // Acceso directo: abre Editar Usuario y auto-abre modal de asignaciones
 async function _adminQuickOpenAsignaciones(uid, nombre, rol, email) {
