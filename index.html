@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=172"></script>
-<script src="db_supabase.js?v=172"></script>
+<script src="compat.js?v=173"></script>
+<script src="db_supabase.js?v=173"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -23620,13 +23620,24 @@ async function renderUsuarios() {
 
 // Delegado global para botones de la tabla usuarios (evita onclick inline roto por tildes/comillas)
 document.addEventListener('click', function(e){
-  const btn0 = e.target && e.target.closest && e.target.closest('.btn-usuario-reset-pass');
-  if (btn0) {
+  const targetRaw = e.target;
+  const btn0 = targetRaw && targetRaw.closest && targetRaw.closest('.btn-usuario-reset-pass, [data-btn-reset-pass="1"]');
+  if (btn0 && !btn0.disabled) {
     e.preventDefault();
+    e.stopPropagation && e.stopPropagation();
     const uemail = decodeURIComponent(btn0.getAttribute('data-email') || '');
     const uname = decodeURIComponent(btn0.getAttribute('data-uname') || '');
     if(!uemail) { toast('Este usuario no tiene correo registrado','warning'); return; }
-    try { openAdminResetPassModal(uemail, uname); } catch(err){ console.error(err); }
+    try {
+      if (typeof window.openAdminResetPassModal === 'function') {
+        window.openAdminResetPassModal(uemail, uname);
+      } else if (typeof openAdminResetPassModal === 'function') {
+        openAdminResetPassModal(uemail, uname);
+      } else {
+        console.error('openAdminResetPassModal no existe');
+        toast('Error: función reset pass no cargada aún. Espera 1 seg y recarga.','error');
+      }
+    } catch(err){ console.error('delegado btn0', err); try { toast('Error abriendo: '+(err?.message||err),'error');} catch(_){} }
     return;
   }
   const btn1 = e.target && e.target.closest && e.target.closest('.btn-usuario-edit');
@@ -23663,15 +23674,24 @@ document.addEventListener('click', function(e){
 let _arpTarget = { email: '', nombre: '' };
 
 function openAdminResetPassModal(email, nombreDisplay) {
-  const eVal = String(email || '').trim().toLowerCase();
-  _arpTarget = { email: eVal, nombre: String(nombreDisplay || 'Usuario') };
-  const usrEl = document.getElementById('arp-usr');
-  if (usrEl) usrEl.innerHTML = `<b style="color:#fff;">${_arpTarget.nombre}</b><br><span style="color:var(--muted);font-size:0.8rem;">${_arpTarget.email || '(sin correo)'}</span>`;
-  ['arp-new-pass-1','arp-new-pass-2'].forEach(id => { const e = document.getElementById(id); if(e) e.value = ''; });
-  ['arp-set-err','arp-link-err'].forEach(id => { const e = document.getElementById(id); if(e){ e.style.display='none'; e.textContent=''; } });
-  const modal = document.getElementById('modal-admin-reset-pass');
-  if(modal) modal.style.display = 'flex';
+  try {
+    const eVal = String(email || '').trim().toLowerCase();
+    if(!eVal) { toast('Este usuario no tiene correo registrado','warning'); return; }
+    _arpTarget = { email: eVal, nombre: String(nombreDisplay || 'Usuario') };
+    const modal = document.getElementById('modal-admin-reset-pass');
+    if(!modal) { console.error('modal-admin-reset-pass NO EXISTE en el DOM'); toast('Error: no se encontró el modal de reset','error'); return; }
+    const usrEl = document.getElementById('arp-usr');
+    if (usrEl) usrEl.innerHTML = `<b style="color:#fff;">${_arpTarget.nombre}</b><br><span style="color:var(--muted);font-size:0.8rem;">${_arpTarget.email || '(sin correo)'}</span>`;
+    ['arp-new-pass-1','arp-new-pass-2'].forEach(id => { const e = document.getElementById(id); if(e) e.value = ''; });
+    ['arp-set-err','arp-link-err'].forEach(id => { const e = document.getElementById(id); if(e){ e.style.display='none'; e.textContent=''; } });
+    modal.style.display = 'flex';
+  } catch(err) {
+    console.error('openAdminResetPassModal', err);
+    try { toast('Error abriendo modal de reset: ' + (err?.message || err), 'error'); } catch(_){}
+  }
 }
+window.openAdminResetPassModal = openAdminResetPassModal;
+
 function closeAdminResetPassModal() {
   const modal = document.getElementById('modal-admin-reset-pass');
   if(modal) modal.style.display = 'none';
