@@ -24122,31 +24122,102 @@ function openAdminResetPassModal(email, nombreDisplay) {
     ['arp-new-pass-1','arp-new-pass-2'].forEach(id => { const e = document.getElementById(id); if(e) e.value = ''; });
     ['arp-set-err','arp-link-err'].forEach(id => { const e = document.getElementById(id); if(e){ e.style.display='none'; e.textContent=''; } });
     try { _modalLockOn && _modalLockOn(); } catch(_){}
-    // v189 FIX CRÍTICO SÍNCRONO: NO depender de CSS .modal-bg.open ni de setTimeout de 40ms.
-    // La combinación "style.display='' + setTimeout classList.add('open') a los 40ms" creaba race conditions:
-    // en algunos navegadores el modal quedaba con display:none permanentemente.
-    // Ahora: establecemos BOTH propiedades en el MISMO tick SINCRONAMENTE.
+    // ======================================
+    // v190 FIX FUERZA BRUTA CSS INLINE TOTAL
+    // ======================================
+    // YA NO DEPENDEMOS NADA de: clase .open, CSS base .modal-bg, animación fadeIn, z-index inline del HTML,
+    // transform, opacity, backdrop-filter ni display: flex declarado en L1335/L1340.
+    // Seteamos TODO con !important inline con setProperty para garantizar visibilidad 100%.
     try {
-      modal.classList.remove('active'); // limpieza previa
+      // LIMPIEZA previa
+      modal.classList.remove('active');
       modal.classList.add('open');
-      modal.style.setProperty('display', 'flex', 'important');  // important sobreescribe cualquier CSS inline/class
+      // BACKDROP (.modal-bg) = capa oscura exterior que ocupa toda la ventana
+      modal.style.setProperty('position', 'fixed', 'important');
+      modal.style.setProperty('inset', '0 0 0 0', 'important');         /* top right bottom left 0 = toda la pantalla */
+      modal.style.setProperty('display', 'flex', 'important');           /* CENTRAR: flexbox container */
+      modal.style.setProperty('align-items', 'flex-start', 'important'); /* alinear arriba, no center */
+      modal.style.setProperty('justify-content', 'center', 'important'); /* eje X centro */
+      modal.style.setProperty('flex-direction', 'row', 'important');
+      modal.style.setProperty('padding', '20px', 'important');
+      modal.style.setProperty('padding-top', '48px', 'important');
+      modal.style.setProperty('overflow-y', 'auto', 'important');
+      modal.style.setProperty('overflow-x', 'hidden', 'important');
+      modal.style.setProperty('background-color', 'rgba(2, 6, 23, 0.72)', 'important');
+      modal.style.setProperty('-webkit-backdrop-filter', 'blur(4px)', 'important');
+      modal.style.setProperty('backdrop-filter', 'blur(4px)', 'important');
+      modal.style.setProperty('z-index', String(Math.max(9999999, maxZi + 30)), 'important');
+      modal.style.setProperty('opacity', '1', 'important');
+      modal.style.setProperty('visibility', 'visible', 'important');
+      modal.style.setProperty('pointer-events', 'auto', 'important');
+      modal.style.setProperty('transform', 'none', 'important');
+      modal.style.setProperty('transition', 'none', 'important');
+      modal.style.setProperty('animation', 'none', 'important');     /* cancelamos fadeIn que pone opacity 0 al inicio */
+      modal.style.setProperty('will-change', 'initial', 'important');
+
+      // ====== MODAL INTERNO (la caja blanca oscura con contenido) ======
+      // Si existe el primer hijo class="modal", resetear inline también
+      const mInner = modal.querySelector && modal.querySelector(':scope > .modal');
+      if (mInner) {
+        mInner.style.setProperty('position', 'relative', 'important');
+        mInner.style.setProperty('width', '100%', 'important');
+        mInner.style.setProperty('max-width', '440px', 'important');
+        mInner.style.setProperty('margin', '0 auto', 'important');
+        mInner.style.setProperty('margin-top', '32px', 'important');
+        mInner.style.setProperty('margin-bottom', '32px', 'important');
+        mInner.style.setProperty('padding', '24px', 'important');
+        mInner.style.setProperty('border-radius', '16px', 'important');
+        mInner.style.setProperty('box-shadow', '0 20px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(96,165,250,0.10)', 'important');
+        mInner.style.setProperty('background', 'rgb(15, 23, 42)', 'important'); /* slate-900 fondo oscuro del tema */
+        mInner.style.setProperty('color', 'rgb(241, 245, 249)', 'important');
+        mInner.style.setProperty('border', '1px solid rgba(96, 165, 250, 0.18)', 'important');
+        mInner.style.setProperty('opacity', '1', 'important');
+        mInner.style.setProperty('visibility', 'visible', 'important');
+        mInner.style.setProperty('transform', 'none', 'important');
+        mInner.style.setProperty('transition', 'none', 'important');
+        mInner.style.setProperty('animation', 'none', 'important');
+        mInner.style.setProperty('pointer-events', 'auto', 'important');
+        mInner.style.setProperty('left', 'auto', 'important');
+        mInner.style.setProperty('right', 'auto', 'important');
+        mInner.style.setProperty('top', 'auto', 'important');
+        mInner.style.setProperty('bottom', 'auto', 'important');
+        mInner.style.setProperty('display', 'block', 'important');
+      }
     } catch(_eD){
-      // fallback extremo: inline normal por si setProperty no disponible
-      try { modal.classList.add('open'); modal.style.display = 'flex'; } catch(_){}
+      // fallback simple si setProperty lanzara error
+      try {
+        modal.classList.add('open');
+        modal.style.position = 'fixed';
+        modal.style.top = modal.style.right = modal.style.bottom = modal.style.left = '0';
+        modal.style.display = 'flex';
+        modal.style.background = 'rgba(0,0,0,0.75)';
+        modal.style.zIndex = '99999999';
+        modal.style.opacity = '1';
+        modal.style.visibility = 'visible';
+      } catch(_){}
     }
-    try { console.log('[reset-pass step5] modal mostrado. display=',window.getComputedStyle?window.getComputedStyle(modal).display:'?','z=',modal.style.zIndex,'open=',modal.classList.contains('open')); } catch(_){}
-    // v188 CAPA 3: FOCO INICIAL en el 1er input interactivo. Hacerlo en el siguiente microtask pero sin setTimeout largo (4ms solo)
+    // v190 AUDIT step5B: coordenadas REALES en viewport (si width=0 o x=-9999 confirmaría que está fuera de la pantalla)
+    try {
+      const r = modal.getBoundingClientRect();
+      const rInner = (modal.querySelector && modal.querySelector(':scope > .modal')) ? modal.querySelector(':scope > .modal').getBoundingClientRect() : {x:0,y:0,width:0,height:0};
+      console.log('[reset-pass step5B BoundingRect backdrop] x=',Math.round(r.x),'y=',Math.round(r.y),'w=',Math.round(r.width),'h=',Math.round(r.height),'viewport h=',window.innerHeight,'w=',window.innerWidth);
+      console.log('[reset-pass step5B BoundingRect modal interno] x=',Math.round(rInner.x),'y=',Math.round(rInner.y),'w=',Math.round(rInner.width),'h=',Math.round(rInner.height));
+    } catch(_eBR){}
+    // v188 CAPA 3: FOCO INICIAL en el 1er input interactivo. Microtask inmediato SIN preventScroll
     try {
       const focusTarget = document.getElementById('arp-new-pass-1');
       if (focusTarget && typeof focusTarget.focus === 'function') {
         // siguiente tick inmediato
         setTimeout(function(){
-          try { focusTarget.focus({ preventScroll:false }); focusTarget.select && focusTarget.select(); } catch(_){}
-          try { console.log('[reset-pass step6] foco aplicado en input 1. activeEl=',document.activeElement && document.activeElement.id); } catch(_){}
+          try {
+            focusTarget.focus();
+            focusTarget.select && focusTarget.select();
+          } catch(_){}
+          try { console.log('[reset-pass step6] foco aplicado. activeEl=',document.activeElement && document.activeElement.id,'disabled=',document.activeElement && document.activeElement.disabled); } catch(_){}
         }, 0);
       }
     } catch(_eF){}
-    try { console.log('[reset-pass DONE] ✅ modal abierto exitosamente'); } catch(_){}
+    try { console.log('[reset-pass DONE] ✅ modal abierto exitosamente (fuerza bruta inline v190)'); } catch(_){}
   } catch(err) {
     console.error('[reset-pass EXCEPTION]', err);
     try { toast('Error abriendo modal de reset: ' + (err?.message || err), 'error'); } catch(_){}
@@ -24158,11 +24229,15 @@ function closeAdminResetPassModal() {
   try {
     const modal = document.getElementById('modal-admin-reset-pass');
     if(modal) {
-      // v187 FIX CRÍTICO: remover .open SINCRO + display:none INMEDIATO (no esperar 180ms)
-      // porque si display:none queda pendiente, _modalLockOff ve disp!=='none' y NO libera body.modal-lock,
-      // causando bloqueo permanente del sistema (pointer-events:none header/tabs)
       try { modal.classList.remove('open'); modal.classList.remove('active'); } catch(_){}
-      try { modal.style.display = 'none'; } catch(_){}
+      // v190: remover TODOS los inline propertys set por FUERZA BRUTA open (removeAttribute style)
+      // y volver a display:none. Así el próximo open arranca limpio.
+      try {
+        const mInner = modal.querySelector && modal.querySelector(':scope > .modal');
+        if (mInner) { try { mInner.removeAttribute && mInner.removeAttribute('style'); } catch(_){} }
+        try { modal.removeAttribute && modal.removeAttribute('style'); } catch(_){}
+      } catch(_){}
+      try { modal.style.setProperty && modal.style.setProperty('display', 'none', 'important'); } catch(_){ try { modal.style.display = 'none'; } catch(_){} }
     }
     try { _modalLockOff && _modalLockOff(); } catch(_){}
     _arpTarget = { email: '', nombre: '' };
