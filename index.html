@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=183"></script>
-<script src="db_supabase.js?v=183"></script>
+<script src="compat.js?v=184"></script>
+<script src="db_supabase.js?v=184"></script>
 <script>
 /* ===== v183: FIX PERMANENTE RACE CONDITION (CAPAS MÚLTIPLES DEFENSIVAS) =====
    ANÁLISIS PROFUNDO RAÍZ DE RECURRENCIA:
@@ -23288,7 +23288,6 @@ async function saveUsuario() {
             } else {
               toast('✅ Datos actualizados y contraseña cambiada correctamente.','success');
             }
-          }
         } catch(eAdmin) {
           console.warn('[saveUsuario] admin-set-password error', eAdmin);
           try {
