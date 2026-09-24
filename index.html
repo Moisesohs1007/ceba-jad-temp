@@ -24321,8 +24321,11 @@ function _arpShowErr(which, msg) {
   el.textContent = msg || '';
 }
 async function adminResetPassSet() {
+  // v191 RC#EF_NO_DEPLOY + audit logs paso a paso para depuración
+  try { console.log('[rp-set step1] entrada. arpTarget.email=',JSON.stringify(_arpTarget?.email),'nombre=',JSON.stringify(_arpTarget?.nombre)); } catch(_){}
   const p1 = String(document.getElementById('arp-new-pass-1')?.value || '').trim();
   const p2 = String(document.getElementById('arp-new-pass-2')?.value || '').trim();
+  try { console.log('[rp-set step2] campos. p1.length=',p1.length,'p2.length=',p2.length,'match=',p1===p2); } catch(_){}
   if(!p1 || p1.length < 6) { _arpShowErr('set','La nueva contraseña debe tener al menos 6 caracteres.'); return; }
   if(p1 !== p2) { _arpShowErr('set','Las contraseñas no coinciden.'); return; }
   /* === RESTRICCIÓN ESTABLE: campos contraseña SIEMPRE .trim() para evitar espacios al inicio/fin === */
@@ -24334,25 +24337,47 @@ async function adminResetPassSet() {
   const finalEmail = (vEmail.ok ? vEmail.value : dniRaw);
   /* Actualizar target global con el valor limpio */
   _arpTarget.email = finalEmail;
+  try { console.log('[rp-set step3] validaciones OK. finalEmail=',finalEmail,'isDni=',isDni); } catch(_){}
   _arpShowErr('set','');
   try {
     const user = auth.currentUser;
     if(!user) throw new Error('Sin sesión');
+    try { console.log('[rp-set step4] auth user. uid=',user.id,'email=',user.email); } catch(_){}
     const token = await user.getIdToken(true);
-    const resEf = await fetch(`${SUPABASE_URL}/functions/v1/admin-set-password`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'apikey': SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ targetEmail: _arpTarget.email, newPassword: p1 })
-    });
+    try { console.log('[rp-set step5] token JWT obtenido ok (len=',token.length,'). URL endpoint: ', SUPABASE_URL + '/functions/v1/admin-set-password'); } catch(_){}
+    let resEf;
+    try {
+      resEf = await fetch(`${SUPABASE_URL}/functions/v1/admin-set-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'apikey': SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ targetEmail: _arpTarget.email, newPassword: p1 })
+      });
+    } catch(errFetch) {
+      // RC#EF_NO_DEPLOY: fetch LANZA TypeError "NetworkError / CORS preflight 404"
+      // (no retorna resEf con status=404). Capturamos aquí específicamente para mensaje claro.
+      const msgErr = String(errFetch?.message || errFetch?.code || errFetch || '').toLowerCase();
+      try { console.warn('[rp-set step6A] FETCH THREW (CORS/404/sin red). err=',msgErr); } catch(_){}
+      if (/cors|network|failed to fetch|typeerror|preflight|net::/.test(msgErr) || String(errFetch?.name || '') === 'TypeError') {
+        const deployCmd = 'cd "c:\\App Web\\CEBA JAD" ; supabase functions deploy admin-set-password --project-ref uezhytctcrhmkmznwtyv';
+        const m1 = '⚠️ Edge Function admin-set-password NO ESTÁ DEPLOYADA. (fetch lanzó TypeError CORS/Network 404). Pasos OBLIGATORIOS en PowerShell: \n\n' + deployCmd + '\n\nDespués ejecutar DEPLOY y volver a presionar ✅ Cambiar.';
+        _arpShowErr('set', m1);
+        toast(m1, 'error', 18000);
+        return;
+      }
+      // Error de red no clasificado: re-lanzar para catch padre
+      throw errFetch;
+    }
+    try { console.log('[rp-set step6B] fetch HTTP response. status=',resEf.status,'ok=',resEf.ok); } catch(_){}
     const bodyEf = await resEf.json().catch(() => ({}));
+    try { console.log('[rp-set step7] JSON bodyEf:', JSON.stringify(bodyEf)); } catch(_){}
     if (!resEf.ok) {
       // v174: EF NO EXISTE DEPLOYADA. Mostrar error EXPLICITO con instrucciones, sin fallback link (429 too many).
       if (resEf.status === 404 || /CORS|NetworkError|Failed to fetch/.test(String(bodyEf?.error||'').toLowerCase() + ' ' + String(bodyEf?.code||''))) {
-        const m1 = '⚠️ Edge Function admin-set-password NO ESTÁ DEPLOYADA en Supabase. No puedo cambiar la pass HOY. Pasos (PowerShell): cd "c:\\App Web\\CEBA JAD" ; supabase functions deploy admin-set-password --project-ref uezhytctcrhmkmznwtyv . Luego vuelve a intentar.';
+        const m1 = '⚠️ Edge Function admin-set-password NO ESTÁ DEPLOYADA en Supabase. Pasos (PowerShell): cd "c:\\App Web\\CEBA JAD" ; supabase functions deploy admin-set-password --project-ref uezhytctcrhmkmznwtyv . Luego vuelve a intentar.';
         _arpShowErr('set', m1);
         toast(m1, 'error', 12000);
         return;
@@ -24361,6 +24386,7 @@ async function adminResetPassSet() {
       const isMaybeDni = /^\d{8}$/.test(_arpTarget.email) || /^\d{8}@/.test(_arpTarget.email);
       if (isMaybeDni && _arpTarget.email.indexOf('@') > 0) {
         const tryDni = _arpTarget.email.split('@')[0];
+        try { console.log('[rp-set step7B] retry DNI targetDni=',tryDni); } catch(_){}
         const resEf2 = await fetch(`${SUPABASE_URL}/functions/v1/admin-set-password`, {
           method: 'POST',
           headers: {
@@ -24378,6 +24404,7 @@ async function adminResetPassSet() {
             toast('✅ Contraseña cambiada correctamente (Modo Apoderado DNI).','success');
           }
           closeAdminResetPassModal();
+          try { console.log('[rp-set step8] FIN OK modo apoderado retry DNI.'); } catch(_){}
           return;
         }
       }
@@ -24385,8 +24412,9 @@ async function adminResetPassSet() {
       return;
     }
     // v172: distinguir created vs updated
+    try { console.log('[rp-set step8] FIN OK HTTP 200. mode=',bodyEf?.mode,'targetEmail=',bodyEf?.targetEmail,'authUid=',bodyEf?.authUid); } catch(_){}
     if(bodyEf && bodyEf.mode === 'created') {
-      toast('✅ Se CREÓ la cuenta de acceso y se asignó la nueva contraseña. Ya puede ingresar.','success');
+      toast('✅ Se CREÓ la cuenta de acceso y se asignó la nueva contraseña. Ya puede ingresar.','success',12000);
     } else if(bodyEf && bodyEf.warning) {
       toast('⚠️ ' + (bodyEf.error || 'Cuenta creada. Revisa permisos/grados manualmente.'),'warning');
     } else {
@@ -24394,11 +24422,20 @@ async function adminResetPassSet() {
     }
     closeAdminResetPassModal();
   } catch(e) {
-    console.warn('adminResetPassSet', e);
-    _arpShowErr('set', 'Error de conexión: ' + (e?.message || e?.code || e));
+    try { console.warn('adminResetPassSet FINAL CATCH. err:',e); } catch(_){}
+    const deployCmd = 'cd "c:\\App Web\\CEBA JAD" ; supabase functions deploy admin-set-password --project-ref uezhytctcrhmkmznwtyv';
+    const msgErr = String(e?.message || e?.code || e);
+    if (/cors|network|failed to fetch|typeerror|preflight|net::/i.test(msgErr) || String(e?.name || '') === 'TypeError') {
+      const m1 = '⚠️ Edge Function admin-set-password NO ESTÁ DEPLOYADA (CORS 404). Comando PowerShell OBLIGATORIO:\n\n' + deployCmd + '\n\nDespués del deploy, volver a intentar.';
+      _arpShowErr('set', m1);
+      toast(m1, 'error', 20000);
+      return;
+    }
+    _arpShowErr('set', 'Error de conexión: ' + msgErr);
   }
 }
 async function adminResetPassLink() {
+  try { console.log('[rp-link step1] entrada. arpTarget.email=',JSON.stringify(_arpTarget?.email)); } catch(_){}
   if(!_arpTarget.email) { _arpShowErr('link','Este usuario no tiene correo registrado.'); return; }
   _arpShowErr('link','');
   try {
@@ -24408,11 +24445,15 @@ async function adminResetPassLink() {
     const val = _validarCorreoEstricto(_arpTarget.email);
     if (!val.ok) {
       const dniOk = /^\d{8}$/.test(String(_arpTarget.email||'').trim()) || /^\d{8}@/.test(String(_arpTarget.email||'').toLowerCase());
+      try { console.log('[rp-link step2] valEmail=',val,'dniOk=',dniOk); } catch(_){}
       if (!dniOk) { _arpShowErr('link','Correo inválido: ' + (val.err||'formato incorrecto')); return; }
     }
+    try { console.log('[rp-link step3] llamando resetUsuarioPass for correo=', _arpTarget.email, ' nombre=',_arpTarget.nombre); } catch(_){}
     await resetUsuarioPass(_arpTarget.email, _arpTarget.nombre);
+    try { console.log('[rp-link step4] resetUsuarioPass finalizado OK'); } catch(_){}
     closeAdminResetPassModal();
   } catch(e) {
+    try { console.warn('[rp-link FINAL CATCH err=', e, ' code=',e?.code); } catch(_){}
     let msg = String(e?.message || e?.code || e);
     if (e?.code === 'auth/user-not-found' || /user-not-found|no existe/i.test(msg)) {
       msg = 'Esta persona NO tiene cuenta de acceso creada (solo registro en la tabla usuarios). Usa la opción 👑 Modo Admin (arriba) para CREAR la cuenta y setear la contraseña directamente, NO el link por correo.';
