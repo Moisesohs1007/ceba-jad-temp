@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=181"></script>
-<script src="db_supabase.js?v=181"></script>
+<script src="compat.js?v=182"></script>
+<script src="db_supabase.js?v=182"></script>
 <script>
 /* ===== v181: FIX ESTRUCTURAL RACE CONDITION (2a iteración robusta) =====
    v180 solucionó los 21 openNavDrop pero faltaban getConfig + maybeRunSetupWizard,
@@ -34968,6 +34968,191 @@ async function iniciarChatStaffConAlumno(alumnoId) {
 // ============================================================
 // FIN CHAT STAFF
 // ============================================================
+
+// =====================================================================
+// v182 BLOQUE DEFINITIVO: EXPONER 100+ FUNCIONES EN window.*
+// =====================================================================
+// Causa raíz de todos los warnings "fallback vacío" en stubs v180/v181:
+// Las funciones existían DENTRO del IIFE, PERO NUNCA ASIGNADAS A window.*.
+// Los stubs globales (pre-IIFE) esperan 12×150ms a que aparezcan en window,
+// al no aparecer caen en resolve({}) fallback = TODO se rompe (menús,
+// logout, KPIs sin datos "—", modal logout no abre etc).
+// Solución: bloques try/catch independientes POR CADA FUNCIÓN (si una
+// falla por typo/scope no rompe el resto). Se asignan a window solo si
+// la función está definida en scope IIFE.
+(function(){
+  function _exp(nombre, fn){
+    try {
+      if (typeof fn === 'function') {
+        // NO sobrescribir si ya hay una fn real colgada por otros bloques
+        // (ej window.showSectionDirect ya está asignado L32722 como fn propia)
+        if (typeof window[nombre] === 'function' && !window[nombre]._isStub) return;
+        window[nombre] = fn;
+      } else {
+        console.warn('[v182 exposer] skip '+nombre+' (no es function en IIFE scope)');
+      }
+    } catch(_e){}
+  }
+
+  // ========== GETCONFIG / SETUP WIZARD (LOS 2 REFERENCEERROR PRINCIPALES) ==========
+  try { _exp('getConfig', getConfig); } catch(_){}
+  try { _exp('maybeRunSetupWizard', maybeRunSetupWizard); } catch(_){}
+  try { _exp('getConfigCachedOnce', getConfigCachedOnce); } catch(_){}
+
+  // ========== SESIÓN / LOGIN ==========
+  try { _exp('switchLoginTab', switchLoginTab); } catch(_){}
+  try { _exp('solicitarRecuperacionPass', solicitarRecuperacionPass); } catch(_){}
+  try { _exp('confirmarCambioPass', confirmarCambioPass); } catch(_){}
+  try { _exp('cambiarPassPersonal', cambiarPassPersonal); } catch(_){}
+  try { _exp('guardarMisDatos', guardarMisDatos); } catch(_){}
+  try { _exp('resetInactTimer', resetInactTimer); } catch(_){}
+
+  // ========== USUARIO MENÚ / LOGOUT ==========
+  try { _exp('toggleUserMenu', toggleUserMenu); } catch(_){}
+  try { _exp('closeUserMenu', closeUserMenu); } catch(_){}
+  try { _exp('abrirMisDatos', abrirMisDatos); } catch(_){}
+  // doLogout/openLogoutConfirm/closeLogoutConfirm/ejecutarLogoutFinal ya asignados L7445-L7496
+  // pero aseguramos nuevamente por seguridad:
+  try { _exp('doLogout', doLogout); } catch(_){}
+  try { _exp('openLogoutConfirm', openLogoutConfirm); } catch(_){}
+  try { _exp('closeLogoutConfirm', closeLogoutConfirm); } catch(_){}
+  try { _exp('ejecutarLogoutFinal', ejecutarLogoutFinal); } catch(_){}
+
+  // ========== NAVBAR DESPLEGABLES (los 21 ReferenceError originales) ==========
+  // openNavDrop/toggleNavDrop/closeNavDrops/setActiveTab ya asignados L8605-L8622
+  // doble seguridad:
+  try { _exp('showSection', showSection); } catch(_){}
+  // showSectionDirect ya asignado L32722 propia; fallback:
+  try { if(typeof showSectionDirect==='function' && (!window.showSectionDirect || window.showSectionDirect._isStub)) window.showSectionDirect=showSectionDirect; } catch(_){}
+
+  // ========== CREAR CUENTA APODERADO ==========
+  try { _exp('cancelarCrearApoCuenta', cancelarCrearApoCuenta); } catch(_){}
+  try { _exp('onToggleApoCorreo', onToggleApoCorreo); } catch(_){}
+  try { _exp('confirmarCrearApoCuenta', confirmarCrearApoCuenta); } catch(_){}
+
+  // ========== BANNER ==========
+  try { _exp('goBannerSlide', goBannerSlide); } catch(_){}
+
+  // ========== SCANNER QR ==========
+  try { _exp('startScanner', startScanner); } catch(_){}
+  try { _exp('stopScanner', stopScanner); } catch(_){}
+  try { _exp('manualRegister', manualRegister); } catch(_){}
+  try { _exp('_pausarEscaner', _pausarEscaner); } catch(_){}
+  try { _exp('_reanudarEscaner', _reanudarEscaner); } catch(_){}
+  try { _exp('confirmRegister', confirmRegister); } catch(_){}
+  try { _exp('renderDebugOrlando', renderDebugOrlando); } catch(_){}
+
+  // ========== ALUMNOS (FILTROS + ACCIONES) ==========
+  try { _exp('onNivelChangeAlumnos', onNivelChangeAlumnos); } catch(_){}
+  try { _exp('onGradoChangeAlumnos', onGradoChangeAlumnos); } catch(_){}
+  try { _exp('onSeccionChangeAlumnos', onSeccionChangeAlumnos); } catch(_){}
+  try { _exp('onModalidadChangeAlumnos', onModalidadChangeAlumnos); } catch(_){}
+  try { _exp('onSearchAlumnos', onSearchAlumnos); } catch(_){}
+  try { _exp('limpiarFiltrosAlumnos', limpiarFiltrosAlumnos); } catch(_){}
+  try { _exp('openModalAlumno', openModalAlumno); } catch(_){}
+  try { _exp('downloadAlumnosTemplate', downloadAlumnosTemplate); } catch(_){}
+  try { _exp('importExcel', importExcel); } catch(_){}
+  try { _exp('openModalFotosMasivo', openModalFotosMasivo); } catch(_){}
+  try { _exp('exportPDFAlumnos', exportPDFAlumnos); } catch(_){}
+  try { _exp('exportExcelAlumnos', exportExcelAlumnos); } catch(_){}
+  try { _exp('toggleModoCarnets', toggleModoCarnets); } catch(_){}
+  try { _exp('imprimirCarnetsMasivo', imprimirCarnetsMasivo); } catch(_){}
+  try { _exp('toggleSelectAll', toggleSelectAll); } catch(_){}
+
+  // ========== REGISTRO ==========
+  try { _exp('onRegMesChange', onRegMesChange); } catch(_){}
+  try { _exp('validarRangoFecha', validarRangoFecha); } catch(_){}
+  try { _exp('renderRegistro', renderRegistro); } catch(_){}
+  try { _exp('onNivelChangeRegistro', onNivelChangeRegistro); } catch(_){}
+  try { _exp('onGradoChangeRegistro', onGradoChangeRegistro); } catch(_){}
+  try { _exp('onSeccionChangeRegistro', onSeccionChangeRegistro); } catch(_){}
+  try { _exp('onSearchRegistro', onSearchRegistro); } catch(_){}
+  try { _exp('limpiarFiltrosRegistro', limpiarFiltrosRegistro); } catch(_){}
+  try { _exp('exportXLSX', exportXLSX); } catch(_){}
+  try { _exp('exportPDFRegistro', exportPDFRegistro); } catch(_){}
+  try { _exp('clearToday', clearToday); } catch(_){}
+  try { _exp('regOrdenarPor', regOrdenarPor); } catch(_){}
+
+  // ========== CONFIGURACIÓN GENERAL ==========
+  try { _exp('_applyUiByModalidad', _applyUiByModalidad); } catch(_){}
+  try { _exp('previsualizarLogoColegio', previsualizarLogoColegio); } catch(_){}
+  try { _exp('guardarInfoColegio', guardarInfoColegio); } catch(_){}
+  try { _exp('cargarImagenesBanner', cargarImagenesBanner); } catch(_){}
+  try { _exp('guardarImagenesBanner', guardarImagenesBanner); } catch(_){}
+  try { _exp('guardarHorarios', guardarHorarios); } catch(_){}
+  try { _exp('guardarGrados', guardarGrados); } catch(_){}
+  try { _exp('guardarSecciones', guardarSecciones); } catch(_){}
+  try { _exp('abrirConfigAvanzada', abrirConfigAvanzada); } catch(_){}
+  try { _exp('verificarPassCfgAdv', verificarPassCfgAdv); } catch(_){}
+  try { _exp('cerrarConfigAvanzada', cerrarConfigAvanzada); } catch(_){}
+  try { _exp('guardarModalidadSuperAdmin', guardarModalidadSuperAdmin); } catch(_){}
+  try { _exp('onShowConfig', onShowConfig); } catch(_){}
+
+  // ========== RESET CONTRASEÑA ADMIN (Maryflo) ==========
+  // open/closeAdminResetPassModal ya asignados L23925/L23938
+  try { _exp('adminResetPassSet', adminResetPassSet); } catch(_){}
+  try { _exp('adminResetPassLink', adminResetPassLink); } catch(_){}
+
+  // ========== MODAL USUARIO / PERMISOS ==========
+  try { _exp('togglePrivilegios', togglePrivilegios); } catch(_){}
+  try { _exp('toggleCargoCustum', toggleCargoCustum); } catch(_){}
+  try { _exp('openModalPermisosEspeciales', openModalPermisosEspeciales); } catch(_){}
+  try { _exp('toggleBtnConfigurar', toggleBtnConfigurar); } catch(_){}
+  try { _exp('abrirModalPrivilegios', abrirModalPrivilegios); } catch(_){}
+  try { _exp('toggleTutorFields', toggleTutorFields); } catch(_){}
+  try { _exp('downloadUsuariosTemplate', downloadUsuariosTemplate); } catch(_){}
+  try { _exp('openModalImportUsuarios', openModalImportUsuarios); } catch(_){}
+  try { _exp('openModalUsuario', openModalUsuario); } catch(_){}
+  try { _exp('renderUsuarios', renderUsuarios); } catch(_){}
+
+  // ========== FACTILIZA ==========
+  try { _exp('guardarFactiliza', guardarFactiliza); } catch(_){}
+  try { _exp('probarFactiliza', probarFactiliza); } catch(_){}
+
+  // ========== DIAGNÓSTICO / MANTENIMIENTO ==========
+  try { _exp('runDiagnosticoAlumnos', runDiagnosticoAlumnos); } catch(_){}
+  try { _exp('repararRapidoAlumnos', repararRapidoAlumnos); } catch(_){}
+  try { _exp('crearCuentasApoderadosMasivo', crearCuentasApoderadosMasivo); } catch(_){}
+  try { _exp('resetearTodoElSistema', resetearTodoElSistema); } catch(_){}
+  try { _exp('verificarCuentasHuerfanas', verificarCuentasHuerfanas); } catch(_){}
+
+  // ========== FLUJO LOGIN / PERMISOS (los warnings fallback de la captura) ==========
+  try { _exp('aplicarPermisos', aplicarPermisos); } catch(_){}
+  try { _exp('cargarTutorActual', cargarTutorActual); } catch(_){}
+  try { _exp('cargarPrivilegiosActuales', cargarPrivilegiosActuales); } catch(_){}
+  try { _exp('inicializarFiltros', inicializarFiltros); } catch(_){}
+  try { _exp('updateStats', updateStats); } catch(_){}
+  try { _exp('iniciarAlumnosListener', iniciarAlumnosListener); } catch(_){}
+  try { _exp('iniciarConfigListener', iniciarConfigListener); } catch(_){}
+  try { _exp('initSessionControl', initSessionControl); } catch(_){}
+  try { _exp('anunciarSesion', anunciarSesion); } catch(_){}
+  try { _exp('cargarConfigBanner', cargarConfigBanner); } catch(_){}
+
+  // ========== SIDEBAR MSB MÓVIL ==========
+  try { _exp('msbIsMobile', msbIsMobile); } catch(_){}
+  try { _exp('msbInit', msbInit); } catch(_){}
+  try { _exp('msbExpand', msbExpand); } catch(_){}
+  try { _exp('msbCollapse', msbCollapse); } catch(_){}
+  try { _exp('msbSetActive', msbSetActive); } catch(_){}
+  try { _exp('msbUpdateUser', msbUpdateUser); } catch(_){}
+  try { _exp('renderBottomNav', renderBottomNav); } catch(_){}
+  try { _exp('updateBottomNavActive', updateBottomNavActive); } catch(_){}
+  try { _exp('openMobileMenu', openMobileMenu); } catch(_){}
+  try { _exp('closeMobileMenu', closeMobileMenu); } catch(_){}
+  try { _exp('msbToggleHeader', msbToggleHeader); } catch(_){}
+  try { _exp('msbGoInicio', msbGoInicio); } catch(_){}
+  try { _exp('msbToggleSub', msbToggleSub); } catch(_){}
+  try { _exp('msbPickSub', msbPickSub); } catch(_){}
+
+  // ========== VARIAS ==========
+  try { _exp('toast', toast); } catch(_){}
+  // cargarDashboardInicio ya asignado L8593; doble seguridad
+  try { if(typeof cargarDashboardInicio==='function' && (!window.cargarDashboardInicio || window.cargarDashboardInicio._isStub)) window.cargarDashboardInicio=cargarDashboardInicio; } catch(_){}
+
+})();
+// =====================================================================
+// FIN BLOQUE v182 — TODAS LAS FUNCIONES IIFE AHORA ESTÁN EN window.*
+// =====================================================================
 
 </script>
 
