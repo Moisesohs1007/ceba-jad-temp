@@ -7457,6 +7457,15 @@ function openLogoutConfirm() {
   try {
     const modal = document.getElementById('modal-logout-confirm');
     if(!modal) { ejecutarLogoutFinal(); return; }
+    // v191 RC#ZERO_SIZE CAPA 2: asegurarse nodo directo en BODY (no dentro de .section display:none)
+    try {
+      if (modal.parentNode && modal.parentNode !== document.body) {
+        try {
+          if (window._ensureModalsEnBody) window._ensureModalsEnBody('open-logout-confirm');
+          else document.body.appendChild(modal);
+        } catch(_eM){}
+      }
+    } catch(_eP){}
     // v188 ANTI-STACKING (igual que openAdminResetPassModal): cerrar modales previos + z-index dinámico
     try { closeAllModals && closeAllModals(); } catch(_eCm){}
     try {
@@ -7468,7 +7477,43 @@ function openLogoutConfirm() {
     try {
       modal.classList.remove('active');
       modal.classList.add('open');
+      modal.style.setProperty('position', 'fixed', 'important');
+      modal.style.setProperty('inset', '0 0 0 0', 'important');
       modal.style.setProperty('display', 'flex', 'important');
+      modal.style.setProperty('align-items', 'flex-start', 'important');
+      modal.style.setProperty('justify-content', 'center', 'important');
+      modal.style.setProperty('padding', '48px 20px 20px', 'important');
+      modal.style.setProperty('overflow-y', 'auto', 'important');
+      modal.style.setProperty('background-color', 'rgba(2, 6, 23, 0.72)', 'important');
+      modal.style.setProperty('-webkit-backdrop-filter', 'blur(4px)', 'important');
+      modal.style.setProperty('backdrop-filter', 'blur(4px)', 'important');
+      modal.style.setProperty('z-index', String(maxZi + 30), 'important');
+      modal.style.setProperty('opacity', '1', 'important');
+      modal.style.setProperty('visibility', 'visible', 'important');
+      modal.style.setProperty('pointer-events', 'auto', 'important');
+      modal.style.setProperty('transform', 'none', 'important');
+      modal.style.setProperty('transition', 'none', 'important');
+      modal.style.setProperty('animation', 'none', 'important');
+      const mInner = modal.querySelector && modal.querySelector(':scope > .modal');
+      if (mInner) {
+        mInner.style.setProperty('position', 'relative', 'important');
+        mInner.style.setProperty('width', '100%', 'important');
+        mInner.style.setProperty('max-width', '380px', 'important');
+        mInner.style.setProperty('margin', '32px auto', 'important');
+        mInner.style.setProperty('padding', '24px', 'important');
+        mInner.style.setProperty('border-radius', '16px', 'important');
+        mInner.style.setProperty('box-shadow', '0 20px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(96,165,250,0.10)', 'important');
+        mInner.style.setProperty('background', 'rgb(15, 23, 42)', 'important');
+        mInner.style.setProperty('color', 'rgb(241, 245, 249)', 'important');
+        mInner.style.setProperty('border', '1px solid rgba(96, 165, 250, 0.18)', 'important');
+        mInner.style.setProperty('opacity', '1', 'important');
+        mInner.style.setProperty('visibility', 'visible', 'important');
+        mInner.style.setProperty('transform', 'none', 'important');
+        mInner.style.setProperty('transition', 'none', 'important');
+        mInner.style.setProperty('animation', 'none', 'important');
+        mInner.style.setProperty('pointer-events', 'auto', 'important');
+        mInner.style.setProperty('display', 'block', 'important');
+      }
     } catch(_eD){
       try { modal.classList.add('open'); modal.style.display = 'flex'; } catch(_){}
     }
@@ -24109,6 +24154,29 @@ function openAdminResetPassModal(email, nombreDisplay) {
     const modal = document.getElementById('modal-admin-reset-pass');
     if(!modal) { console.error('[reset-pass step3 ABORTO] modal-admin-reset-pass NO EXISTE EN DOM'); toast('Error: no se encontró el modal de reset','error'); return; }
     try { console.log('[reset-pass step3] modal encontrado. state display=',modal.style.display,'open=',modal.classList.contains('open')); } catch(_){}
+    // =========================================================
+    // v191 RC#ZERO_SIZE CAPA 2 (FALLBACK OPEN): ANTES DE NADA, ASEGURAR NODO EN <body>
+    // Si parentNode NO ES document.body → significa que está DENTRO de un .section (ej: #sec-config)
+    // que tiene display:none al cambiar a pestaña Usuarios → BoundingRect 0x0 INEVITABLE por W3C.
+    // Solución: MOVERLO AL BODY. Auditamos before / after.
+    // =========================================================
+    let parentBefore = '';
+    try {
+      parentBefore = (modal.parentNode ? (modal.parentNode.nodeName + (modal.parentNode.id ? '#'+modal.parentNode.id : '')) : '(sin padre)');
+      console.log('[reset-pass step5C parent BEFORE] parent=' + parentBefore);
+      if (modal.parentNode && modal.parentNode !== document.body) {
+        try {
+          if (window._ensureModalsEnBody) {
+            const m = window._ensureModalsEnBody('open-reset-pass');
+            try { console.log('[reset-pass step5C move-by-fn] movidos:',m); } catch(_){}
+          } else {
+            document.body.appendChild(modal);
+          }
+        } catch(_eMover){}
+      }
+      const parentAfter = (modal.parentNode ? (modal.parentNode.nodeName + (modal.parentNode.id ? '#'+modal.parentNode.id : '')) : '(sin padre)');
+      console.log('[reset-pass step5C parent AFTER ] parent=' + parentAfter + ' (esperado BODY)');
+    } catch(_e5C){ try { console.log('[reset-pass step5C error]', _e5C); } catch(_){} }
     // v188 CAPA 1 ANTI-STACKING: cerrar TODOS los demás modales abiertos (modal-usuario, modal-permisos etc)
     try { closeAllModals && closeAllModals(); } catch(_eCm){}
     // v188 CAPA 2 ANTI-STACKING: z-index DINÁMICO por encima del máximo actual + 5
@@ -35501,6 +35569,46 @@ async function iniciarChatStaffConAlumno(alumnoId) {
   try { _exp('toast', toast); } catch(_){}
   // cargarDashboardInicio ya asignado L8593; doble seguridad
   try { if(typeof cargarDashboardInicio==='function' && (!window.cargarDashboardInicio || window.cargarDashboardInicio._isStub)) window.cargarDashboardInicio=cargarDashboardInicio; } catch(_){}
+
+  // =====================================================================
+  // v191 RC#ZERO_SIZE: ASEGURAR QUE TODOS LOS MODALES ESTÉN DIRECTAMENTE EN <body>
+  // NUNCA dentro de .section { display:none } (ejecucion al cambiar de pestaña Config → Usuarios el sec-config oculta todo a 0x0)
+  // =====================================================================
+  try {
+    function _ensureModalsEnBody(reason) {
+      try {
+        if (!document || !document.body) return 0;
+        const all = document.querySelectorAll('[class*="modal-bg"], [id*="modal-"]');
+        let moved = 0;
+        for (let i = 0; i < all.length; i++) {
+          const m = all[i];
+          if (!m || !m.tagName || m.tagName.toLowerCase() !== 'div') continue;
+          // saltar elementos internos (hijos .modal hijo .modal-bg que no son backdrop)
+          if (m.classList.contains('modal') && !m.classList.contains('modal-bg') && !m.id) continue;
+          const isBackdrop = m.classList.contains('modal-bg')
+            || (m.style && /position\s*:\s*fixed/.test(m.getAttribute('style') || '') && /inset\s*:/.test(m.getAttribute('style') || ''))
+            || (m.id && /^modal-(admin-reset|logout|cambiar-pass|mis-datos|crear-apo|cfg-adv-pass|usuario|permisos|privilegios|import|incidente|fotos)$/.test(m.id));
+          if (!isBackdrop) continue;
+          if (m.parentNode && m.parentNode !== document.body) {
+            try {
+              const oldParent = m.parentNode.nodeName + (m.parentNode.id ? '#' + m.parentNode.id : '') + (m.parentNode.className ? '.' + String(m.parentNode.className).split(' ').filter(Boolean).slice(0,2).join('.') : '');
+              document.body.appendChild(m);
+              moved++;
+              try { console.log('[v191 mover modal '+reason+'] '+(m.id||('.'+String(m.className).slice(0,40)))+' ← salió de '+oldParent+' → ahora BODY'); } catch(_){}
+            } catch(_eAppend){}
+          }
+        }
+        return moved;
+      } catch(_){ return 0; }
+    }
+    // v191: exposer global para fallback en open()
+    window._ensureModalsEnBody = _ensureModalsEnBody;
+    // Ejecución inmediata cuando termina de cargar el IIFE
+    const movidos = _ensureModalsEnBody('iife-final');
+    try { console.log('[v191 BOOTSTRAP] modales movidos de .section ocultas → BODY:', movidos); } catch(_){}
+    // Segunda ejecución tras 1 frame por si el DOM todavía colgaba elementos
+    try { setTimeout(function(){ try { _ensureModalsEnBody('iife+raf'); } catch(_){} }, 50); } catch(_){}
+  } catch(_z){}
 
 })();
 // =====================================================================
