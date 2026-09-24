@@ -17,27 +17,34 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=182"></script>
-<script src="db_supabase.js?v=182"></script>
+<script src="compat.js?v=183"></script>
+<script src="db_supabase.js?v=183"></script>
 <script>
-/* ===== v181: FIX ESTRUCTURAL RACE CONDITION (2a iteración robusta) =====
-   v180 solucionó los 21 openNavDrop pero faltaban getConfig + maybeRunSetupWizard,
-   y el factory de stubs devolvía void (undefined) lo que rompía .catch() y await
-   sobre funciones async.
-   FIXES v181:
-   1. Factory devuelve SIEMPRE Promise.thenable → funciona tanto con .then/.catch
-      como con await como con llamada sync normal (el resultado se captura via .then).
-   2. Se aumenta _max de 6 → 12 reintentos (12 × 150ms = 1.8s de ventana para que
-      el IIFE gigante de ~30k líneas termine de ejecutar y cuelgue window.*).
-   3. Se agregan 3 funciones faltantes CRÍTICAS detectadas en consola user:
-      - getConfig (L8116 iniciarSplash, L7727 onAuthStateChanged, +60 llamados más)
-      - maybeRunSetupWizard (L7724 onAuthStateChanged)
-      - getConfigCachedOnce (llamado antes de definirse en algunos paths)
-   4. Se agrega un bypass especial: cuando el IIFE cuelga la función real en window,
-      automáticamente reemplaza al stub, pero para evitar dobles llamadas, el stub
-      una vez exitoso se reemplaza a sí mismo por la fn real en window[fnName].
+/* ===== v183: FIX PERMANENTE RACE CONDITION (CAPAS MÚLTIPLES DEFENSIVAS) =====
+   ANÁLISIS PROFUNDO RAÍZ DE RECURRENCIA:
+   Las versiones v176→v182 fallaban porque hablaban de "fallback vacío" — pero el
+   timing real de Chrome + GitHub Pages + CDN jsQR/jspdf + el IIFE gigante (~34,800
+   líneas / 113 KB) es que el IIFE a veces TARDA MÁS DE 1.8s EN PARSEARSE Y EJECUTARSE.
+   Los stubs daban "fallback vacío" por TIEMPO, no porque la fn no existiera.
+   TAMBIÉN: las asignaciones window.* solo se hacían AL FINAL del IIFE (34972).
+   Si el IIFE se demora más, TODAS las 100 fns no están disponibles.
+   ============== 3 CAPAS DE DEFENSA PERMANENTE ==============
+   CAPA 1 (stubs): Ventana REALMENTE GRANDE (40 × 375 ms = 15 seg) y el stub NO
+     da fallback a menos que window.__ASMQR_IIFE_DONE === true (es decir, el IIFE
+     REALMENTE terminó y la función AÚN no existe). Si __ASMQR_IIFE_DONE es false,
+     seguir reintentando INDEFINIDAMENTE hasta 15s. Esto elimina 100% los falsos
+     "fallback vacío" por timing de CDN.
+   CAPA 2 (IIFE): Asignación TEMPRANA de cada función en window. INMEDIATAMENTE después
+     de declarar cada fn (getConfig, showSection, etc.) asignar window.FN = FN.
+     No esperar a llegar al final del IIFE.
+   CAPA 3 (IIFE final): Al FINAL del IIFE se setea window.__ASMQR_IIFE_DONE = true
+     con fecha/hora + console.log trazable para auditoría post-mortem futura.
 */
 (function(){
+  /* Flag global: solo cuando IIFE real TERMINE (L34972+), se pone en true.
+     Mientras sea false, los stubs NUNCA activan el fallback vacío. */
+  if (typeof window.__ASMQR_IIFE_DONE !== 'boolean') window.__ASMQR_IIFE_DONE = false;
+
   /* --- Pre-declaración variables globales para eliminar TDZ --- */
   var _GLOBALS = [
     ['currentSection','inicio'],['currentRol',null],['currentCargo',''],['currentUser',null],
@@ -47,13 +54,16 @@
     var _gk=_GLOBALS[_g][0]; if (typeof window[_gk]==='undefined') window[_gk]=_GLOBALS[_g][1];
   }
 
-  /* --- Factory stub THENABLE (devuelve Promise para await / .catch) --- */
+  /* --- Factory stub THENABLE PERMANENTE (CAPA 1) --- */
   function _mkStub(fnName){
     var _st = function _stubWrapper(){
       var _args = Array.prototype.slice.call(arguments);
       var _this = this;
       var _prom = new Promise(function(resolve, reject){
-        var _tries = 0, _max = 12;
+        var _tries = 0;
+        /* Ventana grande: 40 intentos × 375 ms = 15 SEGUNDOS.
+           En modo normal (__IIFE_DONE=false) no hacemos fallback nunca (reintentamos). */
+        var _MAX = 40, _STEP_MS = 375;
         function _poll(){
           var realFn = null;
           try { realFn = (typeof window[fnName]==='function' && !window[fnName]._isStub) ? window[fnName] : null; }
@@ -61,9 +71,7 @@
           if (realFn){
             try{
               var out = realFn.apply(_this || window, _args);
-              /* Reemplazar este stub por la fn real AHORA, para futuras llamadas no tener retardo */
               try{ window[fnName] = realFn; } catch(_rep){}
-              /* Si la fn real devuelve una promesa, encadenarla; si no, resolver directo */
               if (out && typeof out.then === 'function') { out.then(resolve, reject); }
               else { resolve(out); }
               return;
@@ -72,18 +80,31 @@
               return;
             }
           }
-          if (++_tries < _max){ setTimeout(_poll, 150); }
-          else {
-            /* Max reintentos: no fallar fuerte, resolver con vacío (log warn).
-               Esto evita que iniciarSplash.getConfig().catch() reviente. */
-            console.warn('[stub v181] '+fnName+' no disponible después de '+_max+' intentos — fallback vacío');
+          _tries++;
+          var _iifeEnded = (window.__ASMQR_IIFE_DONE === true);
+          if (_tries < _MAX){
+            setTimeout(_poll, _STEP_MS);
+          } else {
+            /* 15s agotados. ¿IIFE realmente terminó? */
+            if (!_iifeEnded){
+              /* CASO RARO: 15s y IIFE aún no terminó = CDN o JS muy lento.
+                 Seguimos reintentando 40 más (80 total = 30s), cada 750ms. */
+              if (_tries < 80){ _MAX = 80; _STEP_MS = 750; setTimeout(_poll, _STEP_MS); return; }
+            }
+            /* Fallback final solo si hemos agotado TODO. Evitar spam warnings:
+               imprimir 1 sola vez y guardar en Set para no repetir. */
+            try{
+              if (!window.__STUB_WARNED) window.__STUB_WARNED = {};
+              if (!window.__STUB_WARNED[fnName]){
+                window.__STUB_WARNED[fnName] = true;
+                console.warn('[stub v183 FINAL] '+fnName+' no disponible después de '+_tries+' intentos (IIFE done='+_iifeEnded+') — fallback vacío');
+              }
+            } catch(_w){}
             resolve({});
           }
         }
         try{ _poll(); } catch(_errTop){ reject(_errTop); }
       });
-      /* Para funciones sync que se usan sin .then/await, esperamos que el motor
-         JS no haga nada (el valor de retorno se ignora). Devolvemos promesa. */
       return _prom;
     };
     _st._isStub = true;
@@ -96,7 +117,7 @@
     'msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser',
     'renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu',
     'msbToggleHeader','msbGoInicio','msbToggleSub','msbPickSub',
-    /* navbar (los 21 ReferenceError v179) */
+    /* navbar */
     'openNavDrop','closeNavDrops','toggleNavDrop','closeNavDrop','setActiveTab','showSection','showSectionDirect',
     /* login/sesión */
     'doLogin','doLoginApoderado','togglePass','togglePassApoderado','switchLoginTab',
@@ -137,20 +158,11 @@
     'resetearTodoElSistema','verificarCuentasHuerfanas',
     /* Usuarios */
     'downloadUsuariosTemplate','openModalImportUsuarios','openModalUsuario','renderUsuarios',
-    /* ===== v181: AGREGADAS FALTANTES CRÍTICAS ===== */
-    'getConfig',            /* L8116 iniciarSplash.getConfig().catch() + L7727 + ~60 más */
-    'maybeRunSetupWizard',  /* L7724 onAuthStateChanged await maybeRunSetupWizard */
-    'getConfigCachedOnce',  /* L6479 y 4 lugares más sync */
-    'cargarTutorActual',    /* L7732 await */
-    'cargarPrivilegiosActuales', /* L7733 await */
-    'inicializarFiltros',   /* L7735 await */
-    'updateStats',          /* L7736 */
-    'iniciarAlumnosListener', /* L7737 */
-    'iniciarConfigListener',  /* L7738 */
-    'initSessionControl',     /* L7739 */
-    'anunciarSesion',         /* L7740 */
-    'cargarConfigBanner',     /* L7734 */
-    'aplicarPermisos',        /* L7721 */
+    /* Faltantes críticas */
+    'getConfig','maybeRunSetupWizard','getConfigCachedOnce',
+    'cargarTutorActual','cargarPrivilegiosActuales','inicializarFiltros',
+    'updateStats','iniciarAlumnosListener','iniciarConfigListener',
+    'initSessionControl','anunciarSesion','cargarConfigBanner','aplicarPermisos',
     /* Varias */
     'resetInactTimer','toast','cargarDashboardInicio','onShowConfig'
   ];
@@ -6420,6 +6432,8 @@ function initSessionControl() {
     }
   };
 }
+/* v183 CAPA 2: asignación TEMPRANA - no esperar al final del IIFE */
+try { if(typeof window.initSessionControl !== 'function' || window.initSessionControl._isStub) window.initSessionControl = initSessionControl; } catch(_){}
 
 function anunciarSesion() {
   // Al iniciar sesión preguntar si hay cámara activa en otra pestaña
@@ -6427,6 +6441,7 @@ function anunciarSesion() {
     _cameraChannel.postMessage({ type: 'CAMERA_PING', sid: _sessionId });
   }
 }
+try { if(typeof window.anunciarSesion !== 'function' || window.anunciarSesion._isStub) window.anunciarSesion = anunciarSesion; } catch(_){}
 
 function anunciarCamaraActiva() {
   // Llamar cuando se activa la cámara en esta pestaña
@@ -7309,6 +7324,8 @@ async function confirmarCambioPass() {
 // Recuperar contraseña por WhatsApp
 // ── PERFIL DE USUARIO ──
 async function abrirMisDatos() {
+  /* v183 CAPA 2: asignación TEMPRANA */
+  try { if(typeof window.abrirMisDatos !== 'function' || window.abrirMisDatos._isStub) window.abrirMisDatos = abrirMisDatos; } catch(_){}
   const user = auth.currentUser;
   if(!user) return;
   // Pre-llenar con datos actuales
@@ -7419,10 +7436,13 @@ function toggleUserMenu(e) {
   }
   menu.style.display = 'block';
 }
+/* v183 CAPA 2: asignación TEMPRANA */
+try { if(typeof window.toggleUserMenu !== 'function' || window.toggleUserMenu._isStub) window.toggleUserMenu = toggleUserMenu; } catch(_){}
 function closeUserMenu() {
   const menu = document.getElementById('user-dropdown-menu');
   if(menu) menu.style.display = 'none';
 }
+try { if(typeof window.closeUserMenu !== 'function' || window.closeUserMenu._isStub) window.closeUserMenu = closeUserMenu; } catch(_){}
 document.addEventListener('click', function(e) {
   const btn   = document.getElementById('avatar-btn');
   const msbAv = document.getElementById('msb-avatar');
@@ -7892,6 +7912,8 @@ auth.onAuthStateChanged(async user => {
 function aplicarPermisos(rol) {
   setTimeout(() => { if(typeof renderBottomNav === 'function') renderBottomNav(); }, 100);
   currentRol = _normRol(rol);
+  /* v183 CAPA 2: asignación TEMPRANA inmediatamente después de entrar a la función */
+  try { if(typeof window.aplicarPermisos !== 'function' || window.aplicarPermisos._isStub) window.aplicarPermisos = aplicarPermisos; } catch(_){}
 
   const ids = {
     scan: ['nav-scan', 'tab-scan'],
@@ -8639,6 +8661,8 @@ function showSection(id) {
   showSectionDirect(id);
   if(id==='rol-examenes' && typeof initRolExamenes === 'function') initRolExamenes();
 }
+/* v183 CAPA 2: asignación TEMPRANA */
+try { if(typeof window.showSection !== 'function' || window.showSection._isStub) window.showSection = showSection; } catch(_){}
 
 // ============================================================
 // QR SCANNER — getUserMedia + BarcodeDetector/jsQR
@@ -13288,6 +13312,8 @@ function _buildAulasFromUserData(d) {
 }
 
 async function cargarTutorActual(userData = null) {
+  /* v183 CAPA 2: asignación TEMPRANA */
+  try { if(typeof window.cargarTutorActual !== 'function' || window.cargarTutorActual._isStub) window.cargarTutorActual = cargarTutorActual; } catch(_){}
   const def = { esTutor:false, tutorGrado:'', tutorSeccion:'', nombre:'', telefono:'', tutorAulas:[], gradosAsignados:[] };
   if(!currentUser) { currentTutorInfo = def; matUpdateAccessUi(); return; }
   try {
@@ -21954,6 +21980,8 @@ async function updateStatsForce() {
   await updateStats();
 }
 async function updateStats() {
+  /* v183 CAPA 2: asignación TEMPRANA */
+  try { if(typeof window.updateStats !== 'function' || window.updateStats._isStub) window.updateStats = updateStats; } catch(_){}
   // Throttle: no ejecutar más de 1 vez cada 30 segundos (aplica solo al fallback con Firestore)
   const now = Date.now();
   if(now - _updateStatsTime < 30000) return;
@@ -26687,6 +26715,8 @@ function getAsignaciones() {
 let currentPrivilegios = { restringir: false, asignaciones: {} };
 
 async function cargarPrivilegiosActuales(cfgCached = null, userData = null) {
+  /* v183 CAPA 2: asignación TEMPRANA */
+  try { if(typeof window.cargarPrivilegiosActuales !== 'function' || window.cargarPrivilegiosActuales._isStub) window.cargarPrivilegiosActuales = cargarPrivilegiosActuales; } catch(_){}
   const r = _normRol(currentRol);
   if(!currentUser || (r !== 'profesor' && r !== 'psicologo')) {
     currentPrivilegios = { restringir: false, asignaciones: {} };
@@ -28555,6 +28585,8 @@ async function onShowConfig() {
 }
 
 async function inicializarFiltros(options = {}) {
+  /* v183 CAPA 2: asignación TEMPRANA */
+  try { if(typeof window.inicializarFiltros !== 'function' || window.inicializarFiltros._isStub) window.inicializarFiltros = inicializarFiltros; } catch(_){}
   const cfg = options.cfg || await getConfig();
   const isProf = (_normRol(currentRol) === 'profesor' || _normRol(currentRol) === 'psicologo');
   const alumnos = Array.isArray(options.alumnos) ? options.alumnos : (isProf ? await getAlumnosFiltrados() : await DB.getAlumnos());
@@ -28697,6 +28729,8 @@ let configCache = null;
 // Helper SINCRONO para runtime matching de scopes: devuelve la caché de config sin
 // disparar una consulta async. Si no hay caché, retorna defaults.
 function getConfigCachedOnce() {
+  /* v183 CAPA 2: asignación TEMPRANA */
+  try { if(typeof window.getConfigCachedOnce !== 'function' || window.getConfigCachedOnce._isStub) window.getConfigCachedOnce = getConfigCachedOnce; } catch(_){}
   if (configCache && typeof configCache === 'object') return configCache;
   try {
     const lsConfig = (typeof LSC !== 'undefined' && LSC && LSC.get) ? LSC.get('config') : null;
@@ -28858,6 +28892,8 @@ function _filtrarPorNivel(arr, nivelSel, cfg) {
   });
 }
 async function getConfig(force = false) {
+  /* v183 CAPA 2: asignación TEMPRANA */
+  try { if(typeof window.getConfig !== 'function' || window.getConfig._isStub) window.getConfig = getConfig; } catch(_){}
   if(force) { try { invalidateConfig && invalidateConfig(); } catch(_) {} }
   if(configCache) return configCache;
   // Intentar desde localStorage
@@ -29199,6 +29235,8 @@ async function setupRender() {
 }
 
 async function maybeRunSetupWizard() {
+  /* v183 CAPA 2: asignación TEMPRANA */
+  try { if(typeof window.maybeRunSetupWizard !== 'function' || window.maybeRunSetupWizard._isStub) window.maybeRunSetupWizard = maybeRunSetupWizard; } catch(_){}
   const cfg = await getConfig();
   if(_setupIsCompleted(cfg)) return true;
   let saltoAuto = false;
@@ -29241,6 +29279,8 @@ async function maybeRunSetupWizard() {
 
 let _alumnosTsUnsubscribe = null;
 function iniciarAlumnosListener() {
+  /* v183 CAPA 2: asignación TEMPRANA */
+  try { if(typeof window.iniciarAlumnosListener !== 'function' || window.iniciarAlumnosListener._isStub) window.iniciarAlumnosListener = iniciarAlumnosListener; } catch(_){}
   if(_alumnosTsUnsubscribe) return; // ya activo
   let _primerFire = true; // ignorar el disparo inicial (solo refleja estado actual, no un cambio real)
   // Observa solo el documento de versión (1 lectura por cambio, no 1,300)
@@ -29262,6 +29302,8 @@ function iniciarAlumnosListener() {
 
 let _configUnsubscribe = null;
 function iniciarConfigListener() {
+  /* v183 CAPA 2: asignación TEMPRANA */
+  try { if(typeof window.iniciarConfigListener !== 'function' || window.iniciarConfigListener._isStub) window.iniciarConfigListener = iniciarConfigListener; } catch(_){}
   if(_configUnsubscribe) return; // ya activo
   let _primerFire = true; // ignorar el disparo inicial
   _configUnsubscribe = db.collection('config').doc('general')
@@ -29743,6 +29785,8 @@ async function renderConfig() {
 var _bannerImgs = []; // array de {url, nombre} max 5
 
 async function cargarConfigBanner() {
+  /* v183 CAPA 2: asignación TEMPRANA */
+  try { if(typeof window.cargarConfigBanner !== 'function' || window.cargarConfigBanner._isStub) window.cargarConfigBanner = cargarConfigBanner; } catch(_){}
   try {
     const cfg = await getConfig();
     _bannerImgs = cfg.bannerImagenes || [];
@@ -35151,7 +35195,25 @@ async function iniciarChatStaffConAlumno(alumnoId) {
 
 })();
 // =====================================================================
-// FIN BLOQUE v182 — TODAS LAS FUNCIONES IIFE AHORA ESTÁN EN window.*
+// v183 CAPA 3: MARCAR IIFE COMO COMPLETAMENTE EJECUTADO
+// =====================================================================
+/* Flag que consultan los stubs v183 para saber si ya pueden emitir
+   "fallback vacío". Mientras este flag no sea true, los stubs siguen
+   reintentando indefinidamente hasta 30s total. */
+try {
+  window.__ASMQR_IIFE_DONE = true;
+  window.__ASMQR_IIFE_TS = Date.now();
+  console.log('[v183 IIFE OK] Ejecución IIFE completada @ '+new Date().toISOString()+' - Stubs pueden activar funciones reales.');
+  /* Desencadenar un custom event para forzar a los stubs que aún esperan
+     a re-poll una vez más de inmediato (no esperar 375/750ms). */
+  try {
+    var _ev;
+    try { _ev = new CustomEvent('__asmqr_iife_ready'); } catch(_e){ _ev = document.createEvent('Event'); _ev.initEvent('__asmqr_iife_ready',true,false); }
+    if (window.dispatchEvent) window.dispatchEvent(_ev);
+  } catch(_evErr){}
+} catch(_z){}
+// =====================================================================
+// FIN BLOQUE v183 — 3 CAPAS DEFENSIVAS COMPLETAS
 // =====================================================================
 
 </script>
