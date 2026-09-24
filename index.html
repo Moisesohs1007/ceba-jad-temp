@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=178"></script>
-<script src="db_supabase.js?v=178"></script>
+<script src="compat.js?v=179"></script>
+<script src="db_supabase.js?v=179"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -7962,7 +7962,23 @@ function showSectionDirect(id) {
   if(id==='alertas') {
     initAlertas();
   }
-  if(id==='inicio') cargarDashboardInicio();
+  if(id==='inicio') {
+    // v179: cargarDashboardInicio declarada async en L8263 (MAS ABAJO). Si por Temporal Dead Zone JS o scope
+    // no esta definida al momento de ejecutar showSectionDirect (splash), catch el ReferenceError.
+    // Mejor: reintentar 2 veces con setTimeout 100ms. NUNCA debe ser Uncaught ReferenceError
+    // que quita toda la UI (splash se queda para siempre como captura user).
+    var _cdiAttempts = 0;
+    function _tryCargarDashInicio() {
+      try {
+        if (typeof cargarDashboardInicio === 'function') { cargarDashboardInicio(false); return; }
+        if (typeof window.cargarDashboardInicio === 'function') { window.cargarDashboardInicio(false); return; }
+      } catch(_e) { /* ignore */ }
+      if (++_cdiAttempts < 4) { setTimeout(_tryCargarDashInicio, 120); }
+    }
+    try { _tryCargarDashInicio(); } catch(_errDash) {
+      console.warn('showSection inicio: cargarDashboardInicio fallo inicial', _errDash);
+    }
+  }
   if(id==='materiales') { initMateriales(); }
   if(id==='materiales-entrega') { initMaterialesEntrega(); }
   if(id==='comunicado') { initComunicado(); }
@@ -8436,6 +8452,12 @@ async function cargarDashboardInicio(force = false) {
     _renderDashboardInicioData(data);
   } catch(e) { console.error('cargarDashboardInicio:', e); }
   finally { _dashInicioPromise = null; }
+}
+// v179: Exponer a window para evitar ReferenceError cuando showSectionDirect('inicio') se llama
+// ANTES de que termine de parsear el IIFE / hoisting de funciones. Previene splash congelado.
+if (typeof window !== 'undefined') {
+  window.cargarDashboardInicio = cargarDashboardInicio;
+  window._renderDashboardInicioData = _renderDashboardInicioData;
 }
 
 // ── Funciones del nuevo menú con dropdowns ──
