@@ -7457,9 +7457,22 @@ function openLogoutConfirm() {
   try {
     const modal = document.getElementById('modal-logout-confirm');
     if(!modal) { ejecutarLogoutFinal(); return; }
+    // v188 ANTI-STACKING (igual que openAdminResetPassModal): cerrar modales previos + z-index dinámico
+    try { closeAllModals && closeAllModals(); } catch(_eCm){}
+    try {
+      const maxZi = _getCurrentMaxZIndex ? _getCurrentMaxZIndex() : 999900;
+      modal.style.zIndex = String(maxZi + 10);
+    } catch(_eZi){ try { modal.style.zIndex = '9999999'; } catch(_){} }
     try { _modalLockOn && _modalLockOn(); } catch(_){}
     modal.style.display = '';
-    setTimeout(() => { try { modal.classList.add('open'); } catch(_){} }, 20);
+    setTimeout(() => {
+      try { modal.classList.add('open'); } catch(_){}
+      // v188 focus inicial en botón Cancelar para accesibilidad
+      try {
+        const btn = modal.querySelector('.btn.btn-ghost, .btn.btn-danger, button');
+        if (btn && typeof btn.focus === 'function') btn.focus({ preventScroll:true });
+      } catch(_){}
+    }, 30);
   } catch(_err) { try { ejecutarLogoutFinal(); } catch(_){} }
 }
 window.openLogoutConfirm = openLogoutConfirm;
@@ -22036,6 +22049,53 @@ function _modalLockOn() {
   try { closeNavDrops(); } catch(e) {}
   try { closeUserMenu(); } catch(e) {}
 }
+// v188: Cierra TODOS los modales abiertos (genérico) antes de abrir uno nuevo → evita stacking/z-index conflictos.
+// Devuelve true si cerró al menos 1 modal.
+function closeAllModals() {
+  let closed = 0;
+  try {
+    const all = document.querySelectorAll('.modal-bg');
+    for (let i = 0; i < all.length; i++) {
+      const m = all[i];
+      const id = m && m.getAttribute('id');
+      if (!id) continue;
+      const cs = window.getComputedStyle ? window.getComputedStyle(m) : null;
+      const disp = cs ? cs.display : (m.style.display || '');
+      const isOpenClass = m.classList.contains('open');
+      if (disp !== 'none' || isOpenClass) {
+        // Usar handlers específicos si existen, sino closeModal
+        if (id === 'modal-admin-reset-pass') { try { closeAdminResetPassModal && closeAdminResetPassModal(); closed++; continue; } catch(_){} }
+        if (id === 'modal-logout-confirm') { try { closeLogoutConfirm && closeLogoutConfirm(); closed++; continue; } catch(_){} }
+        try { closeModal(id); closed++; } catch(_){}
+      }
+    }
+    // Garantía final: si quedó body.modal-lock sin modales visibles, remover
+    try { _modalLockOff && _modalLockOff(); } catch(_){}
+  } catch(_){}
+  return closed > 0;
+}
+// v188: Obtiene el z-index MÁXIMO actual de todos los elementos visibles con position:fixed/absolute/relative (para stacking nuevo modal)
+function _getCurrentMaxZIndex() {
+  let m = 999900;
+  try {
+    const all = document.querySelectorAll('body *');
+    const limit = Math.min(all.length, 1500);
+    for (let i = 0; i < limit; i++) {
+      const el = all[i];
+      if (!el || !el.getBoundingClientRect) continue;
+      const cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+      if (!cs) continue;
+      const pos = cs.position;
+      if (pos !== 'fixed' && pos !== 'absolute' && pos !== 'sticky' && pos !== 'relative') continue;
+      const r = el.getBoundingClientRect();
+      // Solo considerar elementos que intersectan la ventana
+      if (r.right < 0 || r.bottom < 0 || r.left > (window.innerWidth||1200) || r.top > (window.innerHeight||800)) continue;
+      const zi = parseInt(cs.zIndex || '0', 10);
+      if (!isNaN(zi) && zi > m) m = zi;
+    }
+  } catch(_){}
+  return m;
+}
 function _modalLockOff() {
   // CAPA DEFENSIVA v187: no solo depender de .open class, sino VERIFICAR VISIBILIDAD REAL
   // Un modal puede quedar con .class='modal-bg open' pero display='none' por race,
@@ -24037,13 +24097,33 @@ function openAdminResetPassModal(email, nombreDisplay) {
     _arpTarget = { email: eVal, nombre: String(nombreDisplay || 'Usuario') };
     const modal = document.getElementById('modal-admin-reset-pass');
     if(!modal) { console.error('modal-admin-reset-pass NO EXISTE en el DOM'); toast('Error: no se encontró el modal de reset','error'); return; }
+    // v188 CAPA 1 ANTI-STACKING: cerrar TODOS los demás modales abiertos (modal-usuario, modal-permisos etc)
+    // para evitar que queden ENCIMA por DOM order. Esto resuelve "nuevo modal detrás del existente".
+    try { closeAllModals && closeAllModals(); } catch(_eCm){}
+    // v188 CAPA 2 ANTI-STACKING: z-index DINÁMICO por encima del máximo actual + 5
+    // Nunca más depender de orden DOM o inline fijo 999999.
+    try {
+      const maxZi = _getCurrentMaxZIndex ? _getCurrentMaxZIndex() : 999900;
+      modal.style.zIndex = String(maxZi + 10);
+    } catch(_eZi){ try { modal.style.zIndex = '9999999'; } catch(_){} }
     const usrEl = document.getElementById('arp-usr');
     if (usrEl) usrEl.innerHTML = `<b style="color:#fff;">${_arpTarget.nombre}</b><br><span style="color:var(--muted);font-size:0.85rem;">${_arpTarget.email || '(sin correo)'}</span>`;
     ['arp-new-pass-1','arp-new-pass-2'].forEach(id => { const e = document.getElementById(id); if(e) e.value = ''; });
     ['arp-set-err','arp-link-err'].forEach(id => { const e = document.getElementById(id); if(e){ e.style.display='none'; e.textContent=''; } });
     try { _modalLockOn && _modalLockOn(); } catch(_){}
     modal.style.display = '';
-    setTimeout(() => { try { modal.classList.add('open'); } catch(_){} }, 20);
+    setTimeout(() => {
+      try { modal.classList.add('open'); } catch(_){}
+      // v188 CAPA 3: FOCO INICIAL en el 1er input interactivo para que la interacción arranque inmediatamente
+      // (no queda foco en botón azul anterior detrás del backdrop)
+      try {
+        const firstInput = document.getElementById('arp-new-pass-1');
+        if (firstInput && typeof firstInput.focus === 'function') {
+          firstInput.focus({ preventScroll:false });
+          try { firstInput.select && firstInput.select(); } catch(_){}
+        }
+      } catch(_eF){}
+    }, 40);
   } catch(err) {
     console.error('openAdminResetPassModal', err);
     try { toast('Error abriendo modal de reset: ' + (err?.message || err), 'error'); } catch(_){}
