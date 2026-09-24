@@ -30492,23 +30492,65 @@ async function cargarConfigBanner() {
   try {
     const cfg = await getConfig();
     _bannerImgs = cfg.bannerImagenes || [];
+    // v198: Mensaje status inicial informativo si no hay banners personalizados guardados
+    try {
+      const st = document.getElementById('banner-imgs-status');
+      if (st) {
+        if (_bannerImgs.length === 0) {
+          st.textContent = 'ℹ️ Mostrando 5 imágenes POR DEFECTO del sistema. Para personalizar el login, sube tus propias imágenes y pulsa 💾 Guardar imágenes.';
+          st.style.color = 'var(--muted, #94a3b8)';
+        } else {
+          st.textContent = '✔ ' + _bannerImgs.length + ' banner(es) personalizado(s) cargados. Puedes agregar hasta 5 en total.';
+          st.style.color = 'var(--success, #4ade80)';
+        }
+      }
+    } catch(_){}
     renderBannerImgsGrid();
     // Aplicar al banner de login si hay imágenes
     if(_bannerImgs.length > 0) aplicarImagenesBanner();
   } catch(e) {}
 }
 
+// v198 FALLBACKS IMÁGENES BANNER DEFAULT (existen en carpeta img/ del repo: 1,2,4,5)
+// Slot 3 repetimos 1.jpg porque no hay 3.jpg en los archivos subidos.
+window.__BANNER_DEFAULTS_CEBA__ = [
+  'img/banner-default-1.jpg',
+  'img/banner-default-2.jpg',
+  'img/banner-default-4.jpg',
+  'img/banner-default-5.jpg',
+  'img/banner-default-1.jpg'
+];
+
 function renderBannerImgsGrid() {
   const grid = document.getElementById('banner-imgs-grid');
   if(!grid) return;
   const slots = 5;
+  const defaults = (window.__BANNER_DEFAULTS_CEBA__ && Array.isArray(window.__BANNER_DEFAULTS_CEBA__) && window.__BANNER_DEFAULTS_CEBA__.length >= slots)
+    ? window.__BANNER_DEFAULTS_CEBA__
+    : ['img/banner-default-1.jpg','img/banner-default-2.jpg','img/banner-default-4.jpg','img/banner-default-5.jpg','img/banner-default-1.jpg'];
   let html = '';
   for(let i = 0; i < slots; i++) {
-    const img = _bannerImgs[i];
-    html += `<div style="aspect-ratio:16/9;border-radius:8px;overflow:hidden;border:1px solid var(--border);position:relative;background:var(--surface2);display:flex;align-items:center;justify-content:center;">
-      ${img ? `<img src="${img}" style="width:100%;height:100%;object-fit:cover;">
-        <button onclick="eliminarBannerImg(${i})" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.6);border:none;border-radius:50%;width:20px;height:20px;color:#fff;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>`
-      : `<span style="font-size:1.5rem;opacity:0.3;">${i+1}</span>`}
+    const imgSrc = _bannerImgs[i] || null;
+    const isPersonalizada = !!imgSrc;
+    const srcFinal = imgSrc || defaults[i] || defaults[0] || '';
+    const fallbackSrc = defaults[(i + 1) % slots] || defaults[0] || '';
+    const overlayTxt = isPersonalizada
+      ? ''
+      : `<div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0.45) 0%,rgba(0,0,0,0.1) 50%,rgba(0,0,0,0.65) 100%);pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:12px 10px;gap:4px;">
+          <div style="font-size:0.65rem;color:rgba(255,255,255,0.85);font-weight:700;letter-spacing:0.3px;text-transform:uppercase;">IMAGEN POR DEFECTO</div>
+          <div style="font-size:0.6rem;color:rgba(255,255,255,0.68);text-align:center;line-height:1.2;">Slot ${i+1}: Sube una imagen personalizada (1200×700) y pulsa Guardar para reemplazarla</div>
+        </div>`;
+    const botonEliminar = isPersonalizada
+      ? `<button onclick="eliminarBannerImg(${i})" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.7);border:1px solid rgba(255,255,255,0.15);border-radius:50%;width:22px;height:22px;color:#fff;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:3;">✕</button>`
+      : '';
+    const labelSlot = `<div style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.12);color:#fff;border-radius:6px;padding:2px 7px;font-size:0.65rem;font-weight:700;z-index:3;">Slot ${i+1}</div>`;
+    html += `<div style="aspect-ratio:16/9;border-radius:10px;overflow:hidden;border:${isPersonalizada ? '1px solid #1469ff' : '1px solid var(--border, #334155)'};position:relative;background:var(--surface2,#1e293b);display:block;box-shadow:${isPersonalizada ? '0 0 0 2px rgba(20,105,255,0.15), 0 6px 18px rgba(0,0,0,0.3)' : '0 2px 10px rgba(0,0,0,0.25)'};">
+      ${labelSlot}
+      <img src="${srcFinal}"
+           onerror="window.__bannerFails=((window.__bannerFails||0)+1);this.onerror=null;this.src='${fallbackSrc}';this.style.opacity='0.5';"
+           style="width:100%;height:100%;object-fit:cover;display:block;visibility:visible;opacity:${isPersonalizada ? '1' : '0.85'};">
+      ${overlayTxt}
+      ${botonEliminar}
     </div>`;
   }
   grid.innerHTML = html;
