@@ -3644,7 +3644,7 @@
       </div>
     </div>
 
-    <div id="modal-admin-reset-pass" class="modal-bg" style="display:none;z-index:999999;">
+    <div id="modal-admin-reset-pass" class="modal-bg" style="display:none;z-index:999999;" onclick="if(event.target===this)closeAdminResetPassModal()">
       <div class="modal" onclick="event.stopPropagation()" style="max-width:440px;">
         <div class="modal-header">
           <div class="modal-title">🔑 Resetear contraseña</div>
@@ -3678,7 +3678,7 @@
       </div>
     </div>
 
-    <div id="modal-logout-confirm" class="modal-bg" style="display:none;z-index:999999;">
+    <div id="modal-logout-confirm" class="modal-bg" style="display:none;z-index:999999;" onclick="if(event.target===this)closeLogoutConfirm()">
       <div class="modal" onclick="event.stopPropagation()" style="max-width:380px;">
         <div class="modal-header">
           <div class="modal-title">🚪 Cerrar sesión</div>
@@ -7467,8 +7467,10 @@ function closeLogoutConfirm() {
   try {
     const modal = document.getElementById('modal-logout-confirm');
     if(modal) {
-      try { modal.classList.remove('open'); } catch(_){}
-      setTimeout(() => { try { modal.style.display = 'none'; } catch(_){} }, 180);
+      // v187 FIX CRÍTICO: sincronizar remoción .open + display:none inmediato para evitar
+      // bloqueo permanente body.modal-lock (ver closeAdminResetPassModal v187)
+      try { modal.classList.remove('open'); modal.classList.remove('active'); } catch(_){}
+      try { modal.style.display = 'none'; } catch(_){}
     }
     try { _modalLockOff && _modalLockOff(); } catch(_){}
   } catch(_) {}
@@ -22030,13 +22032,55 @@ function hoy() {
 
 function _modalLockOn() {
   document.body.classList.add('modal-lock');
+  try { document.documentElement.classList.add('modal-lock'); } catch(_){}
   try { closeNavDrops(); } catch(e) {}
   try { closeUserMenu(); } catch(e) {}
 }
 function _modalLockOff() {
-  if(document.querySelector('.modal-bg.open')) return;
+  // CAPA DEFENSIVA v187: no solo depender de .open class, sino VERIFICAR VISIBILIDAD REAL
+  // Un modal puede quedar con .class='modal-bg open' pero display='none' por race,
+  // o con .open removido pero body.modal-lock presente.
+  let anyVisibleReal = false;
+  try {
+    const all = document.querySelectorAll('.modal-bg');
+    for (let i = 0; i < all.length; i++) {
+      const m = all[i];
+      const cs = window.getComputedStyle ? window.getComputedStyle(m) : null;
+      const disp = cs ? cs.display : (m.style.display || '');
+      const isOpenClass = m.classList.contains('open');
+      if (disp !== 'none' || isOpenClass) { anyVisibleReal = true; break; }
+    }
+  } catch(_){}
+  if (anyVisibleReal) return;
   document.body.classList.remove('modal-lock');
+  try { document.documentElement.classList.remove('modal-lock'); } catch(_){}
 }
+// CAPA 3 v187: Tecla ESC global cierra modal abierto (prioridad: reset pass > logout > genérico)
+document.addEventListener('keydown', function(e){
+  if (!e || e.key !== 'Escape') return;
+  try {
+    const escCandidates = [
+      ['modal-admin-reset-pass', closeAdminResetPassModal],
+      ['modal-logout-confirm', closeLogoutConfirm],
+    ];
+    for (let i = 0; i < escCandidates.length; i++) {
+      const [mid, fn] = escCandidates[i];
+      const m = document.getElementById(mid);
+      if (!m) continue;
+      const cs = window.getComputedStyle ? window.getComputedStyle(m) : null;
+      const disp = cs ? cs.display : (m.style.display || '');
+      const isOpenClass = m.classList.contains('open');
+      if (disp !== 'none' || isOpenClass) { try { fn && fn(); e.preventDefault && e.preventDefault(); _modalLockOff(); } catch(_){} return; }
+    }
+    // Fallback genérico: cualquier .modal-bg.open visible
+    const generic = document.querySelectorAll('.modal-bg.open');
+    for (let j = 0; j < generic.length; j++) {
+      const m2 = generic[j];
+      const id2 = m2 && m2.getAttribute('id');
+      if (id2 && /^modal-/.test(id2)) { try { closeModal(id2); e.preventDefault && e.preventDefault(); } catch(_){} break; }
+    }
+  } catch(_escErr){}
+});
 
 function closeModal(id) {
   const el = document.getElementById(id);
@@ -24011,8 +24055,11 @@ function closeAdminResetPassModal() {
   try {
     const modal = document.getElementById('modal-admin-reset-pass');
     if(modal) {
-      try { modal.classList.remove('open'); } catch(_){}
-      setTimeout(() => { try { modal.style.display = 'none'; } catch(_){} }, 180);
+      // v187 FIX CRÍTICO: remover .open SINCRO + display:none INMEDIATO (no esperar 180ms)
+      // porque si display:none queda pendiente, _modalLockOff ve disp!=='none' y NO libera body.modal-lock,
+      // causando bloqueo permanente del sistema (pointer-events:none header/tabs)
+      try { modal.classList.remove('open'); modal.classList.remove('active'); } catch(_){}
+      try { modal.style.display = 'none'; } catch(_){}
     }
     try { _modalLockOff && _modalLockOff(); } catch(_){}
     _arpTarget = { email: '', nombre: '' };
@@ -24109,16 +24156,37 @@ async function adminResetPassLink() {
   if(!_arpTarget.email) { _arpShowErr('link','Este usuario no tiene correo registrado.'); return; }
   _arpShowErr('link','');
   try {
+    // v187 Flor/Maryflo fix: re-validar correo con regex estricto ANTES de enviar link.
+    // Si es row huérfana public.usuarios sin credenciales Auth, mostrar mensaje claro
+    // sugerir Modo Admin 👑 (admin-set-password EF) en vez de toast genérico user-not-found.
+    const val = _validarCorreoEstricto(_arpTarget.email);
+    if (!val.ok) {
+      const dniOk = /^\d{8}$/.test(String(_arpTarget.email||'').trim()) || /^\d{8}@/.test(String(_arpTarget.email||'').toLowerCase());
+      if (!dniOk) { _arpShowErr('link','Correo inválido: ' + (val.err||'formato incorrecto')); return; }
+    }
     await resetUsuarioPass(_arpTarget.email, _arpTarget.nombre);
     closeAdminResetPassModal();
   } catch(e) {
-    _arpShowErr('link', 'Error: ' + (e?.message || e?.code || e));
+    let msg = String(e?.message || e?.code || e);
+    if (e?.code === 'auth/user-not-found' || /user-not-found|no existe/i.test(msg)) {
+      msg = 'Esta persona NO tiene cuenta de acceso creada (solo registro en la tabla usuarios). Usa la opción 👑 Modo Admin (arriba) para CREAR la cuenta y setear la contraseña directamente, NO el link por correo.';
+    }
+    _arpShowErr('link', 'Error: ' + msg);
   }
 }
 async function resetUsuarioPass(email, nombreDisplay) {
-  const emailVal = String(email || '').trim().toLowerCase();
-  if(!emailVal) { toast('Ingresa un correo válido','warning'); return; }
-  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailVal)) { toast('Correo inválido','warning'); return; }
+  const raw = String(email || '').trim();
+  // v187 Flor/Maryflo: usar helper global _validarCorreoEstricto + excepcion DNI,
+  // NO regex débil que acepta TLD de 1 char ni formatos raros.
+  const dniOk = /^\d{8}$/.test(raw) || /^\d{8}@[a-zA-Z0-9.\-]+$/.test(raw.toLowerCase());
+  let emailVal = '';
+  if (dniOk) {
+    emailVal = raw;
+  } else {
+    const check = _validarCorreoEstricto(raw);
+    if (!check.ok) { toast('Correo inválido: ' + (check.err||'formato incorrecto'),'warning'); return; }
+    emailVal = check.value;
+  }
   try {
     await auth.sendPasswordResetEmail(emailVal);
     const quien = nombreDisplay ? `de ${nombreDisplay}` : '';
@@ -24126,7 +24194,7 @@ async function resetUsuarioPass(email, nombreDisplay) {
   } catch(e) {
     console.warn('resetUsuarioPass', e);
     const msgs = {
-      'auth/user-not-found': 'No existe usuario con ese correo en Firebase/Supabase. Borra y vuelve a crear el usuario desde el panel.',
+      'auth/user-not-found': 'No existe usuario con ese correo en Auth. Crea la cuenta primero desde 👑 Modo Admin (Reset Pass).',
       'auth/invalid-email': 'Correo inválido',
       'auth/too-many-requests': 'Demasiados intentos, espera 1 minuto',
       'auth/network-request-failed': 'Sin internet o firewall bloquea'
