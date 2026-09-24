@@ -29079,7 +29079,67 @@ function onSearchAlumnos() {
 
 // Cargar imágenes del banner al abrir configuración
 async function onShowConfig() {
-  await cargarConfigBanner();
+  // v195 RC FIX: Al abrir pestaña Configuración, CARGAR y PINTAR TODOS los datos
+  // del colegio (nombre/eslogan/año/logo/header logo/preview logo) + banner images.
+  // Antes SOLO cargaba banner, todo lo demás NO se pintaba → logo invisible.
+  await Promise.all([
+    cargarConfigBanner(),
+    (async () => {
+      try {
+        const cfg = await getConfig();
+        const fallbackLogo = 'img/logo-colegio.png';
+        const logoUrlRaw = String(cfg.logoUrl || cfg.logoColegio || cfg.logo || '').trim();
+        const logoUrlFinal = logoUrlRaw || fallbackLogo;
+
+        // 1) HEADER SUPERIOR pestaña Configuración (logo + nombre + eslogan + año)
+        const hLogo = document.getElementById('cfg-school-logo');
+        if (hLogo) { hLogo.src = logoUrlFinal; hLogo.style.display = 'block'; hLogo.style.visibility = 'visible'; hLogo.style.opacity = '1'; }
+        const hNombre = document.getElementById('cfg-school-nombre');
+        if (hNombre) hNombre.textContent = String(cfg.nombreColegio || cfg.nombre || '');
+        const hEslogan = document.getElementById('cfg-school-eslogan');
+        if (hEslogan) hEslogan.textContent = String(cfg.esloganColegio || cfg.eslogan || '');
+        const hAnio = document.getElementById('cfg-school-anio');
+        if (hAnio) hAnio.textContent = String(cfg.anio || (typeof COLEGIO_ANIO !== 'undefined' ? COLEGIO_ANIO : ''));
+
+        // 2) FORMULARIO Datos Colegio: inputs editables
+        const inpNombre = document.getElementById('cfg-colegio-nombre');
+        if (inpNombre) inpNombre.value = String(cfg.nombreColegio || cfg.nombre || '');
+        const inpEslogan = document.getElementById('cfg-colegio-eslogan');
+        if (inpEslogan) inpEslogan.value = String(cfg.esloganColegio || cfg.eslogan || '');
+        const inpAnio = document.getElementById('cfg-colegio-anio');
+        if (inpAnio) inpAnio.value = String(cfg.anio || (typeof COLEGIO_ANIO !== 'undefined' ? COLEGIO_ANIO : ''));
+
+        // 3) PREVIEW LOGO dentro del card "Datos del Colegio" (L3544)
+        const prevLogo = document.getElementById('cfg-colegio-logo-preview');
+        const statusLogo = document.getElementById('cfg-colegio-status');
+        if (prevLogo) {
+          prevLogo.src = logoUrlFinal;
+          prevLogo.style.display = 'block';
+          prevLogo.style.visibility = 'visible';
+          prevLogo.style.opacity = '1';
+        }
+        if (statusLogo) {
+          if (logoUrlRaw) statusLogo.textContent = '✔ Logo actual (guardado). Para cambiar selecciona una nueva imagen y pulsa 💾 Guardar datos.';
+          else statusLogo.textContent = 'ℹ️ Sin logo personalizado (usando logo por defecto). Para subir uno nuevo selecciona una imagen y pulsa 💾 Guardar datos.';
+        }
+
+        // 4) Settear hidden field y _colegioLogoTmp sin borrar si subió uno nuevo ya
+        const hidLogo = document.getElementById('cfg-logo-input');
+        if (hidLogo && !_colegioLogoTmp) hidLogo.value = logoUrlRaw;
+        if (!_colegioLogoTmp) { /* keep undefined hasta upload */ }
+
+        // 5) Modalidad badge en lectura (por consistencia UI)
+        const modBadge = document.getElementById('cfg-mod-badge');
+        if (modBadge) {
+          const mod = String(cfg.modalidadEducativa || cfg.modalidad_educativa || '').trim().toUpperCase();
+          modBadge.textContent = mod || '—';
+          modBadge.style.background = mod === 'CEBA' ? '#1469ff' : mod === 'EBR' ? '#16a34a' : mod === 'EBA' ? '#f97316' : '#111';
+        }
+      } catch(eCfg) {
+        console.warn('[onShowConfig] Error cargando datos colegio:', eCfg);
+      }
+    })()
+  ]);
 }
 
 async function inicializarFiltros(options = {}) {
