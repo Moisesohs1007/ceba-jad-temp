@@ -3499,7 +3499,7 @@
     <!-- Encabezado del colegio -->
     <div style="display:flex;align-items:center;gap:18px;padding:14px 0 18px 0;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:20px;">
       <img id="cfg-school-logo" src="img/logo-colegio.png" alt="Logo institucional"
-           onerror="window.__cfgLogoFailures=((window.__cfgLogoFailures||0)+1);this.onerror=null;this.src=window.__FALLBACK_LOGO_SVG_BASE64__;this.style.setProperty('display','block','important');this.style.setProperty('visibility','visible','important');this.style.setProperty('opacity','1','important');"
+           onerror="window.__cfgLogoFailures=((window.__cfgLogoFailures||0)+1);this.onerror=null;try{var fb=(window.__LOGO_CORRECTO_FALLBACK__&&typeof window.__LOGO_CORRECTO_FALLBACK__==='function')?window.__LOGO_CORRECTO_FALLBACK__():'img/logo-colegio.png';this.src=fb;}catch(_){this.src='img/logo-colegio.png';}this.style.setProperty('display','block','important');this.style.setProperty('visibility','visible','important');this.style.setProperty('opacity','1','important');"
            style="width:72px;height:72px;object-fit:contain;flex-shrink:0;display:block;visibility:visible;opacity:1;">
       <div>
         <div style="font-family:var(--font-display);font-size:1.05rem;font-weight:700;color:#fff;line-height:1.2;" id="cfg-school-nombre"></div>
@@ -3543,9 +3543,9 @@
           <input type="file" id="cfg-colegio-logo-file" accept="image/*" onchange="previsualizarLogoColegio(this)">
         </div>
         <div class="form-group form-full">
-          <img id="cfg-colegio-logo-preview" src=""
-               onerror="window.__cfgLogoPrevFailures=((window.__cfgLogoPrevFailures||0)+1);this.onerror=null;if(!this.src || /^$/.test(this.src)) {this.src=window.__FALLBACK_LOGO_SVG_BASE64__;this.style.setProperty('display','block','important');this.style.setProperty('visibility','visible','important');this.style.setProperty('opacity','1','important');}"
-               style="display:none;width:90px;height:90px;object-fit:contain;border:1px solid var(--border);border-radius:12px;background:var(--surface2);padding:8px;">
+          <img id="cfg-colegio-logo-preview" src="img/logo-colegio.png"
+               onerror="window.__cfgLogoPrevFailures=((window.__cfgLogoPrevFailures||0)+1);this.onerror=null;try{var fb=(window.__LOGO_CORRECTO_FALLBACK__&&typeof window.__LOGO_CORRECTO_FALLBACK__==='function')?window.__LOGO_CORRECTO_FALLBACK__():'img/logo-colegio.png';this.src=fb;}catch(_){this.src='img/logo-colegio.png';}this.style.setProperty('display','block','important');this.style.setProperty('visibility','visible','important');this.style.setProperty('opacity','1','important');"
+               style="display:block;width:90px;height:90px;object-fit:contain;border:1px solid var(--border);border-radius:12px;background:var(--surface2);padding:8px;">
           <div id="cfg-colegio-status" style="margin-top:8px;font-size:0.8rem;color:var(--muted);"></div>
         </div>
       </div>
@@ -29082,36 +29082,46 @@ function onSearchAlumnos() {
 }
 
 // ============================================================
-// v196 FALLBACK IRROMPIBLE para LOGOS CEBA (BASE64 SVG, NUNCA 404)
+// v197 FALLBACK LOGO CORRECTO OFICIAL (NO BASE64 SVG INVENTADO)
 // ============================================================
-// Causa raiz bug fantasma "logo aparece y desaparece":
-//   1) onShowConfig pinta el logo OK
-//   2) Otra función después sobreescribe src/display
-//   3) img/logo-colegio.png no existe en GH Pages → HTTP 404
-// SOLUCIÓN 3 CAPAS: BASE64 SVG (no-404) + TIMER RE-PINTAR + MUTATION OBSERVER
-window.__FALLBACK_LOGO_SVG_BASE64__ = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjE2IiBmaWxsPSIjMGEyNjVhIi8+PHJlY3QgeD0iNiIgeT0iNiIgd2lkdGg9Ijg4IiBoZWlnaHQ9Ijg4IiByeD0iMTIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Q5YjYyMyIgc3Ryb2tlLXdpZHRoPSI0Ii8+CjxwYXRoIGZpbGw9IiNmZWRiM2QiIGQ9Ik0zNSAyOGwtMTAgMTBoMTB2MzJoMTBWMzhIMzV6Ii8+CjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik01MCAyOGwxMCAxMEg1MHYzMmgxMHYtMTBoMTB2MTBoMTBWMzhoLTEwdi0xMGgtMTB2MTBoLTEweiIvPgo8dGV4dCB4PSI1MCIgeT0iODciIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjEyIiBmb250LXdlaWdodD0iODAwIiBmaWxsPSIjZmZkYjNkIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5KQUQ8L3RleHQ+Cjwvc3ZnPgo=";
+// Error v196: Puse un BASE64 SVG inventado que NO corresponde al sistema.
+// Logo OFICIAL REAL: `img/logo-colegio.png` (existe en el repo)
+//   o cfg.logoUrl / cfg.logoColegio si el usuario subió uno personalizado,
+//   almacenado en window.COLEGIO_LOGO por el branding helper.
+window.__LOGO_CORRECTO_FALLBACK__ = function() {
+  try {
+    const fromBranding = String(window.COLEGIO_LOGO || '').trim();
+    if (fromBranding && /^(data:|https?:|\/)/i.test(fromBranding)) return fromBranding;
+  } catch(_){}
+  return 'img/logo-colegio.png';
+};
 
-// CAPA 2: TIMER cada 100ms durante 2s para RE-PINTAR el logo incluso si
-// otra función (inicializarFiltros, showSection, etc.) lo borra después.
+// CAPA 2: TIMER cada 100ms durante ciclos para ASEGURAR que el logo se mantenga VISIBLE
+// (no desaparezca por 404 fantasma ni funciones que lo ocultan después de render)
 window.__forceCfgLogoVisibleTimer = 0;
 function _forceCfgLogoVisible(cycles /* int, default 20 */) {
   try {
     const total = Number(cycles) > 0 ? Number(cycles) : 20;
     let step = 0;
     if (window.__forceCfgLogoVisibleTimer) { try { clearInterval(window.__forceCfgLogoVisibleTimer); } catch(_){} }
-    const fb64 = window.__FALLBACK_LOGO_SVG_BASE64__;
+    const fbCorrect = window.__LOGO_CORRECTO_FALLBACK__ && typeof window.__LOGO_CORRECTO_FALLBACK__ === 'function'
+      ? window.__LOGO_CORRECTO_FALLBACK__()
+      : 'img/logo-colegio.png';
     const rePaint = function() {
       try {
         const hdrLogo = document.getElementById('cfg-school-logo');
         if (hdrLogo) {
-          const hasSrc = String(hdrLogo.src || '').trim().length > 0;
-          const missing = /^(data:,$|)$/.test(String(hdrLogo.src || ''));
-          if (missing || !hasSrc) {
+          const srcNow = String(hdrLogo.src || '').trim();
+          const isEmpty = !srcNow || /^(about:)?blank|^data:,$|^$/i.test(srcNow) || hdrLogo.getAttribute('src') === '';
+          const isHidden = (hdrLogo.style.display === 'none' || hdrLogo.style.visibility === 'hidden' || Number(hdrLogo.style.opacity) === 0);
+          const isBadSvg = /__FALLBACK_LOGO_SVG_BASE64__|base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjE2IiBmaWxsPSIjMGEyNjVhIi8/.test(srcNow);
+          if (isEmpty || isHidden || isBadSvg) {
             try {
               const cfgCached = (typeof configCache === 'object' && configCache) ? configCache : null;
               const logoUrlRaw = cfgCached ? String(cfgCached.logoUrl || cfgCached.logoColegio || cfgCached.logo || '').trim() : '';
-              hdrLogo.src = logoUrlRaw || fb64;
-            } catch(_) { hdrLogo.src = fb64; }
+              hdrLogo.onerror = null;
+              if (logoUrlRaw) hdrLogo.src = logoUrlRaw; else hdrLogo.src = fbCorrect;
+            } catch(_) { hdrLogo.src = fbCorrect; }
           }
           hdrLogo.style.setProperty('display','block','important');
           hdrLogo.style.setProperty('visibility','visible','important');
@@ -29123,14 +29133,18 @@ function _forceCfgLogoVisible(cycles /* int, default 20 */) {
         }
         const prevLogo = document.getElementById('cfg-colegio-logo-preview');
         if (prevLogo) {
-          const hasSrc = String(prevLogo.src || '').trim().length > 0;
-          const missing = /^(data:,$|)$/.test(String(prevLogo.src || ''));
-          if (missing || !hasSrc || prevLogo.style.display === 'none') {
+          const srcNow = String(prevLogo.src || '').trim();
+          const srcAttr = String(prevLogo.getAttribute('src') || '').trim();
+          const isEmpty = !srcNow || /^(about:)?blank|^data:,$|^$/i.test(srcNow) || srcAttr === '';
+          const isHidden = (prevLogo.style.display === 'none' || prevLogo.style.visibility === 'hidden' || Number(prevLogo.style.opacity) === 0);
+          const isBadSvg = /__FALLBACK_LOGO_SVG_BASE64__|base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjE2IiBmaWxsPSIjMGEyNjVhIi8/.test(srcNow);
+          if (isEmpty || isHidden || isBadSvg) {
             try {
               const cfgCached = (typeof configCache === 'object' && configCache) ? configCache : null;
               const logoUrlRaw = cfgCached ? String(cfgCached.logoUrl || cfgCached.logoColegio || cfgCached.logo || '').trim() : '';
-              prevLogo.src = logoUrlRaw || fb64;
-            } catch(_) { prevLogo.src = fb64; }
+              prevLogo.onerror = null;
+              if (logoUrlRaw) prevLogo.src = logoUrlRaw; else prevLogo.src = fbCorrect;
+            } catch(_) { prevLogo.src = fbCorrect; }
             prevLogo.style.setProperty('display','block','important');
             prevLogo.style.setProperty('visibility','visible','important');
             prevLogo.style.setProperty('opacity','1','important');
@@ -29148,7 +29162,7 @@ function _forceCfgLogoVisible(cycles /* int, default 20 */) {
                 const logoUrlRaw = cfgCached ? String(cfgCached.logoUrl || cfgCached.logoColegio || cfgCached.logo || '').trim() : '';
                 st.textContent = logoUrlRaw
                   ? '✔ Logo actual (guardado). Para cambiar selecciona una nueva imagen y pulsa 💾 Guardar datos.'
-                  : 'ℹ️ Sin logo personalizado (usando logo por defecto JAD). Para subir uno nuevo selecciona una imagen y pulsa 💾 Guardar datos.';
+                  : 'ℹ️ Logo por defecto del sistema (JAD). Para subir uno personalizado selecciona una imagen y pulsa 💾 Guardar datos.';
               } catch(_){}
             }
           }
@@ -29188,22 +29202,23 @@ function _forceCfgLogoVisible(cycles /* int, default 20 */) {
 
 // Cargar imágenes del banner al abrir configuración
 async function onShowConfig() {
-  // v195+v196 RC FIX: Al abrir pestaña Configuración, CARGAR y PINTAR TODOS los datos
-  // del colegio (nombre/eslogan/año/logo/header logo/preview logo) + banner images.
-  // v196: 3 CAPAS para "logo aparece y desaparece": BASE64 SVG no-404 + TIMER repintado + MUTATION OBSERVER.
+  // v197 FIX: Logo OFICIAL CORRECTO = img/logo-colegio.png (existe en repo) o window.COLEGIO_LOGO si hay personalizado.
+  // Eliminado BASE64 SVG inventado v196 que no correspondía a la identidad del sistema.
   await Promise.all([
     cargarConfigBanner(),
     (async () => {
       try {
         const cfg = await getConfig();
-        const fb64 = window.__FALLBACK_LOGO_SVG_BASE64__;
+        const fbCorrect = window.__LOGO_CORRECTO_FALLBACK__ && typeof window.__LOGO_CORRECTO_FALLBACK__ === 'function'
+          ? window.__LOGO_CORRECTO_FALLBACK__()
+          : 'img/logo-colegio.png';
         const logoUrlRaw = String(cfg.logoUrl || cfg.logoColegio || cfg.logo || '').trim();
-        // v196: fallback SIEMPRE existe (no 404). No usamos img/logo-colegio.png que no está en repo.
-        const logoUrlFinal = logoUrlRaw || fb64;
+        const logoUrlFinal = logoUrlRaw || fbCorrect;
 
         // 1) HEADER SUPERIOR pestaña Configuración (logo + nombre + eslogan + año)
         const hLogo = document.getElementById('cfg-school-logo');
         if (hLogo) {
+          hLogo.onerror = null;
           hLogo.src = logoUrlFinal;
           hLogo.style.setProperty('display','block','important');
           hLogo.style.setProperty('visibility','visible','important');
@@ -29232,6 +29247,7 @@ async function onShowConfig() {
         const prevLogo = document.getElementById('cfg-colegio-logo-preview');
         const statusLogo = document.getElementById('cfg-colegio-status');
         if (prevLogo) {
+          prevLogo.onerror = null;
           prevLogo.src = logoUrlFinal;
           prevLogo.style.setProperty('display','block','important');
           prevLogo.style.setProperty('visibility','visible','important');
@@ -29246,7 +29262,7 @@ async function onShowConfig() {
         }
         if (statusLogo) {
           if (logoUrlRaw) statusLogo.textContent = '✔ Logo actual (guardado). Para cambiar selecciona una nueva imagen y pulsa 💾 Guardar datos.';
-          else statusLogo.textContent = 'ℹ️ Sin logo personalizado (usando logo por defecto JAD). Para subir uno nuevo selecciona una imagen y pulsa 💾 Guardar datos.';
+          else statusLogo.textContent = 'ℹ️ Logo por defecto del sistema (JAD). Para subir uno personalizado selecciona una imagen y pulsa 💾 Guardar datos.';
         }
 
         // 4) Settear hidden field y _colegioLogoTmp sin borrar si subió uno nuevo ya
@@ -29265,7 +29281,7 @@ async function onShowConfig() {
       }
     })()
   ]);
-  // v196 CAPAS 2+3 POST-RENDER: activar anti-sobrescritura. TIMER 30 ciclos (100ms x 30 = 3s) + MUTATION OBSERVER
+  // v197 CAPAS 2+3 POST-RENDER: TIMER anti-sobrescritura + MUTATION OBSERVER. Solo re-pinta si src vacío/hidden o es el SVG incorrecto v196.
   try { setTimeout(function(){ _forceCfgLogoVisible(30); }, 50); } catch(_){}
   try { setTimeout(function(){ _forceCfgLogoVisible(15); }, 1500); } catch(_){}
 }
