@@ -17,19 +17,25 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=180"></script>
-<script src="db_supabase.js?v=180"></script>
+<script src="compat.js?v=181"></script>
+<script src="db_supabase.js?v=181"></script>
 <script>
-/* ===== v180: FIX ESTRUCTURAL RACE CONDITION IIFE + INLINE HANDLERS =====
-   Todo el JS real está dentro de un IIFE de ~30k líneas. Los atributos HTML
-   inline (onclick, onmouseenter, etc.) se ejecutan en scope GLOBAL window
-   INMEDIATAMENTE cuando Chrome renderiza el DOM (navbar L2890+), MUCHO ANTES
-   de que el IIFE llegue a las líneas finales donde asigna window.* = fn.
-   Resultado: 21+ Uncaught ReferenceError que matan TODO el flujo JS.
-   Solución: Pre-declarar variables globales y STUBS GLOBALES ANTES del IIFE
-   con patrón RETRY + try/catch (nunca lanzan uncaught). Cada stub espera a
-   que la función real exista en window (colgada por el IIFE) y luego la llama
-   con los mismos argumentos.
+/* ===== v181: FIX ESTRUCTURAL RACE CONDITION (2a iteración robusta) =====
+   v180 solucionó los 21 openNavDrop pero faltaban getConfig + maybeRunSetupWizard,
+   y el factory de stubs devolvía void (undefined) lo que rompía .catch() y await
+   sobre funciones async.
+   FIXES v181:
+   1. Factory devuelve SIEMPRE Promise.thenable → funciona tanto con .then/.catch
+      como con await como con llamada sync normal (el resultado se captura via .then).
+   2. Se aumenta _max de 6 → 12 reintentos (12 × 150ms = 1.8s de ventana para que
+      el IIFE gigante de ~30k líneas termine de ejecutar y cuelgue window.*).
+   3. Se agregan 3 funciones faltantes CRÍTICAS detectadas en consola user:
+      - getConfig (L8116 iniciarSplash, L7727 onAuthStateChanged, +60 llamados más)
+      - maybeRunSetupWizard (L7724 onAuthStateChanged)
+      - getConfigCachedOnce (llamado antes de definirse en algunos paths)
+   4. Se agrega un bypass especial: cuando el IIFE cuelga la función real en window,
+      automáticamente reemplaza al stub, pero para evitar dobles llamadas, el stub
+      una vez exitoso se reemplaza a sí mismo por la fn real en window[fnName].
 */
 (function(){
   /* --- Pre-declaración variables globales para eliminar TDZ --- */
@@ -41,30 +47,56 @@
     var _gk=_GLOBALS[_g][0]; if (typeof window[_gk]==='undefined') window[_gk]=_GLOBALS[_g][1];
   }
 
-  /* --- Factory de stub con retry: intenta 6 veces cada 150ms llamar a la fn real --- */
+  /* --- Factory stub THENABLE (devuelve Promise para await / .catch) --- */
   function _mkStub(fnName){
-    return function _stubWrapper(){
+    var _st = function _stubWrapper(){
       var _args = Array.prototype.slice.call(arguments);
-      var _tries = 0, _max = 6;
-      function _try(){
-        try{
-          if (typeof window[fnName]==='function' && !window[fnName]._isStub){
-            return window[fnName].apply(window,_args);
+      var _this = this;
+      var _prom = new Promise(function(resolve, reject){
+        var _tries = 0, _max = 12;
+        function _poll(){
+          var realFn = null;
+          try { realFn = (typeof window[fnName]==='function' && !window[fnName]._isStub) ? window[fnName] : null; }
+          catch(_ePoll){ realFn = null; }
+          if (realFn){
+            try{
+              var out = realFn.apply(_this || window, _args);
+              /* Reemplazar este stub por la fn real AHORA, para futuras llamadas no tener retardo */
+              try{ window[fnName] = realFn; } catch(_rep){}
+              /* Si la fn real devuelve una promesa, encadenarla; si no, resolver directo */
+              if (out && typeof out.then === 'function') { out.then(resolve, reject); }
+              else { resolve(out); }
+              return;
+            } catch(_eExec){
+              reject(_eExec);
+              return;
+            }
           }
-        } catch(_e){ console.warn('[stub] error al ejecutar '+fnName+':',_e); return; }
-        if (++_tries < _max){ setTimeout(_try,150); }
-      }
-      try{ _try(); } catch(_errStub){ console.warn('[stub] uncaught en '+fnName+':',_errStub); }
+          if (++_tries < _max){ setTimeout(_poll, 150); }
+          else {
+            /* Max reintentos: no fallar fuerte, resolver con vacío (log warn).
+               Esto evita que iniciarSplash.getConfig().catch() reviente. */
+            console.warn('[stub v181] '+fnName+' no disponible después de '+_max+' intentos — fallback vacío');
+            resolve({});
+          }
+        }
+        try{ _poll(); } catch(_errTop){ reject(_errTop); }
+      });
+      /* Para funciones sync que se usan sin .then/await, esperamos que el motor
+         JS no haga nada (el valor de retorno se ignora). Devolvemos promesa. */
+      return _prom;
     };
+    _st._isStub = true;
+    return _st;
   }
 
-  /* --- Lista COMPLETA de funciones usadas en inline HTML handlers (onclick/mouseenter/keydown etc.) --- */
+  /* --- Lista COMPLETA de funciones usadas en inline HTML + llamadas JS tempranas --- */
   var ALL_STUBS = [
     /* msb sidebar móvil */
     'msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser',
     'renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu',
     'msbToggleHeader','msbGoInicio','msbToggleSub','msbPickSub',
-    /* navbar (los 21 ReferenceError de la consola) */
+    /* navbar (los 21 ReferenceError v179) */
     'openNavDrop','closeNavDrops','toggleNavDrop','closeNavDrop','setActiveTab','showSection','showSectionDirect',
     /* login/sesión */
     'doLogin','doLoginApoderado','togglePass','togglePassApoderado','switchLoginTab',
@@ -105,6 +137,20 @@
     'resetearTodoElSistema','verificarCuentasHuerfanas',
     /* Usuarios */
     'downloadUsuariosTemplate','openModalImportUsuarios','openModalUsuario','renderUsuarios',
+    /* ===== v181: AGREGADAS FALTANTES CRÍTICAS ===== */
+    'getConfig',            /* L8116 iniciarSplash.getConfig().catch() + L7727 + ~60 más */
+    'maybeRunSetupWizard',  /* L7724 onAuthStateChanged await maybeRunSetupWizard */
+    'getConfigCachedOnce',  /* L6479 y 4 lugares más sync */
+    'cargarTutorActual',    /* L7732 await */
+    'cargarPrivilegiosActuales', /* L7733 await */
+    'inicializarFiltros',   /* L7735 await */
+    'updateStats',          /* L7736 */
+    'iniciarAlumnosListener', /* L7737 */
+    'iniciarConfigListener',  /* L7738 */
+    'initSessionControl',     /* L7739 */
+    'anunciarSesion',         /* L7740 */
+    'cargarConfigBanner',     /* L7734 */
+    'aplicarPermisos',        /* L7721 */
     /* Varias */
     'resetInactTimer','toast','cargarDashboardInicio','onShowConfig'
   ];
@@ -112,9 +158,7 @@
   for (var _s=0;_s<ALL_STUBS.length;_s++){
     var _fname = ALL_STUBS[_s];
     if (typeof window[_fname] === 'function' && !window[_fname]._isStub) continue;
-    var _st = _mkStub(_fname);
-    _st._isStub = true;
-    window[_fname] = _st;
+    window[_fname] = _mkStub(_fname);
   }
 })();
 </script>
