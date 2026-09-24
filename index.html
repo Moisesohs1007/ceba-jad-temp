@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=184"></script>
-<script src="db_supabase.js?v=184"></script>
+<script src="compat.js?v=185"></script>
+<script src="db_supabase.js?v=185"></script>
 <script>
 /* ===== v183: FIX PERMANENTE RACE CONDITION (CAPAS MÚLTIPLES DEFENSIVAS) =====
    ANÁLISIS PROFUNDO RAÍZ DE RECURRENCIA:
@@ -23865,7 +23865,13 @@ async function renderUsuarios() {
         <td style="color:var(--muted);font-size:0.85rem;">${u.email}</td>
         <td><span style="color:${rolColors[rol]||'#fff'};font-weight:600;">${rolLabels[rol]||rol}</span>${u.cargo?`<br><span style="font-size:0.72rem;color:var(--muted);">${u.cargo}</span>`:''}${asigTxt}${tutTxt}</td>
         <td style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button data-btn-reset-pass="1" class="btn btn-usuario-reset-pass" style="padding:5px 10px;font-size:0.78rem;background:#60a5fa !important;color:#fff !important;border:1px solid #60a5fa !important;" title="Resetear contraseña (2 opciones: admin directo o link correo)" onclick='try { var _e="${encodeURIComponent(u.email||"")}"; var _u="${encodeURIComponent(u.nombre||"").replace(/'/g,"\\\\'")}"; window.openAdminResetPassModal && window.openAdminResetPassModal(decodeURIComponent(_e), decodeURIComponent(_u)); } catch(__err) { console.error(__err); try { alert("Error btn reset pass: "+(__err.message||__err)); } catch(_){} }'>🔑</button>
+          <button
+            data-btn-reset-pass="1"
+            data-email="${encodeURIComponent(u.email||'')}"
+            data-uname="${encodeURIComponent(u.nombre||'')}"
+            class="btn btn-usuario-reset-pass"
+            style="padding:5px 10px;font-size:0.78rem;background:#60a5fa !important;color:#fff !important;border:1px solid #60a5fa !important;"
+            title="Resetear contraseña (2 opciones: admin directo o link correo)">🔑</button>
           <button class="btn btn-ghost btn-usuario-edit" style="padding:5px 10px;font-size:0.78rem;" title="Editar usuario" data-uid="${u.uid}" data-uname="${encodeURIComponent(u.nombre||'')}" data-urol="${encodeURIComponent(rol||'')}" data-uemail="${encodeURIComponent(u.email||'')}">✏</button>
           ${rolProfLike ? `<button class="btn btn-primary btn-usuario-asig" style="padding:5px 10px;font-size:0.78rem;background:#10b981 !important;" title="Configurar aulas (asignaciones)" data-uid="${u.uid}" data-uname="${encodeURIComponent(u.nombre||'')}" data-urol="${encodeURIComponent(rol||'')}" data-uemail="${encodeURIComponent(u.email||'')}">⚙ Aulas</button>` : ''}
           ${u.uid !== currentUser.uid ? `<button class="btn btn-danger btn-usuario-delete" style="padding:5px 10px;font-size:0.78rem;" title="Eliminar usuario" data-uid="${u.uid}">✕</button>` : ''}
@@ -23930,10 +23936,37 @@ document.addEventListener('click', function(e){
 // Target actual (seteado por btn click). email + name.
 let _arpTarget = { email: '', nombre: '' };
 
+/* Helper GLOBAL de validación de correo electrónico (estricto, no acepta vacíos ni espacios).
+   Aplica: min 2 chars @ dominio. Elimina espacios con trim() antes de validar. */
+var _EMAIL_REGEX_STRICT = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+function _validarCorreoEstricto(emailRaw) {
+  try {
+    const s = String(emailRaw || '').trim().toLowerCase();
+    if (!s) return { ok:false, err:'El correo electrónico está vacío.' };
+    if (s.length < 6) return { ok:false, err:'Correo demasiado corto.' };
+    if (!_EMAIL_REGEX_STRICT.test(s)) return { ok:false, err:'Correo con formato inválido: debe ser como nombre@dominio.com' };
+    if (s.indexOf(' ') >= 0) return { ok:false, err:'El correo no puede contener espacios.' };
+    return { ok:true, value:s };
+  } catch(_e) {
+    return { ok:false, err:'Error al validar correo: '+(_e?.message||_e) };
+  }
+}
+
 function openAdminResetPassModal(email, nombreDisplay) {
   try {
-    const eVal = String(email || '').trim().toLowerCase();
-    if(!eVal) { toast('Este usuario no tiene correo registrado','warning'); return; }
+    const vEmail = _validarCorreoEstricto(email);
+    /* EXCEPCIÓN: aceptar DNI de apoderados (8 dígitos) o 8dígitos@virtual (targetDni). */
+    const dniRaw = String(email || '').trim();
+    const isDniOk = /^\d{8}$/.test(dniRaw) || /^\d{8}@[a-zA-Z0-9.\-]+$/.test(dniRaw.toLowerCase());
+    let eVal = '';
+    if (vEmail.ok) {
+      eVal = vEmail.value;
+    } else if (isDniOk) {
+      eVal = dniRaw;
+    } else {
+      toast('Correo inválido: ' + (vEmail.err||'formato incorrecto'),'warning');
+      return;
+    }
     _arpTarget = { email: eVal, nombre: String(nombreDisplay || 'Usuario') };
     const modal = document.getElementById('modal-admin-reset-pass');
     if(!modal) { console.error('modal-admin-reset-pass NO EXISTE en el DOM'); toast('Error: no se encontró el modal de reset','error'); return; }
@@ -23972,11 +24005,19 @@ function _arpShowErr(which, msg) {
   el.textContent = msg || '';
 }
 async function adminResetPassSet() {
-  const p1 = String(document.getElementById('arp-new-pass-1')?.value || '');
-  const p2 = String(document.getElementById('arp-new-pass-2')?.value || '');
+  const p1 = String(document.getElementById('arp-new-pass-1')?.value || '').trim();
+  const p2 = String(document.getElementById('arp-new-pass-2')?.value || '').trim();
   if(!p1 || p1.length < 6) { _arpShowErr('set','La nueva contraseña debe tener al menos 6 caracteres.'); return; }
   if(p1 !== p2) { _arpShowErr('set','Las contraseñas no coinciden.'); return; }
-  if(!_arpTarget.email) { _arpShowErr('set','Este usuario no tiene correo registrado.'); return; }
+  /* === RESTRICCIÓN ESTABLE: campos contraseña SIEMPRE .trim() para evitar espacios al inicio/fin === */
+  const cleanTargetEmail = String(_arpTarget.email || '').trim().toLowerCase();
+  const dniRaw = cleanTargetEmail;
+  const isDni = /^\d{8}$/.test(dniRaw) || /^\d{8}@[a-zA-Z0-9.\-]+$/.test(dniRaw);
+  const vEmail = _validarCorreoEstricto(cleanTargetEmail);
+  if (!vEmail.ok && !isDni) { _arpShowErr('set','Correo inválido: ' + (vEmail.err || 'formato incorrecto')); return; }
+  const finalEmail = (vEmail.ok ? vEmail.value : dniRaw);
+  /* Actualizar target global con el valor limpio */
+  _arpTarget.email = finalEmail;
   _arpShowErr('set','');
   try {
     const user = auth.currentUser;
