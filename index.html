@@ -24201,14 +24201,15 @@ function openAdminResetPassModal(email, nombreDisplay) {
       modal.classList.remove('active');
       modal.classList.add('open');
       // BACKDROP (.modal-bg) = capa oscura exterior que ocupa toda la ventana
+      // v193: TAMAÑO COMPACTO + align-items center (no top) para evitar crop en pantallas bajas
       modal.style.setProperty('position', 'fixed', 'important');
       modal.style.setProperty('inset', '0 0 0 0', 'important');         /* top right bottom left 0 = toda la pantalla */
       modal.style.setProperty('display', 'flex', 'important');           /* CENTRAR: flexbox container */
-      modal.style.setProperty('align-items', 'flex-start', 'important'); /* alinear arriba, no center */
+      modal.style.setProperty('align-items', 'center', 'important');     /* v193: CENTRAR VERTICALMENTE en viewport, no arriba */
       modal.style.setProperty('justify-content', 'center', 'important'); /* eje X centro */
       modal.style.setProperty('flex-direction', 'row', 'important');
-      modal.style.setProperty('padding', '20px', 'important');
-      modal.style.setProperty('padding-top', '48px', 'important');
+      modal.style.setProperty('padding', '12px', 'important');            /* v193: padding reducido para aprovechar espacio */
+      modal.style.setProperty('padding-top', '12px', 'important');        /* v193: no padding-top 48px extra */
       modal.style.setProperty('overflow-y', 'auto', 'important');
       modal.style.setProperty('overflow-x', 'hidden', 'important');
       modal.style.setProperty('background-color', 'rgba(2, 6, 23, 0.72)', 'important');
@@ -24224,21 +24225,20 @@ function openAdminResetPassModal(email, nombreDisplay) {
       modal.style.setProperty('will-change', 'initial', 'important');
 
       // ====== MODAL INTERNO (la caja blanca oscura con contenido) ======
-      // Si existe el primer hijo class="modal", resetear inline también
+      // v193: TAMAÑO COMPACTO 380px max-width (no 440) + padding reducido + gaps pequeños para desktop/laptop sin crop
       const mInner = modal.querySelector && modal.querySelector(':scope > .modal');
       if (mInner) {
         mInner.style.setProperty('position', 'relative', 'important');
         mInner.style.setProperty('width', '100%', 'important');
-        mInner.style.setProperty('max-width', '440px', 'important');
+        mInner.style.setProperty('max-width', '380px', 'important');         /* v193: 380px no 440px (más compacto) */
+        mInner.style.setProperty('min-width', '300px', 'important');
         mInner.style.setProperty('margin', '0 auto', 'important');
-        mInner.style.setProperty('margin-top', '32px', 'important');
-        mInner.style.setProperty('margin-bottom', '32px', 'important');
-        mInner.style.setProperty('padding', '24px', 'important');
-        mInner.style.setProperty('border-radius', '16px', 'important');
-        mInner.style.setProperty('box-shadow', '0 20px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(96,165,250,0.10)', 'important');
-        mInner.style.setProperty('background', 'rgb(15, 23, 42)', 'important'); /* slate-900 fondo oscuro del tema */
+        mInner.style.setProperty('padding', '16px 16px 18px', 'important');  /* v193: padding 16px no 24px (-33% padding) */
+        mInner.style.setProperty('border-radius', '14px', 'important');       /* v193: radius 14px no 16px */
+        mInner.style.setProperty('box-shadow', '0 14px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(96,165,250,0.12)', 'important');
+        mInner.style.setProperty('background', 'rgb(15, 23, 42)', 'important');
         mInner.style.setProperty('color', 'rgb(241, 245, 249)', 'important');
-        mInner.style.setProperty('border', '1px solid rgba(96, 165, 250, 0.18)', 'important');
+        mInner.style.setProperty('border', '1px solid rgba(96, 165, 250, 0.22)', 'important');
         mInner.style.setProperty('opacity', '1', 'important');
         mInner.style.setProperty('visibility', 'visible', 'important');
         mInner.style.setProperty('transform', 'none', 'important');
@@ -24250,6 +24250,74 @@ function openAdminResetPassModal(email, nombreDisplay) {
         mInner.style.setProperty('top', 'auto', 'important');
         mInner.style.setProperty('bottom', 'auto', 'important');
         mInner.style.setProperty('display', 'block', 'important');
+        // === HIJOS directos: header y body compactos ===
+        try {
+          const hdr = mInner.querySelector(':scope > .modal-header');
+          if (hdr) {
+            hdr.style.setProperty('padding', '2px 0 10px', 'important');
+            hdr.style.setProperty('margin-bottom', '0', 'important');
+            hdr.style.setProperty('min-height', '40px', 'important');
+            const hdrTitle = hdr.querySelector('.modal-title');
+            if (hdrTitle) {
+              hdrTitle.style.setProperty('font-size', '1rem', 'important');
+              hdrTitle.style.setProperty('font-weight', '700', 'important');
+            }
+            const hdrClose = hdr.querySelector('.modal-close, button[onclick*="closeAdminReset"]');
+            if (hdrClose) {
+              hdrClose.style.setProperty('width', '32px', 'important');
+              hdrClose.style.setProperty('height', '32px', 'important');
+              hdrClose.style.setProperty('font-size', '16px', 'important');
+              hdrClose.style.setProperty('padding', '0', 'important');
+              hdrClose.style.setProperty('line-height', '30px', 'important');
+            }
+          }
+          const body = mInner.querySelector(':scope > .modal-body');
+          if (body) {
+            body.style.setProperty('padding', '4px 0 0', 'important');   /* v193: padding body reducido */
+          }
+          const arpUsr = mInner.querySelector('#arp-usr');
+          if (arpUsr) {
+            arpUsr.style.setProperty('padding', '10px 12px', 'important');   /* v193: -33% padding tarjeta usuario */
+            arpUsr.style.setProperty('margin-bottom', '12px', 'important');
+            arpUsr.style.setProperty('font-size', '0.85rem', 'important');
+            arpUsr.style.setProperty('border-radius', '10px', 'important');
+          }
+          // Tarjetas Modo Admin / Modo Clasico: reducir padding
+          const tarjetas = mInner.querySelectorAll('#arp-usr + div');
+          for (let t = 0; t < tarjetas.length; t++) {
+            tarjetas[t].style.setProperty('padding', '12px', 'important');    /* v193: padding tarjetas 12px no 14px */
+            tarjetas[t].style.setProperty('margin-bottom', t === 0 ? '10px' : '0', 'important');
+            tarjetas[t].style.setProperty('border-radius', '12px', 'important');
+            const titT = tarjetas[t].querySelector('div:first-child');
+            if (titT) titT.style.setProperty('font-size', '0.9rem', 'important');
+            const subT = tarjetas[t].querySelector('div:nth-child(2)');
+            if (subT) subT.style.setProperty('font-size', '0.78rem', 'important');
+            const labels = tarjetas[t].querySelectorAll('label');
+            for (let l = 0; l < labels.length; l++) {
+              labels[l].style.setProperty('font-size', '0.8rem', 'important');
+              labels[l].style.setProperty('margin-bottom', '4px', 'important');
+            }
+            const inputs = tarjetas[t].querySelectorAll('input');
+            for (let li = 0; li < inputs.length; li++) {
+              inputs[li].style.setProperty('padding', '9px 12px', 'important');
+              inputs[li].style.setProperty('min-height', '40px', 'important');
+              inputs[li].style.setProperty('font-size', '0.88rem', 'important');
+              inputs[li].style.setProperty('border-radius', '8px', 'important');
+            }
+            const fg = tarjetas[t].querySelectorAll('.form-group');
+            for (let fi = 0; fi < fg.length; fi++) {
+              fg[fi].style.setProperty('gap', '4px', 'important');
+              fg[fi].style.setProperty('margin-bottom', fi === fg.length-1 ? '6px' : '8px', 'important');
+            }
+            const bts = tarjetas[t].querySelectorAll('button.btn');
+            for (let bi = 0; bi < bts.length; bi++) {
+              bts[bi].style.setProperty('padding', '9px 14px', 'important');
+              bts[bi].style.setProperty('min-height', '42px', 'important');
+              bts[bi].style.setProperty('font-size', '0.85rem', 'important');
+              bts[bi].style.setProperty('border-radius', '9px', 'important');
+            }
+          }
+        } catch(_eStyling){}
       }
     } catch(_eD){
       // fallback simple si setProperty lanzara error
