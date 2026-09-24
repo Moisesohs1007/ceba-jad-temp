@@ -17,14 +17,104 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=179"></script>
-<script src="db_supabase.js?v=179"></script>
+<script src="compat.js?v=180"></script>
+<script src="db_supabase.js?v=180"></script>
 <script>
+/* ===== v180: FIX ESTRUCTURAL RACE CONDITION IIFE + INLINE HANDLERS =====
+   Todo el JS real está dentro de un IIFE de ~30k líneas. Los atributos HTML
+   inline (onclick, onmouseenter, etc.) se ejecutan en scope GLOBAL window
+   INMEDIATAMENTE cuando Chrome renderiza el DOM (navbar L2890+), MUCHO ANTES
+   de que el IIFE llegue a las líneas finales donde asigna window.* = fn.
+   Resultado: 21+ Uncaught ReferenceError que matan TODO el flujo JS.
+   Solución: Pre-declarar variables globales y STUBS GLOBALES ANTES del IIFE
+   con patrón RETRY + try/catch (nunca lanzan uncaught). Cada stub espera a
+   que la función real exista en window (colgada por el IIFE) y luego la llama
+   con los mismos argumentos.
+*/
 (function(){
-  var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
-  for (var i=0;i<stubs.length;i++) {
-    var k = stubs[i];
-    if (typeof window[k] !== 'function') window[k] = function(){ return function(){}; }();
+  /* --- Pre-declaración variables globales para eliminar TDZ --- */
+  var _GLOBALS = [
+    ['currentSection','inicio'],['currentRol',null],['currentCargo',''],['currentUser',null],
+    ['ASMQR_CONFIRM_ON_LEAVE',false],['ASMQR_CONFIRM_ON_LEAVE_EXPLICITO',false]
+  ];
+  for (var _g=0;_g<_GLOBALS.length;_g++){
+    var _gk=_GLOBALS[_g][0]; if (typeof window[_gk]==='undefined') window[_gk]=_GLOBALS[_g][1];
+  }
+
+  /* --- Factory de stub con retry: intenta 6 veces cada 150ms llamar a la fn real --- */
+  function _mkStub(fnName){
+    return function _stubWrapper(){
+      var _args = Array.prototype.slice.call(arguments);
+      var _tries = 0, _max = 6;
+      function _try(){
+        try{
+          if (typeof window[fnName]==='function' && !window[fnName]._isStub){
+            return window[fnName].apply(window,_args);
+          }
+        } catch(_e){ console.warn('[stub] error al ejecutar '+fnName+':',_e); return; }
+        if (++_tries < _max){ setTimeout(_try,150); }
+      }
+      try{ _try(); } catch(_errStub){ console.warn('[stub] uncaught en '+fnName+':',_errStub); }
+    };
+  }
+
+  /* --- Lista COMPLETA de funciones usadas en inline HTML handlers (onclick/mouseenter/keydown etc.) --- */
+  var ALL_STUBS = [
+    /* msb sidebar móvil */
+    'msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser',
+    'renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu',
+    'msbToggleHeader','msbGoInicio','msbToggleSub','msbPickSub',
+    /* navbar (los 21 ReferenceError de la consola) */
+    'openNavDrop','closeNavDrops','toggleNavDrop','closeNavDrop','setActiveTab','showSection','showSectionDirect',
+    /* login/sesión */
+    'doLogin','doLoginApoderado','togglePass','togglePassApoderado','switchLoginTab',
+    'solicitarRecuperacionPass','confirmarCambioPass','cambiarPassPersonal','guardarMisDatos',
+    /* avatar/menú usuario / logout */
+    'toggleUserMenu','closeUserMenu','abrirMisDatos','doLogout',
+    'openLogoutConfirm','closeLogoutConfirm','ejecutarLogoutFinal',
+    /* banner */
+    'goBannerSlide',
+    /* crear apoderado */
+    'cancelarCrearApoCuenta','onToggleApoCorreo','confirmarCrearApoCuenta',
+    /* scanner QR */
+    'startScanner','stopScanner','manualRegister','_pausarEscaner','_reanudarEscaner',
+    'confirmRegister','renderDebugOrlando',
+    /* Alumnos filtros/acciones */
+    'onNivelChangeAlumnos','onGradoChangeAlumnos','onSeccionChangeAlumnos','onModalidadChangeAlumnos',
+    'onSearchAlumnos','limpiarFiltrosAlumnos','openModalAlumno','downloadAlumnosTemplate',
+    'importExcel','openModalFotosMasivo','exportPDFAlumnos','exportExcelAlumnos',
+    'toggleModoCarnets','imprimirCarnetsMasivo','toggleSelectAll',
+    /* Registro */
+    'onRegMesChange','validarRangoFecha','renderRegistro',
+    'onNivelChangeRegistro','onGradoChangeRegistro','onSeccionChangeRegistro',
+    'onSearchRegistro','limpiarFiltrosRegistro','exportXLSX','exportPDFRegistro',
+    'clearToday','regOrdenarPor',
+    /* Configuración general */
+    '_applyUiByModalidad','previsualizarLogoColegio','guardarInfoColegio',
+    'cargarImagenesBanner','guardarImagenesBanner','guardarHorarios','guardarGrados','guardarSecciones',
+    'abrirConfigAvanzada','verificarPassCfgAdv','cerrarConfigAvanzada','guardarModalidadSuperAdmin',
+    /* Reset Password Admin (Maryflo) */
+    'closeAdminResetPassModal','adminResetPassSet','adminResetPassLink',
+    /* Modals varios */
+    'closeModal','toggleUsuarioPass','togglePrivilegios','toggleCargoCustum',
+    'openModalPermisosEspeciales','toggleBtnConfigurar','abrirModalPrivilegios','toggleTutorFields',
+    /* Factiliza */
+    'guardarFactiliza','probarFactiliza',
+    /* Alumnos / Diagnóstico */
+    'runDiagnosticoAlumnos','repararRapidoAlumnos','crearCuentasApoderadosMasivo',
+    'resetearTodoElSistema','verificarCuentasHuerfanas',
+    /* Usuarios */
+    'downloadUsuariosTemplate','openModalImportUsuarios','openModalUsuario','renderUsuarios',
+    /* Varias */
+    'resetInactTimer','toast','cargarDashboardInicio','onShowConfig'
+  ];
+
+  for (var _s=0;_s<ALL_STUBS.length;_s++){
+    var _fname = ALL_STUBS[_s];
+    if (typeof window[_fname] === 'function' && !window[_fname]._isStub) continue;
+    var _st = _mkStub(_fname);
+    _st._isStub = true;
+    window[_fname] = _st;
   }
 })();
 </script>
