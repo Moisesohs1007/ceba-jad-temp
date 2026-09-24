@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=173"></script>
-<script src="db_supabase.js?v=173"></script>
+<script src="compat.js?v=174"></script>
+<script src="db_supabase.js?v=174"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -3498,31 +3498,36 @@
       </div>
     </div>
 
-    <!-- v171: Modal Admin Reset / Set Password (2 modos: link o pass manual directo) -->
-    <div id="modal-admin-reset-pass" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99998;align-items:center;justify-content:center;padding:16px;">
-      <div style="background:var(--surface);border-radius:16px;padding:24px 22px;width:90%;max-width:420px;border:1px solid var(--border);box-shadow:0 20px 60px rgba(0,0,0,0.4);">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-          <div style="font-weight:700;font-size:1rem;">🔑 Resetear contraseña</div>
-          <button class="btn btn-ghost" style="padding:4px 8px;font-size:0.9rem;" onclick="closeAdminResetPassModal()">✕</button>
+    <div id="modal-admin-reset-pass" class="modal-bg" style="display:none;z-index:999999;">
+      <div class="modal" onclick="event.stopPropagation()" style="max-width:440px;">
+        <div class="modal-header">
+          <div class="modal-title">🔑 Resetear contraseña</div>
+          <button class="modal-close" onclick="closeAdminResetPassModal()">✕</button>
         </div>
-        <div id="arp-usr" style="font-size:0.85rem;color:var(--muted);margin-bottom:14px;padding:10px 12px;background:rgba(100,116,139,0.08);border-radius:10px;"></div>
+        <div class="modal-body" style="padding:18px 16px;">
+          <div id="arp-usr" style="font-size:0.9rem;margin-bottom:16px;padding:12px 14px;background:rgba(100,116,139,0.12);border-radius:12px;border:1px solid #64748b33;"></div>
 
-        <!-- Opción 1: Set contraseña manual DIRECTO (admin-set-password EF, sin link) -->
-        <div style="margin-bottom:12px;padding:12px;border-radius:12px;border:1px solid #60a5fa55;background:rgba(96,165,250,0.08);">
-          <div style="font-weight:600;margin-bottom:6px;font-size:0.9rem;">👑 Modo Admin — Setear contraseña directamente</div>
-          <div style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;">Escribe la contraseña que quieras y la cambias AHORA. No requiere que Mary abra su correo. ✨ MODO RÁPIDO.</div>
-          <input type="password" id="arp-new-pass-1" placeholder="Nueva contraseña (min 6 caracteres)" style="width:100%;margin-bottom:8px;">
-          <input type="password" id="arp-new-pass-2" placeholder="Repetir nueva contraseña" style="width:100%;margin-bottom:10px;" onkeydown="if(event.key==='Enter')adminResetPassSet()">
-          <div id="arp-set-err" style="display:none;color:#ef4444;font-size:0.78rem;margin-bottom:8px;padding:6px 8px;background:rgba(239,68,68,0.08);border-radius:8px;"></div>
-          <button class="btn btn-primary" style="width:100%;justify-content:center;background:#60a5fa !important;border-color:#60a5fa !important;" onclick="adminResetPassSet()">✅ Cambiar contraseña ahora</button>
-        </div>
+          <div style="margin-bottom:14px;padding:14px;border-radius:14px;border:1px solid #60a5fa66;background:rgba(96,165,250,0.10);">
+            <div style="font-weight:700;margin-bottom:8px;font-size:0.95rem;">👑 Modo Admin — Setear contraseña directamente</div>
+            <div style="font-size:0.8rem;color:var(--muted);margin-bottom:12px;">Escribe la contraseña nueva 2 veces. No requiere que el usuario abra su correo.</div>
+            <div class="form-group" style="margin-bottom:10px;">
+              <label>Nueva contraseña</label>
+              <input type="password" id="arp-new-pass-1" placeholder="Mínimo 6 caracteres" onkeydown="if(event.key==='Enter')adminResetPassSet()">
+            </div>
+            <div class="form-group" style="margin-bottom:12px;">
+              <label>Repetir nueva contraseña</label>
+              <input type="password" id="arp-new-pass-2" placeholder="Repetir contraseña" onkeydown="if(event.key==='Enter')adminResetPassSet()">
+            </div>
+            <div id="arp-set-err" style="display:none;color:#ef4444;font-size:0.78rem;margin-bottom:10px;padding:8px 10px;background:rgba(239,68,68,0.08);border-radius:10px;"></div>
+            <button class="btn btn-primary" style="width:100%;justify-content:center;background:#60a5fa !important;border-color:#60a5fa !important;" onclick="adminResetPassSet()">✅ Cambiar contraseña ahora</button>
+          </div>
 
-        <!-- Opción 2: Enviar link por correo (Firebase sendPasswordResetEmail) -->
-        <div style="padding:12px;border-radius:12px;border:1px solid #64748b55;background:rgba(100,116,139,0.08);">
-          <div style="font-weight:600;margin-bottom:6px;font-size:0.9rem;">✉️ Modo Clásico — Enviar link al correo</div>
-          <div style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;">Se envía un link a la bandeja del usuario (incluye Spam). Sirve cuando quieres que ELLA elija su propia contraseña.</div>
-          <div id="arp-link-err" style="display:none;color:#ef4444;font-size:0.78rem;margin-bottom:8px;padding:6px 8px;background:rgba(239,68,68,0.08);border-radius:8px;"></div>
-          <button class="btn btn-primary" style="width:100%;justify-content:center;background:#94a3b8 !important;border-color:#94a3b8 !important;" onclick="adminResetPassLink()">Enviar link de recuperación</button>
+          <div style="padding:14px;border-radius:14px;border:1px solid #64748b55;background:rgba(100,116,139,0.10);">
+            <div style="font-weight:700;margin-bottom:8px;font-size:0.95rem;">✉️ Modo Clásico — Enviar link al correo</div>
+            <div style="font-size:0.8rem;color:var(--muted);margin-bottom:12px;">El usuario recibe un link en su bandeja (revisar Spam) y cambia la contraseña.</div>
+            <div id="arp-link-err" style="display:none;color:#ef4444;font-size:0.78rem;margin-bottom:10px;padding:8px 10px;background:rgba(239,68,68,0.08);border-radius:10px;"></div>
+            <button class="btn btn-ghost" style="width:100%;justify-content:center;border:1px solid var(--border);" onclick="adminResetPassLink()">Enviar link de recuperación</button>
+          </div>
         </div>
       </div>
     </div>
@@ -22997,8 +23002,6 @@ async function saveUsuario() {
       _invalidarUsuarios();
       setTimeout(() => { _resetPxCheckboxesDOMToFalse(); editingUsuarioId = null; }, 60);
       if(pass && pass.length >= 6) {
-        // v171: AHORA SÍ admin puede cambiar contraseña DIRECTAMENTE SIN link por correo.
-        // Llamamos Edge Function admin-set-password → Admin SDK updateUserById(newPassword).
         try {
           const colegioId = (typeof window.COLEGIO_ID !== 'undefined' && window.COLEGIO_ID)
             ? String(window.COLEGIO_ID)
@@ -23017,11 +23020,16 @@ async function saveUsuario() {
           });
           const bodyEf = await resEf.json().catch(() => ({}));
           if(!resEf.ok) {
-            // Fallback: enviar link por correo (siempre existe como backup)
-            console.warn('[saveUsuario] admin-set-password falló. fallback sendPasswordReset.', bodyEf);
-            try { await auth.sendPasswordResetEmail(email); } catch(_e){}
-            toast('Datos actualizados. No se pudo cambiar la contraseña directamente: ' + (bodyEf?.error || bodyEf?.code || ('HTTP '+resEf.status)) + '. Se envió link de recuperación por correo.','warning');
-          } else {
+            // v174: EF NO EXISTE (HTTP 404) o está no deployada NUEVA. No caer en fallback sendPasswordResetEmail que termina en 429 too many.
+            if(resEf.status === 404 || /CORS|NetworkError|Failed to fetch|admin-set-password/.test(String(bodyEf?.error||'').toLowerCase() + ' ' + String(bodyEf?.code||''))) {
+              toast('⚠️ FALTA DEPLOYAR la Edge Function admin-set-password. Entra a Supabase Dashboard → Functions → deploya admin-set-password. Intrucciones en el panel superior. NO usar link de recuperación (ya hay 429 too many requests).','error', 10000);
+            } else {
+              console.warn('[saveUsuario] admin-set-password falló. fallback sendPasswordReset.', bodyEf);
+              try { await auth.sendPasswordResetEmail(email); } catch(_e){}
+              toast('Datos actualizados. No se pudo cambiar la contraseña directamente: ' + (bodyEf?.error || bodyEf?.code || ('HTTP '+resEf.status)) + '. Se envió link de recuperación por correo.','warning');
+            }
+            return;
+          }
             // v172: la EF ahora devuelve mode='created' si creó auth user + mode='updated' si ya existía.
             if(bodyEf && bodyEf.mode === 'created') {
               toast('✅ Datos actualizados. Se CREÓ la cuenta de acceso y se asignó la nueva contraseña. Ya puede ingresar.','success');
@@ -23608,7 +23616,7 @@ async function renderUsuarios() {
         <td style="color:var(--muted);font-size:0.85rem;">${u.email}</td>
         <td><span style="color:${rolColors[rol]||'#fff'};font-weight:600;">${rolLabels[rol]||rol}</span>${u.cargo?`<br><span style="font-size:0.72rem;color:var(--muted);">${u.cargo}</span>`:''}${asigTxt}${tutTxt}</td>
         <td style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button class="btn btn-ghost btn-usuario-reset-pass" style="padding:5px 10px;font-size:0.78rem;background:#60a5fa !important;color:#fff !important;" title="Enviar correo para restablecer contraseña" data-email="${encodeURIComponent(u.email||'')}" data-uname="${encodeURIComponent(u.nombre||'')}">🔑</button>
+          <button data-btn-reset-pass="1" class="btn btn-usuario-reset-pass" style="padding:5px 10px;font-size:0.78rem;background:#60a5fa !important;color:#fff !important;border:1px solid #60a5fa !important;" title="Resetear contraseña (2 opciones: admin directo o link correo)" onclick='try { var _e="${encodeURIComponent(u.email||"")}"; var _u="${encodeURIComponent(u.nombre||"").replace(/'/g,"\\\\'")}"; window.openAdminResetPassModal && window.openAdminResetPassModal(decodeURIComponent(_e), decodeURIComponent(_u)); } catch(__err) { console.error(__err); try { alert("Error btn reset pass: "+(__err.message||__err)); } catch(_){} }'>🔑</button>
           <button class="btn btn-ghost btn-usuario-edit" style="padding:5px 10px;font-size:0.78rem;" title="Editar usuario" data-uid="${u.uid}" data-uname="${encodeURIComponent(u.nombre||'')}" data-urol="${encodeURIComponent(rol||'')}" data-uemail="${encodeURIComponent(u.email||'')}">✏</button>
           ${rolProfLike ? `<button class="btn btn-primary btn-usuario-asig" style="padding:5px 10px;font-size:0.78rem;background:#10b981 !important;" title="Configurar aulas (asignaciones)" data-uid="${u.uid}" data-uname="${encodeURIComponent(u.nombre||'')}" data-urol="${encodeURIComponent(rol||'')}" data-uemail="${encodeURIComponent(u.email||'')}">⚙ Aulas</button>` : ''}
           ${u.uid !== currentUser.uid ? `<button class="btn btn-danger btn-usuario-delete" style="padding:5px 10px;font-size:0.78rem;" title="Eliminar usuario" data-uid="${u.uid}">✕</button>` : ''}
@@ -23681,10 +23689,12 @@ function openAdminResetPassModal(email, nombreDisplay) {
     const modal = document.getElementById('modal-admin-reset-pass');
     if(!modal) { console.error('modal-admin-reset-pass NO EXISTE en el DOM'); toast('Error: no se encontró el modal de reset','error'); return; }
     const usrEl = document.getElementById('arp-usr');
-    if (usrEl) usrEl.innerHTML = `<b style="color:#fff;">${_arpTarget.nombre}</b><br><span style="color:var(--muted);font-size:0.8rem;">${_arpTarget.email || '(sin correo)'}</span>`;
+    if (usrEl) usrEl.innerHTML = `<b style="color:#fff;">${_arpTarget.nombre}</b><br><span style="color:var(--muted);font-size:0.85rem;">${_arpTarget.email || '(sin correo)'}</span>`;
     ['arp-new-pass-1','arp-new-pass-2'].forEach(id => { const e = document.getElementById(id); if(e) e.value = ''; });
     ['arp-set-err','arp-link-err'].forEach(id => { const e = document.getElementById(id); if(e){ e.style.display='none'; e.textContent=''; } });
-    modal.style.display = 'flex';
+    try { _modalLockOn && _modalLockOn(); } catch(_){}
+    modal.style.display = '';
+    setTimeout(() => { try { modal.classList.add('open'); } catch(_){} }, 20);
   } catch(err) {
     console.error('openAdminResetPassModal', err);
     try { toast('Error abriendo modal de reset: ' + (err?.message || err), 'error'); } catch(_){}
@@ -23693,10 +23703,17 @@ function openAdminResetPassModal(email, nombreDisplay) {
 window.openAdminResetPassModal = openAdminResetPassModal;
 
 function closeAdminResetPassModal() {
-  const modal = document.getElementById('modal-admin-reset-pass');
-  if(modal) modal.style.display = 'none';
-  _arpTarget = { email: '', nombre: '' };
+  try {
+    const modal = document.getElementById('modal-admin-reset-pass');
+    if(modal) {
+      try { modal.classList.remove('open'); } catch(_){}
+      setTimeout(() => { try { modal.style.display = 'none'; } catch(_){} }, 180);
+    }
+    try { _modalLockOff && _modalLockOff(); } catch(_){}
+    _arpTarget = { email: '', nombre: '' };
+  } catch(_) {}
 }
+window.closeAdminResetPassModal = closeAdminResetPassModal;
 function _arpShowErr(which, msg) {
   const ids = { set: 'arp-set-err', link: 'arp-link-err' };
   const id = ids[which] || '';
@@ -23727,6 +23744,13 @@ async function adminResetPassSet() {
     });
     const bodyEf = await resEf.json().catch(() => ({}));
     if (!resEf.ok) {
+      // v174: EF NO EXISTE DEPLOYADA. Mostrar error EXPLICITO con instrucciones, sin fallback link (429 too many).
+      if (resEf.status === 404 || /CORS|NetworkError|Failed to fetch/.test(String(bodyEf?.error||'').toLowerCase() + ' ' + String(bodyEf?.code||''))) {
+        const m1 = '⚠️ Edge Function admin-set-password NO ESTÁ DEPLOYADA en Supabase. No puedo cambiar la pass HOY. Pasos (PowerShell): cd "c:\\App Web\\CEBA JAD" ; supabase functions deploy admin-set-password --project-ref uezhytctcrhmkmznwtyv . Luego vuelve a intentar.';
+        _arpShowErr('set', m1);
+        toast(m1, 'error', 12000);
+        return;
+      }
       // Si apoderado DNI @virtual y correo real falla: intentar buscarlo como DNI (targetDni)
       const isMaybeDni = /^\d{8}$/.test(_arpTarget.email) || /^\d{8}@/.test(_arpTarget.email);
       if (isMaybeDni && _arpTarget.email.indexOf('@') > 0) {
