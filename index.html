@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=171"></script>
-<script src="db_supabase.js?v=171"></script>
+<script src="compat.js?v=172"></script>
+<script src="db_supabase.js?v=172"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -23022,7 +23022,14 @@ async function saveUsuario() {
             try { await auth.sendPasswordResetEmail(email); } catch(_e){}
             toast('Datos actualizados. No se pudo cambiar la contraseña directamente: ' + (bodyEf?.error || bodyEf?.code || ('HTTP '+resEf.status)) + '. Se envió link de recuperación por correo.','warning');
           } else {
-            toast('✅ Usuario actualizado y contraseña cambiada correctamente (admin-set-password).','success');
+            // v172: la EF ahora devuelve mode='created' si creó auth user + mode='updated' si ya existía.
+            if(bodyEf && bodyEf.mode === 'created') {
+              toast('✅ Datos actualizados. Se CREÓ la cuenta de acceso y se asignó la nueva contraseña. Ya puede ingresar.','success');
+            } else if(bodyEf && bodyEf.warning) {
+              toast('⚠️ ' + (bodyEf.error || 'Usuario creado. Revisa permisos/grados manualmente.'),'warning');
+            } else {
+              toast('✅ Datos actualizados y contraseña cambiada correctamente.','success');
+            }
           }
         } catch(eAdmin) {
           console.warn('[saveUsuario] admin-set-password error', eAdmin);
@@ -23715,7 +23722,11 @@ async function adminResetPassSet() {
         });
         const bodyEf2 = await resEf2.json().catch(() => ({}));
         if(resEf2.ok) {
-          toast('✅ Contraseña cambiada correctamente (Modo Apoderado DNI).','success');
+          if(bodyEf2 && bodyEf2.mode === 'created') {
+            toast('✅ Se CREÓ la cuenta de acceso y se asignó la nueva contraseña (Apoderado DNI). Ya puede ingresar.','success');
+          } else {
+            toast('✅ Contraseña cambiada correctamente (Modo Apoderado DNI).','success');
+          }
           closeAdminResetPassModal();
           return;
         }
@@ -23723,7 +23734,14 @@ async function adminResetPassSet() {
       _arpShowErr('set', 'Error: ' + (bodyEf?.error || bodyEf?.code || ('HTTP '+resEf.status)));
       return;
     }
-    toast('✅ Contraseña cambiada correctamente. Ya puede ingresar con la nueva contraseña.','success');
+    // v172: distinguir created vs updated
+    if(bodyEf && bodyEf.mode === 'created') {
+      toast('✅ Se CREÓ la cuenta de acceso y se asignó la nueva contraseña. Ya puede ingresar.','success');
+    } else if(bodyEf && bodyEf.warning) {
+      toast('⚠️ ' + (bodyEf.error || 'Cuenta creada. Revisa permisos/grados manualmente.'),'warning');
+    } else {
+      toast('✅ Contraseña cambiada correctamente. Ya puede ingresar con la nueva contraseña.','success');
+    }
     closeAdminResetPassModal();
   } catch(e) {
     console.warn('adminResetPassSet', e);
