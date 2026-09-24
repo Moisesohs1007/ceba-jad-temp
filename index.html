@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=177"></script>
-<script src="db_supabase.js?v=177"></script>
+<script src="compat.js?v=178"></script>
+<script src="db_supabase.js?v=178"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -3527,6 +3527,22 @@
             <div style="font-size:0.8rem;color:var(--muted);margin-bottom:12px;">El usuario recibe un link en su bandeja (revisar Spam) y cambia la contraseña.</div>
             <div id="arp-link-err" style="display:none;color:#ef4444;font-size:0.78rem;margin-bottom:10px;padding:8px 10px;background:rgba(239,68,68,0.08);border-radius:10px;"></div>
             <button class="btn btn-ghost" style="width:100%;justify-content:center;border:1px solid var(--border);" onclick="adminResetPassLink()">Enviar link de recuperación</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-logout-confirm" class="modal-bg" style="display:none;z-index:999999;">
+      <div class="modal" onclick="event.stopPropagation()" style="max-width:380px;">
+        <div class="modal-header">
+          <div class="modal-title">🚪 Cerrar sesión</div>
+          <button class="modal-close" onclick="closeLogoutConfirm()">✕</button>
+        </div>
+        <div class="modal-body" style="padding:20px 18px;">
+          <div style="font-size:0.93rem;margin-bottom:20px;color:var(--text);text-align:center;">¿Estás seguro que deseas cerrar sesión?</div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;">
+            <button class="btn btn-ghost" style="border:1px solid var(--border);" onclick="closeLogoutConfirm()">Cancelar</button>
+            <button class="btn btn-danger" onclick="ejecutarLogoutFinal()">Cerrar sesión</button>
           </div>
         </div>
       </div>
@@ -7283,10 +7299,39 @@ document.addEventListener('click', function(e) {
   }
 });
 
+function openLogoutConfirm() {
+  try {
+    const modal = document.getElementById('modal-logout-confirm');
+    if(!modal) { ejecutarLogoutFinal(); return; }
+    try { _modalLockOn && _modalLockOn(); } catch(_){}
+    modal.style.display = '';
+    setTimeout(() => { try { modal.classList.add('open'); } catch(_){} }, 20);
+  } catch(_err) { try { ejecutarLogoutFinal(); } catch(_){} }
+}
+window.openLogoutConfirm = openLogoutConfirm;
+function closeLogoutConfirm() {
+  try {
+    const modal = document.getElementById('modal-logout-confirm');
+    if(modal) {
+      try { modal.classList.remove('open'); } catch(_){}
+      setTimeout(() => { try { modal.style.display = 'none'; } catch(_){} }, 180);
+    }
+    try { _modalLockOff && _modalLockOff(); } catch(_){}
+  } catch(_) {}
+}
+window.closeLogoutConfirm = closeLogoutConfirm;
 function doLogout() {
+  // v178: Ya no usamos window.confirm() porque en algunos Chrome muestra el popup
+  // nativo "¿Cerrar sesión?" con checkbox 'No permitir que vuelva a preguntar'.
+  // Ahora mostramos modal personalizado (click en boton Cerrar sesión llama ejecutarLogoutFinal).
+  try { closeUserMenu && closeUserMenu(); } catch(_){}
+  openLogoutConfirm();
+}
+window.doLogout = doLogout;
+function ejecutarLogoutFinal() {
   clearTimeout(_inactTimer);
   clearTimeout(_inactWarning);
-  if(!confirm('¿Cerrar sesión?')) return;
+  try { closeLogoutConfirm(); } catch(_){}
   sessionStorage.removeItem('splashMostrado');
   sessionStorage.removeItem('asmqr_haySession');
   try { localStorage.removeItem('asmqr_lastTab'); } catch(e) {}
@@ -7302,18 +7347,19 @@ function doLogout() {
   } catch(e) {}
   if(_alumnosTsUnsubscribe) { _alumnosTsUnsubscribe(); _alumnosTsUnsubscribe = null; }
   if(_configUnsubscribe) { _configUnsubscribe(); _configUnsubscribe = null; }
-  auth.signOut();
+  try { auth.signOut(); } catch(_){}
   // Resetear splash y mostrarlo
   var splash = document.getElementById('splash-screen');
   if(splash) {
     splash.classList.remove('ocultar');
     splash.style.display = 'flex';
   }
-  iniciarSplash();
+  try { iniciarSplash && iniciarSplash(); } catch(_){}
   setTimeout(function() {
-    document.getElementById('login-screen').style.display = 'flex';
+    try { document.getElementById('login-screen').style.display = 'flex'; } catch(_){}
   }, 5000);
 }
+window.ejecutarLogoutFinal = ejecutarLogoutFinal;
 
 let _autoRecargaTutoriasEnCurso = false;
 let _autoRecargaTutoriasUltimoTs = 0;
