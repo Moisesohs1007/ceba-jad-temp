@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=174"></script>
-<script src="db_supabase.js?v=174"></script>
+<script src="compat.js?v=176"></script>
+<script src="db_supabase.js?v=176"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -6312,6 +6312,11 @@ let currentRol = null; // admin | director | profesor | portero
 let currentCargo = '';
 let _repContextoPDF = {}; // contexto guardado para exportar PDF de reportes
 let _repAnioCompletoActivo = false;
+// ===== v176: currentSection debe declararse ARRIBA (antes de cualquier llamada a showSectionDirect)
+// para evitar Uncaught ReferenceError: currentSection is not defined (temporal dead zone) que
+// rompia TODA la ejecucion JS: menu Configuracion no abria, lista usuarios vacia, etc.
+let currentSection = 'inicio';
+window.currentSection = currentSection;
 
 let currentPerms = { incidentesDiaLectura: false, incidentesVerTodo: false, modoCarnets: false, verTodasAulas: false, alumnosFotosMasivo: false, sections: {} };
 
@@ -8386,21 +8391,26 @@ function openNavDrop(id, btn) {
   const drop = document.getElementById(id);
   if(!drop) return;
   drop.classList.add('open');
-  btn.classList.add('active');
+  if(btn) try { btn.classList.add('active'); } catch(_){}
 }
+window.openNavDrop = openNavDrop;
 function toggleNavDrop(id, btn) {
   openNavDrop(id, btn);
 }
+window.toggleNavDrop = toggleNavDrop;
 function closeNavDrops() {
   document.querySelectorAll('.nav-dropdown').forEach(d => d.classList.remove('open'));
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
 }
+window.closeNavDrops = closeNavDrops;
+window.closeNavDrop = closeNavDrops;
 function setActiveTab(id) {
   closeNavDrops();
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   const el = document.getElementById(id);
   if(el) el.classList.add('active');
 }
+window.setActiveTab = setActiveTab;
 // Cerrar dropdowns al salir del nav-tabs o al click fuera
 const _navTabs = document.getElementById('nav-tabs');
 if(_navTabs) {
@@ -8430,7 +8440,10 @@ let scanInterval = null;
 let lastScanned = '';
 let lastScanTime = 0;
 let pendingStudent = null;
-let currentSection = 'scan';
+// v176: BORRADO el 2do let currentSection. Antes habia let currentSection = 'scan' AQUI (L8438)
+// que era RE-DECLARACION (Temporal Dead Zone) y causaba "Uncaught ReferenceError:
+// currentSection is not defined" en showSectionDirect L7805, que rompia la ejecucion de TODO el JS.
+// Ahora currentSection se declara UNA SOLA VEZ arriba (L6318).
 let _scanInFlight = {};
 const SCAN_INFLIGHT_MS = 8000;
 
