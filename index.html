@@ -6835,7 +6835,19 @@ function canAccessSection(secId) {
   if(id === 'alumnos') return (_isSuperAdmin() || r === 'admin' || r === 'coordinador' || r === 'profesor' || r === 'psicologo');
   if(id === 'reportes') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || r === 'psicologo' || (r === 'profesor' && isTutor));
   if(id === 'alertas') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador');
-  if(id === 'incidentes') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || r === 'profesor' || r === 'psicologo' || r === 'auxiliar');
+  if(id === 'incidentes') {
+    // v194 RC FIX: Auxiliar NUNCA ve incidentes por defecto.
+    // SOLO se permite si ADMIN marcó los checkboxes de permisos especiales:
+    //   - [x] Puede ver incidentes del día (solo lectura)
+    //   - [x] Puede ver historial completo de incidentes
+    // Esto asegura que "solo si se marca el check debe permitirse".
+    const baseAdminLike = (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || r === 'profesor' || r === 'psicologo');
+    if (baseAdminLike) return true;
+    if (r === 'auxiliar') {
+      return !!currentPerms?.incidentesDiaLectura || !!currentPerms?.incidentesVerTodo;
+    }
+    return false;
+  }
   if(id === 'materiales') return _isSuperAdmin();
   if(id === 'materiales-entrega') return _isSuperAdmin();
   if(id === 'comunicado') return (_isSuperAdmin() || r === 'admin' || r === 'director' || r === 'coordinador' || r === 'psicologo' || (r === 'profesor' && isTutor));
@@ -31295,6 +31307,19 @@ function limpiarFiltrosIncidentes() {
   renderIncidentes();
 }
 function abrirModalIncidente() {
+  // v194 RC FIX: Capa defensiva EXTRA. Auxiliar NUNCA puede abrir modal incidentes
+  // a MENOS que ADMIN haya marcado checkboxes de permisos especiales de Incidentes.
+  // Esto evita acceso incluso si alguien llama la funcion desde consola F12.
+  try {
+    const r = String(currentUser?.rol || currentPerms?.rol || '').toLowerCase();
+    if (r === 'auxiliar') {
+      const okInc = !!currentPerms?.incidentesDiaLectura || !!currentPerms?.incidentesVerTodo;
+      if (!okInc) {
+        toast('⛔ No tienes permiso para registrar incidentes. Contacta al Administrador para que marque la casilla de Incidentes en tu perfil de usuario.','error',10000);
+        return;
+      }
+    }
+  } catch(_chkAux){}
   incAlumnoSeleccionado = null;
   document.getElementById('inc-buscar').value = '';
   document.getElementById('inc-alumno-resultado').innerHTML = '';
@@ -31532,6 +31557,18 @@ function previewIncFotos(input) {
 }
 
 async function guardarIncidente() {
+  // v194 RC FIX: Capa defensiva FINAL en DB WRITE. Auxiliar sin checkboxes NO guarda.
+  // Incluso si alguien lograra saltarse el abrirModalIncidente() (F12), falla aqui.
+  try {
+    const r = String(currentUser?.rol || currentPerms?.rol || '').toLowerCase();
+    if (r === 'auxiliar') {
+      const okInc = !!currentPerms?.incidentesDiaLectura || !!currentPerms?.incidentesVerTodo;
+      if (!okInc) {
+        toast('⛔ No tienes permiso para registrar incidentes. Contacta al Administrador para que marque la casilla de Incidentes en tu perfil.','error',12000);
+        return;
+      }
+    }
+  } catch(_chkAux2){}
   const alumnoId = document.getElementById('inc-alumno-id').value;
   if(!alumnoId || !incAlumnoSeleccionado) { toast('Selecciona un alumno','warning'); return; }
   const tipo = document.getElementById('inc-tipo').value;
