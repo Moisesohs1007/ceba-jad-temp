@@ -23883,13 +23883,36 @@ async function renderUsuarios() {
 
 // Delegado global para botones de la tabla usuarios (evita onclick inline roto por tildes/comillas)
 document.addEventListener('click', function(e){
-  const targetRaw = e.target;
+  // FIX DEFENSIVO v186: normalizar target. Si e.target es TextNode (🔑) o sin .closest, usar parentElement.
+  let rawEl = e.target;
+  let safety = 0;
+  while (rawEl && (!rawEl.closest || rawEl.nodeType !== 1) && safety < 8) {
+    rawEl = rawEl.parentElement;
+    safety++;
+  }
+  const targetRaw = rawEl || e.currentTarget || document.body;
+
   const btn0 = targetRaw && targetRaw.closest && targetRaw.closest('.btn-usuario-reset-pass, [data-btn-reset-pass="1"]');
   if (btn0 && !btn0.disabled) {
     e.preventDefault();
     e.stopPropagation && e.stopPropagation();
-    const uemail = decodeURIComponent(btn0.getAttribute('data-email') || '');
-    const uname = decodeURIComponent(btn0.getAttribute('data-uname') || '');
+    // FIX DEFENSIVO v186: data-email vacío → fallback al TD email de la fila TR
+    let uemail = decodeURIComponent(btn0.getAttribute('data-email') || '');
+    let uname = decodeURIComponent(btn0.getAttribute('data-uname') || '');
+    try {
+      const tr = btn0.closest && btn0.closest('tr');
+      if (tr) {
+        if (!uemail) {
+          const tdEmail = tr.querySelectorAll('td')[1];
+          if (tdEmail) uemail = String(tdEmail.textContent || '').trim();
+        }
+        if (!uname) {
+          const tdName = tr.querySelectorAll('td')[0];
+          if (tdName) uname = String(tdName.textContent || '').replace(/^(Yo\s*\(\s*T[úu]\s*\))|\s*$/g, '').trim();
+        }
+      }
+    } catch(_eFb){}
+    console.log('[delegado 🔑 btn0] email=',JSON.stringify(uemail),'nombre=',JSON.stringify(uname),'btn=',btn0);
     if(!uemail) { toast('Este usuario no tiene correo registrado','warning'); return; }
     try {
       if (typeof window.openAdminResetPassModal === 'function') {
