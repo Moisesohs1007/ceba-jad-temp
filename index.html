@@ -7461,18 +7461,26 @@ function openLogoutConfirm() {
     try { closeAllModals && closeAllModals(); } catch(_eCm){}
     try {
       const maxZi = _getCurrentMaxZIndex ? _getCurrentMaxZIndex() : 999900;
-      modal.style.zIndex = String(maxZi + 10);
-    } catch(_eZi){ try { modal.style.zIndex = '9999999'; } catch(_){} }
+      modal.style.zIndex = String(maxZi + 20);
+    } catch(_eZi){ try { modal.style.zIndex = '99999999'; } catch(_){} }
     try { _modalLockOn && _modalLockOn(); } catch(_){}
-    modal.style.display = '';
-    setTimeout(() => {
-      try { modal.classList.add('open'); } catch(_){}
-      // v188 focus inicial en botón Cancelar para accesibilidad
-      try {
-        const btn = modal.querySelector('.btn.btn-ghost, .btn.btn-danger, button');
-        if (btn && typeof btn.focus === 'function') btn.focus({ preventScroll:true });
-      } catch(_){}
-    }, 30);
+    // v189 SÍNCRONO: no depender de setTimeout 20ms ni de CSS .open class para display:flex
+    try {
+      modal.classList.remove('active');
+      modal.classList.add('open');
+      modal.style.setProperty('display', 'flex', 'important');
+    } catch(_eD){
+      try { modal.classList.add('open'); modal.style.display = 'flex'; } catch(_){}
+    }
+    // focus inicial en botón Cancelar para accesibilidad. Microtask inmediato.
+    try {
+      setTimeout(function(){
+        try {
+          const btn = modal.querySelector('.btn.btn-ghost, .btn.btn-danger, button');
+          if (btn && typeof btn.focus === 'function') btn.focus({ preventScroll:true });
+        } catch(_){}
+      }, 0);
+    } catch(_){}
   } catch(_err) { try { ejecutarLogoutFinal(); } catch(_){} }
 }
 window.openLogoutConfirm = openLogoutConfirm;
@@ -24080,6 +24088,8 @@ function _validarCorreoEstricto(emailRaw) {
 }
 
 function openAdminResetPassModal(email, nombreDisplay) {
+  // v189 AUDIT LOG paso a paso para saber exactamente en qué línea se corta la ejecución si el modal no aparece.
+  try { console.log('[reset-pass step1] entrada email=',JSON.stringify(email),'nombre=',JSON.stringify(nombreDisplay)); } catch(_){}
   try {
     const vEmail = _validarCorreoEstricto(email);
     /* EXCEPCIÓN: aceptar DNI de apoderados (8 dígitos) o 8dígitos@virtual (targetDni). */
@@ -24092,40 +24102,53 @@ function openAdminResetPassModal(email, nombreDisplay) {
       eVal = dniRaw;
     } else {
       toast('Correo inválido: ' + (vEmail.err||'formato incorrecto'),'warning');
+      try { console.log('[reset-pass ABORTO step2] correo inválido vEmail=',vEmail); } catch(_){}
       return;
     }
     _arpTarget = { email: eVal, nombre: String(nombreDisplay || 'Usuario') };
     const modal = document.getElementById('modal-admin-reset-pass');
-    if(!modal) { console.error('modal-admin-reset-pass NO EXISTE en el DOM'); toast('Error: no se encontró el modal de reset','error'); return; }
+    if(!modal) { console.error('[reset-pass step3 ABORTO] modal-admin-reset-pass NO EXISTE EN DOM'); toast('Error: no se encontró el modal de reset','error'); return; }
+    try { console.log('[reset-pass step3] modal encontrado. state display=',modal.style.display,'open=',modal.classList.contains('open')); } catch(_){}
     // v188 CAPA 1 ANTI-STACKING: cerrar TODOS los demás modales abiertos (modal-usuario, modal-permisos etc)
-    // para evitar que queden ENCIMA por DOM order. Esto resuelve "nuevo modal detrás del existente".
     try { closeAllModals && closeAllModals(); } catch(_eCm){}
     // v188 CAPA 2 ANTI-STACKING: z-index DINÁMICO por encima del máximo actual + 5
-    // Nunca más depender de orden DOM o inline fijo 999999.
     try {
       const maxZi = _getCurrentMaxZIndex ? _getCurrentMaxZIndex() : 999900;
-      modal.style.zIndex = String(maxZi + 10);
-    } catch(_eZi){ try { modal.style.zIndex = '9999999'; } catch(_){} }
+      modal.style.zIndex = String(maxZi + 20);
+      try { console.log('[reset-pass step4] z-index aplicado=',modal.style.zIndex,'maxZi=',maxZi); } catch(_){}
+    } catch(_eZi){ try { modal.style.zIndex = '99999999'; } catch(_){} }
     const usrEl = document.getElementById('arp-usr');
     if (usrEl) usrEl.innerHTML = `<b style="color:#fff;">${_arpTarget.nombre}</b><br><span style="color:var(--muted);font-size:0.85rem;">${_arpTarget.email || '(sin correo)'}</span>`;
     ['arp-new-pass-1','arp-new-pass-2'].forEach(id => { const e = document.getElementById(id); if(e) e.value = ''; });
     ['arp-set-err','arp-link-err'].forEach(id => { const e = document.getElementById(id); if(e){ e.style.display='none'; e.textContent=''; } });
     try { _modalLockOn && _modalLockOn(); } catch(_){}
-    modal.style.display = '';
-    setTimeout(() => {
-      try { modal.classList.add('open'); } catch(_){}
-      // v188 CAPA 3: FOCO INICIAL en el 1er input interactivo para que la interacción arranque inmediatamente
-      // (no queda foco en botón azul anterior detrás del backdrop)
-      try {
-        const firstInput = document.getElementById('arp-new-pass-1');
-        if (firstInput && typeof firstInput.focus === 'function') {
-          firstInput.focus({ preventScroll:false });
-          try { firstInput.select && firstInput.select(); } catch(_){}
-        }
-      } catch(_eF){}
-    }, 40);
+    // v189 FIX CRÍTICO SÍNCRONO: NO depender de CSS .modal-bg.open ni de setTimeout de 40ms.
+    // La combinación "style.display='' + setTimeout classList.add('open') a los 40ms" creaba race conditions:
+    // en algunos navegadores el modal quedaba con display:none permanentemente.
+    // Ahora: establecemos BOTH propiedades en el MISMO tick SINCRONAMENTE.
+    try {
+      modal.classList.remove('active'); // limpieza previa
+      modal.classList.add('open');
+      modal.style.setProperty('display', 'flex', 'important');  // important sobreescribe cualquier CSS inline/class
+    } catch(_eD){
+      // fallback extremo: inline normal por si setProperty no disponible
+      try { modal.classList.add('open'); modal.style.display = 'flex'; } catch(_){}
+    }
+    try { console.log('[reset-pass step5] modal mostrado. display=',window.getComputedStyle?window.getComputedStyle(modal).display:'?','z=',modal.style.zIndex,'open=',modal.classList.contains('open')); } catch(_){}
+    // v188 CAPA 3: FOCO INICIAL en el 1er input interactivo. Hacerlo en el siguiente microtask pero sin setTimeout largo (4ms solo)
+    try {
+      const focusTarget = document.getElementById('arp-new-pass-1');
+      if (focusTarget && typeof focusTarget.focus === 'function') {
+        // siguiente tick inmediato
+        setTimeout(function(){
+          try { focusTarget.focus({ preventScroll:false }); focusTarget.select && focusTarget.select(); } catch(_){}
+          try { console.log('[reset-pass step6] foco aplicado en input 1. activeEl=',document.activeElement && document.activeElement.id); } catch(_){}
+        }, 0);
+      }
+    } catch(_eF){}
+    try { console.log('[reset-pass DONE] ✅ modal abierto exitosamente'); } catch(_){}
   } catch(err) {
-    console.error('openAdminResetPassModal', err);
+    console.error('[reset-pass EXCEPTION]', err);
     try { toast('Error abriendo modal de reset: ' + (err?.message || err), 'error'); } catch(_){}
   }
 }
