@@ -17,8 +17,8 @@
 
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="compat.js?v=176"></script>
-<script src="db_supabase.js?v=176"></script>
+<script src="compat.js?v=177"></script>
+<script src="db_supabase.js?v=177"></script>
 <script>
 (function(){
   var stubs = ['msbIsMobile','msbInit','msbExpand','msbCollapse','msbSetActive','msbUpdateUser','renderBottomNav','updateBottomNavActive','openMobileMenu','closeMobileMenu'];
@@ -8098,7 +8098,13 @@ document.addEventListener('click', function(e) {
   } catch(_eErr) { try { console.error('delegado click chat', _eErr); } catch(_){} }
 }, true); // useCapture = true para capturar antes de que closeModal() lo atrape
 
-if(typeof window.ASMQR_CONFIRM_ON_LEAVE === 'undefined') window.ASMQR_CONFIRM_ON_LEAVE = true;
+// ===== v177: ANTES beforeunload SIEMPRE confirmaba y no te dejaba cerrar la
+// pestaña (popup Chrome "¿Cerrar sesión?"). SOLUCIÓN: DESACTIVAR TOTALMENTE el
+// guardia beforeunload POR DEFECTO. Solo se activa EXPLÍCITAMENTE (variable
+// window.ASMQR_CONFIRM_ON_LEAVE_EXPLICITO = true) durante edición NO guardada
+// (por ahora, no se usa => nunca sale el popup molesto al cerrar pestana).
+window.ASMQR_CONFIRM_ON_LEAVE = false;
+if(typeof window.ASMQR_CONFIRM_ON_LEAVE_EXPLICITO === 'undefined') window.ASMQR_CONFIRM_ON_LEAVE_EXPLICITO = false;
 let _asmqrSkipUnloadOnce = false;
 window.addEventListener('keydown', function(e) {
   try {
@@ -8112,7 +8118,8 @@ window.addEventListener('keydown', function(e) {
 
 window.addEventListener('beforeunload', function(e) {
   if(_asmqrSkipUnloadOnce) return;
-  if(window.ASMQR_CONFIRM_ON_LEAVE !== true) return;
+  // v177: Solo confirmar si EXPLÍCITAMENTE se puso en true esta flag (no en window.ASMQR_CONFIRM_ON_LEAVE=true).
+  if(window.ASMQR_CONFIRM_ON_LEAVE_EXPLICITO !== true) return undefined;
   e.preventDefault();
   e.returnValue = '';
   return '';
