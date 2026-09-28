@@ -27993,16 +27993,15 @@ async function poblarFiltroNivel(selectId, onchangeFn, options = {}) {
     });
   }
   // ================================================================
-  // ✅ v200 CAMBIO REGLA PETICIÓN MOISES 2026-09-28:
-  //   USUARIO VERBATIM: "aca solo muestra avanzado y deberia mostrar
-  //   virtual y inicial intermedio tbm".
-  //   (ANTES agosto 2026): niveles oficiales SÓLO si tenían alumnos.
-  //   (AHORA v200): SIEMPRE mostramos los 3 niveles CANÓNICOS CEBA
-  //   INDEPENDIENTEMENTE de cuántos alumnos hay HOY en cada nivel:
-  //   1) INICIAL/INTERMEDIO · 2) AVANZADO · 3) VIRTUAL.
-  //   Orden fijo canónico, al principio de la lista. No duplicados.
+  // ✅ v203 CORRECCIÓN MOISES VERBATIM (2026-09-28):
+  //   USUARIO: "yo me quivoque, pero solo deberia mostrar
+  //   AVANZADO y INICIAL/INTERMEDIO".
+  //   Niveles canónicos obligatorios SÓLO 2. VIRTUAL NO CANÓNICO.
+  //   (Si en BD hay alumnos raw VIRTUAL reales → siguen apareciendo
+  //    como opción extra en nivelesDesdeAlumnos; pero no se fuerza
+  //    canónicamente.)
   // ================================================================
-  const nivelesCanonObligatorios = ['INICIAL/INTERMEDIO','AVANZADO','VIRTUAL'];
+  const nivelesCanonObligatorios = ['INICIAL/INTERMEDIO','AVANZADO'];
   nivelesCanonObligatorios.forEach(n => {
     if(!n || seen.has(n)) return;
     seen.add(n); nivelesBase.unshift(n);
