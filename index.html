@@ -29509,10 +29509,24 @@ function _matchNivel(obj, nivelSel, cfg, alumnosArr) {
     if (normObj === 'INICIAL/INTERMEDIO' || normObj === 'INICIAL' || normObj === 'INTERMEDIO') return true;
     const c = String((obj||{}).ciclo || '').trim().toUpperCase().replace(/[ /]+/g,'/');
     if (c === 'INICIAL/INTERMEDIO' || c.startsWith('INICIAL|') || c.startsWith('INTERMEDIO|') || c === 'INICIAL' || c === 'INTERMEDIO') return true;
+    // ✅ v199 RC FIX: Inferencia por grado canon PERU (coincide _nivelesDesdeAlumnos)
+    if (gNum === 3 || gNum === 4 || gNum === 5) return true;
+    // Alumno sin ciclo en campo raw PERO tiene datos (DNI/grado/seccion) → por defecto INI/INT en CEBA
+    if (!valObj && !cicloRaw) {
+      const minD = (String(obj.dni || obj.DNI || '').trim().length >= 6)
+        || (String(obj.grado || '').trim().length > 0)
+        || (String(obj.seccion || '').trim().length > 0);
+      if (minD) return true;
+    }
   }
   if (normObj && normSel && (normObj === normSel)) return true;
   if (valObj === nivel) return true;
   if (cicloRaw && cicloRaw === nivel) return true;
+  // ✅ v199 RC FIX AVANZADO gNum: inferencia por grado (1,2 o 6..12 → AVANZADO)
+  if (normSel === 'AVANZADO') {
+    if (gNum === 1 || gNum === 2) return true;
+    if (gNum >= 6 && gNum <= 12) return true;
+  }
   if (nivel.startsWith('EBR ') && (valObj.replace('EBR ','').trim() === nivel.replace('EBR ','').trim())) return true;
   return false;
 }
@@ -29523,24 +29537,78 @@ function _nivelesDesdeAlumnos(alumnosArr, cfg) {
   catch(_) { modalidad = String(((cfg||{}).modalidadEducativa || (cfg||{}).modalidad_educativa || '')).toUpperCase(); }
   const usaCiclo = (modalidad === 'CEBA' || modalidad === 'EBA');
   const f = _nivelFieldName(cfg, alumnos);
-  // ✅ FIX 2026-08-26 Moises Admin:
-  //   Normalizar TODOS los valores ciclo/raw combo como "INICIAL|PRESENCIAL",
-  //   "AVANZADO|SEMIPRESENCIAL", "EBR 1A" etc. a solo 2 tokens CEBA:
-  //   INICIAL/INTERMEDIO o AVANZADO. No insertar NIGUN valor combo con
-  //   modalidad/turno en el dropdown.
+  // ================================================================
+  // ✅ v199 RC FIX (Moises 2026-09-23): Alumnos INICIAL/INTERMEDIO
+  //      EXISTEN en la BD pero NO FIGURABAN en Gestión Alumnos.
+  // RC1: if(gNum>=1 && gNum<=12) return 'AVANZADO' (L29541) CLASIFICABA
+  //      ALUMNOS INI/INT con grado numérico 3/4/5 COMO AVANZADO
+  //      → nivelesDesdeAlumnos NUNCA incluía INICIAL/INTERMEDIO
+  //      → dropdown fa-nivel NO tenía la opción → no se podía
+  //      seleccionar, por lo que los usuarios no los veían.
+  // RC2: Ciclo raw vacío + sin datos → return '' y no se contaba nada.
+  //
+  // FIX APLICADO:
+  //   (1) ELIMINADA la regla genérica gNum 1..12 → AVANZADO.
+  //   (2) Inferencia CANÓNICA PERÚ por grado numérico:
+  //       • gNum 3, 4, 5 → INICIAL/INTERMEDIO (años edad 3/4/5 años CEBA)
+  //       • gNum 1,2 o 6..12 → AVANZADO (primaria / secundaria EBR)
+  //   (3) Si raw ciclo vacío PERO alumno tiene datos mínimos (DNI
+  //       >=6 chars O grado O sección) → no return ''; asumir
+  //       INICIAL/INTERMEDIO por petición Moises (esos son los que
+  //       no figuraban).
+  //   (4) Console Table AUDIT 10 primeros alumnos: rawCiclo, gNum, norm
+  // ================================================================
   const _normNivelRaw = (raw, aRow) => {
     const s = String(raw || '').trim();
-    if (!s) return '';
     const gNum = parseInt(String((aRow && (aRow.grado || aRow.numGrado || aRow.numeroGrado || '')) || '').replace(/\D/g,''), 10) || 0;
     const byHelper = (typeof _normCicloScope === 'function') ? _normCicloScope(s, (gNum >= 1 && gNum <= 12) ? gNum : undefined) : '';
     if (byHelper) return byHelper;
     const up = s.toUpperCase();
     if (['INICIAL','INTERMEDIO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO'].some(k => up.includes(k))) return 'INICIAL/INTERMEDIO';
     if (['AVANZADO','PRIMARIA','SECUNDARIA','EBR','BASICA','BÁSICA','ESCOLAR'].some(k => up.includes(k))) return 'AVANZADO';
-    // Si no matchea nada pero hay grado 1..6 → AVANZADO
-    if (gNum >= 1 && gNum <= 12) return 'AVANZADO';
+    // ✅ v199 FIX RC: Inferencia por grado canon PERU (no mas 1..12 generico AVANZADO)
+    if (gNum && Number.isFinite(gNum) && gNum >= 1) {
+      if (gNum === 3 || gNum === 4 || gNum === 5) return 'INICIAL/INTERMEDIO';
+      if (gNum === 1 || gNum === 2) return 'AVANZADO';
+      if (gNum >= 6 && gNum <= 12) return 'AVANZADO';
+    }
+    // RC FIX: si no hay ciclo raw PERO el alumno SÍ existe en BD (tiene DNI
+    // o grado o sección) → NO return ''; contarlo como INICIAL/INTERMEDIO
+    // por defecto CEBA (Moises reporta que INI/INT no figuraban, no AVANZADO).
+    if (!s && aRow && typeof aRow === 'object') {
+      const tieneMin = (String(aRow.dni || aRow.DNI || '').trim().length >= 6)
+        || (String(aRow.grado || '').trim().length > 0)
+        || (String(aRow.seccion || '').trim().length > 0);
+      if (tieneMin) return 'INICIAL/INTERMEDIO';
+    }
     return '';
   };
+  // AUDIT Table Consola: 10 primeros alumnos para depurar catalogación
+  try {
+    if (alumnos && alumnos.length > 0) {
+      const rows = [];
+      const max = Math.min(10, alumnos.length);
+      for (let i=0; i<max; i++) {
+        const a = alumnos[i] || {};
+        const rawCiclo = String(a[f] || a.ciclo || '').trim();
+        const gRaw = String(a.grado || a.numGrado || a.numeroGrado || '').trim();
+        const gNum = parseInt(gRaw.replace(/\D/g,''), 10) || 0;
+        const norm = _normNivelRaw(rawCiclo, a);
+        rows.push({
+          idx: i+1,
+          nombre: String(a.nombres || a.NOMBRES || a.fullName || a.apellidos || '').slice(0,28),
+          dni: String(a.dni || a.DNI || '').slice(0,10),
+          rawCiclo: rawCiclo || '—(vacio)',
+          gRaw: gRaw || '—',
+          gNum: gNum || '',
+          norm: norm || '—(omitido)',
+        });
+      }
+      console.groupCollapsed('%c[_nivelesDesdeAlumnos v199 AUDIT RC FIX INI/INT] 10 primeros catalogación', 'color:#f59e0b;font-weight:bold');
+      try { console.table(rows); } catch(_) { console.log(rows); }
+      console.groupEnd();
+    }
+  } catch(_auditErr) {}
   if (usaCiclo) {
     const setRaw = new Set();
     alumnos.forEach(a => {
@@ -29578,19 +29646,35 @@ function _filtrarPorNivel(arr, nivelSel, cfg) {
   const f = usaCiclo ? 'ciclo' : _nivelFieldName(cfg, arr);
   const nSnormRaw = (usaCiclo && typeof _normModalidadCEBA === 'function') ? _normModalidadCEBA(nivelSel) : String(nivelSel).trim();
   const nSnorm = (typeof _normCicloScope === 'function') ? (_normCicloScope(nSnormRaw) || nSnormRaw) : nSnormRaw;
+  const tUpTarget = String(nSnorm||'').toUpperCase().replace(/[ |/]+/g,'/');
   return arr.filter(o => {
-    const cRaw = String(o && o.ciclo ? o.ciclo : (o && o[f] ? o[f] : '')).trim();
-    const cNorm = (typeof _normCicloScope === 'function') ? _normCicloScope(cRaw) : cRaw;
-    if (!cNorm) return false;
-    if (nSnorm === cNorm) return true;
-    // Normalizar strings separados slash / pipes
-    const cUp = cNorm.toUpperCase().replace(/[ |/]+/g,'/');
-    const tUp = String(nSnorm||'').toUpperCase().replace(/[ |/]+/g,'/');
-    if (cUp === tUp) return true;
-    if (tUp === 'INICIAL/INTERMEDIO') {
-      return ['INICIAL/INTERMEDIO','INICIAL','INTERMEDIO'].includes(cUp);
-    }
-    return false;
+    try {
+      const cRaw = String(o && o.ciclo ? o.ciclo : (o && o[f] ? o[f] : '')).trim();
+      const cNorm = (typeof _normCicloScope === 'function') ? _normCicloScope(cRaw) : cRaw;
+      const gNum = parseInt(String((o && (o.grado || o.numGrado || o.numeroGrado || '')) || '').replace(/\D/g,''), 10) || 0;
+      if (nSnorm && cNorm && (nSnorm === cNorm)) return true;
+      // Normalizar strings separados slash / pipes
+      const cUp = cNorm ? cNorm.toUpperCase().replace(/[ |/]+/g,'/') : '';
+      if (cUp === tUpTarget) return true;
+      if (tUpTarget === 'INICIAL/INTERMEDIO') {
+        if (['INICIAL/INTERMEDIO','INICIAL','INTERMEDIO'].includes(cUp)) return true;
+        // ✅ v199 RC FIX SIMÉTRICO: Inferencia grado canon PERU
+        if (gNum === 3 || gNum === 4 || gNum === 5) return true;
+        // Alumno sin ciclo PERO con datos → INI/INT default CEBA
+        if (!cRaw) {
+          const minD = (String(o.dni || o.DNI || '').trim().length >= 6)
+            || (String(o.grado || '').trim().length > 0)
+            || (String(o.seccion || '').trim().length > 0);
+          if (minD) return true;
+        }
+      }
+      // ✅ v199 RC FIX SIMÉTRICO: AVANZADO por grado canon
+      if (tUpTarget === 'AVANZADO') {
+        if (gNum === 1 || gNum === 2) return true;
+        if (gNum >= 6 && gNum <= 12) return true;
+      }
+      return false;
+    } catch(_) { return false; }
   });
 }
 async function getConfig(force = false) {
