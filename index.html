@@ -27981,7 +27981,7 @@ async function poblarFiltroNivel(selectId, onchangeFn, options = {}) {
   // Si hay alumnos: niveles oficiales SÓLO se incluyen si ya aparecen en nivelesDesdeAlumnos (== tienen alumnos).
   // Si NO hay alumnos (totalAlumnos === 0): incluimos niveles oficiales como hint.
   const seen = new Set();
-  const nivelesBase = [];
+  let nivelesBase = [];
   nivelesDesdeAlumnos.forEach(n => { if(n && !seen.has(n)) { seen.add(n); nivelesBase.push(n); } });
   if (totalAlumnos === 0) {
     nivelesOficiales.forEach(n => { if(n && !seen.has(n)) { seen.add(n); nivelesBase.push(n); } });
