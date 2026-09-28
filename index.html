@@ -27992,6 +27992,25 @@ async function poblarFiltroNivel(selectId, onchangeFn, options = {}) {
       }
     });
   }
+  // ================================================================
+  // ✅ v200 CAMBIO REGLA PETICIÓN MOISES 2026-09-28:
+  //   USUARIO VERBATIM: "aca solo muestra avanzado y deberia mostrar
+  //   virtual y inicial intermedio tbm".
+  //   (ANTES agosto 2026): niveles oficiales SÓLO si tenían alumnos.
+  //   (AHORA v200): SIEMPRE mostramos los 3 niveles CANÓNICOS CEBA
+  //   INDEPENDIENTEMENTE de cuántos alumnos hay HOY en cada nivel:
+  //   1) INICIAL/INTERMEDIO · 2) AVANZADO · 3) VIRTUAL.
+  //   Orden fijo canónico, al principio de la lista. No duplicados.
+  // ================================================================
+  const nivelesCanonObligatorios = ['INICIAL/INTERMEDIO','AVANZADO','VIRTUAL'];
+  nivelesCanonObligatorios.forEach(n => {
+    if(!n || seen.has(n)) return;
+    seen.add(n); nivelesBase.unshift(n);
+  });
+  // Re-ordenar nivelesBase manteniendo orden canónico primero, luego el resto
+  const rest = nivelesBase.filter(n => !nivelesCanonObligatorios.includes(n));
+  nivelesBase = nivelesCanonObligatorios.filter(n => seen.has(n)).concat(rest);
+
   if (!nivelesBase.length) {
     nivelesBase.push(...nivelesOficiales);
   }
@@ -29503,15 +29522,16 @@ function _matchNivel(obj, nivelSel, cfg, alumnosArr) {
   const gNum = parseInt(String(obj && (obj.grado || obj.numGrado || obj.numeroGrado || '') || '').replace(/\D/g,''), 10) || 0;
   const normObj = (typeof _normCicloScope === 'function') ? (_normCicloScope(valObj || cicloRaw, (gNum>=1&&gNum<=12)?gNum:undefined) || '') : '';
   const normSel = (typeof _normCicloScope === 'function') ? (_normCicloScope(nivel) || nivel) : nivel;
-  // CEBA: INICIAL/INTERMEDIO agrupado incluye alumnos con ciclo INICIAL/INTERMEDIO (exacto el valor canon)
-  // o normalizados desde valores legacy INICIAL|PRESENCIAL etc.
-  if (normSel === 'INICIAL/INTERMEDIO') {
-    if (normObj === 'INICIAL/INTERMEDIO' || normObj === 'INICIAL' || normObj === 'INTERMEDIO') return true;
-    const c = String((obj||{}).ciclo || '').trim().toUpperCase().replace(/[ /]+/g,'/');
-    if (c === 'INICIAL/INTERMEDIO' || c.startsWith('INICIAL|') || c.startsWith('INTERMEDIO|') || c === 'INICIAL' || c === 'INTERMEDIO') return true;
-    // ✅ v199 RC FIX: Inferencia por grado canon PERU (coincide _nivelesDesdeAlumnos)
+  // ================================================================
+  // ✅ v200 PRIORIDAD 0 (ANTES DE normObj/normSel MATCH POR STRING):
+  // Inferencia GRADO canon PERÚ. Import vieja catalogó grado 3/4/5
+  // como AVANZADO raw; pero el usuario selecciona INICIAL/INTERMEDIO
+  // → debemos matchear aunque normObj sea 'AVANZADO'. Fix peticion 28-09.
+  // ================================================================
+  const nUp = String(nivelSel || '').toUpperCase();
+  if (nUp === 'INICIAL/INTERMEDIO' || nUp === 'INICIAL / INTERMEDIO' || nUp === 'INICIAL' || nUp === 'INTERMEDIO') {
     if (gNum === 3 || gNum === 4 || gNum === 5) return true;
-    // Alumno sin ciclo en campo raw PERO tiene datos (DNI/grado/seccion) → por defecto INI/INT en CEBA
+    // Alumno sin campos ciclo PERO con datos → default INI/INT (peticion Moises)
     if (!valObj && !cicloRaw) {
       const minD = (String(obj.dni || obj.DNI || '').trim().length >= 6)
         || (String(obj.grado || '').trim().length > 0)
@@ -29519,14 +29539,24 @@ function _matchNivel(obj, nivelSel, cfg, alumnosArr) {
       if (minD) return true;
     }
   }
-  if (normObj && normSel && (normObj === normSel)) return true;
-  if (valObj === nivel) return true;
-  if (cicloRaw && cicloRaw === nivel) return true;
-  // ✅ v199 RC FIX AVANZADO gNum: inferencia por grado (1,2 o 6..12 → AVANZADO)
-  if (normSel === 'AVANZADO') {
+  if (nUp === 'VIRTUAL' || nUp === 'VIRT' || nUp === 'REMOTO' || nUp === 'A DISTANCIA' || nUp === 'ONLINE') {
+    const upAll = (valObj + '|' + cicloRaw).toUpperCase();
+    if (['VIRTUAL','VIRT','VIRTUALES','REMOTO','DISTANCIA','A DISTANCIA','ONLINE','SECCION C','TURNO C'].some(k => upAll.includes(k))) return true;
+  }
+  if (nUp === 'AVANZADO') {
     if (gNum === 1 || gNum === 2) return true;
     if (gNum >= 6 && gNum <= 12) return true;
   }
+  // CEBA: INICIAL/INTERMEDIO agrupado incluye alumnos con ciclo INICIAL/INTERMEDIO (exacto el valor canon)
+  // o normalizados desde valores legacy INICIAL|PRESENCIAL etc.
+  if (normSel === 'INICIAL/INTERMEDIO') {
+    if (normObj === 'INICIAL/INTERMEDIO' || normObj === 'INICIAL' || normObj === 'INTERMEDIO') return true;
+    const c = String((obj||{}).ciclo || '').trim().toUpperCase().replace(/[ /]+/g,'/');
+    if (c === 'INICIAL/INTERMEDIO' || c.startsWith('INICIAL|') || c.startsWith('INTERMEDIO|') || c === 'INICIAL' || c === 'INTERMEDIO') return true;
+  }
+  if (normObj && normSel && (normObj === normSel)) return true;
+  if (valObj === nivel) return true;
+  if (cicloRaw && cicloRaw === nivel) return true;
   if (nivel.startsWith('EBR ') && (valObj.replace('EBR ','').trim() === nivel.replace('EBR ','').trim())) return true;
   return false;
 }
@@ -29561,17 +29591,22 @@ function _nivelesDesdeAlumnos(alumnosArr, cfg) {
   const _normNivelRaw = (raw, aRow) => {
     const s = String(raw || '').trim();
     const gNum = parseInt(String((aRow && (aRow.grado || aRow.numGrado || aRow.numeroGrado || '')) || '').replace(/\D/g,''), 10) || 0;
+    // ================================================================
+    // ✅ v200 PRIORIDAD 0 (ANTES DE byHelper): INFERENCIA GRADO CANÓNICA.
+    // Importación vieja catalogó INI/INT grado 3/4/5 COMO AVANZADO raw en BD.
+    // PRIMERO chequeamos grado numérico. Si coincide con INICIAL/INTERMEDIO
+    // canon PERÚ (3,4,5 años) → retornar INICIAL/INTERMEDIO sin importar
+    // el valor raw cycle guardado en BD. Fix Moises 2026-09-28 dropdown.
+    // ================================================================
+    if (gNum === 3 || gNum === 4 || gNum === 5) return 'INICIAL/INTERMEDIO';
+    if (gNum === 1 || gNum === 2) return 'AVANZADO';
+    if (gNum >= 6 && gNum <= 12) return 'AVANZADO';
     const byHelper = (typeof _normCicloScope === 'function') ? _normCicloScope(s, (gNum >= 1 && gNum <= 12) ? gNum : undefined) : '';
     if (byHelper) return byHelper;
     const up = s.toUpperCase();
     if (['INICIAL','INTERMEDIO','INICIAL/INTERMEDIO','INICIAL / INTERMEDIO'].some(k => up.includes(k))) return 'INICIAL/INTERMEDIO';
-    if (['AVANZADO','PRIMARIA','SECUNDARIA','EBR','BASICA','BÁSICA','ESCOLAR'].some(k => up.includes(k))) return 'AVANZADO';
-    // ✅ v199 FIX RC: Inferencia por grado canon PERU (no mas 1..12 generico AVANZADO)
-    if (gNum && Number.isFinite(gNum) && gNum >= 1) {
-      if (gNum === 3 || gNum === 4 || gNum === 5) return 'INICIAL/INTERMEDIO';
-      if (gNum === 1 || gNum === 2) return 'AVANZADO';
-      if (gNum >= 6 && gNum <= 12) return 'AVANZADO';
-    }
+    if (['VIRTUAL','VIRT','VIRTUALES','REMOTO','DISTANCIA','A DISTANCIA','ONLINE'].some(k => up.includes(k))) return 'VIRTUAL';
+    if (['AVANZADO','PRIMARIA','SECUNDARIA','EBR','BASICA','BÁSICA','ESCOLAR','PRESENCIAL','SEMIPRESENCIAL'].some(k => up.includes(k))) return 'AVANZADO';
     // RC FIX: si no hay ciclo raw PERO el alumno SÍ existe en BD (tiene DNI
     // o grado o sección) → NO return ''; contarlo como INICIAL/INTERMEDIO
     // por defecto CEBA (Moises reporta que INI/INT no figuraban, no AVANZADO).
@@ -29647,20 +29682,15 @@ function _filtrarPorNivel(arr, nivelSel, cfg) {
   const nSnormRaw = (usaCiclo && typeof _normModalidadCEBA === 'function') ? _normModalidadCEBA(nivelSel) : String(nivelSel).trim();
   const nSnorm = (typeof _normCicloScope === 'function') ? (_normCicloScope(nSnormRaw) || nSnormRaw) : nSnormRaw;
   const tUpTarget = String(nSnorm||'').toUpperCase().replace(/[ |/]+/g,'/');
+  const nUp = String(nivelSel || '').toUpperCase();
   return arr.filter(o => {
     try {
       const cRaw = String(o && o.ciclo ? o.ciclo : (o && o[f] ? o[f] : '')).trim();
       const cNorm = (typeof _normCicloScope === 'function') ? _normCicloScope(cRaw) : cRaw;
       const gNum = parseInt(String((o && (o.grado || o.numGrado || o.numeroGrado || '')) || '').replace(/\D/g,''), 10) || 0;
-      if (nSnorm && cNorm && (nSnorm === cNorm)) return true;
-      // Normalizar strings separados slash / pipes
-      const cUp = cNorm ? cNorm.toUpperCase().replace(/[ |/]+/g,'/') : '';
-      if (cUp === tUpTarget) return true;
-      if (tUpTarget === 'INICIAL/INTERMEDIO') {
-        if (['INICIAL/INTERMEDIO','INICIAL','INTERMEDIO'].includes(cUp)) return true;
-        // ✅ v199 RC FIX SIMÉTRICO: Inferencia grado canon PERU
+      // ✅ v200 PRIORIDAD 0: INFERENCIA GRADO CANONICA ANTES DE NORM OBJ
+      if (nUp === 'INICIAL/INTERMEDIO' || nUp === 'INICIAL / INTERMEDIO' || nUp === 'INICIAL' || nUp === 'INTERMEDIO') {
         if (gNum === 3 || gNum === 4 || gNum === 5) return true;
-        // Alumno sin ciclo PERO con datos → INI/INT default CEBA
         if (!cRaw) {
           const minD = (String(o.dni || o.DNI || '').trim().length >= 6)
             || (String(o.grado || '').trim().length > 0)
@@ -29668,10 +29698,20 @@ function _filtrarPorNivel(arr, nivelSel, cfg) {
           if (minD) return true;
         }
       }
-      // ✅ v199 RC FIX SIMÉTRICO: AVANZADO por grado canon
-      if (tUpTarget === 'AVANZADO') {
+      if (nUp === 'VIRTUAL' || nUp === 'VIRT' || nUp === 'REMOTO' || nUp === 'A DISTANCIA' || nUp === 'ONLINE') {
+        const upAll = (String(o.ciclo||'') + '|' + cRaw + '|' + String(o.modalidadAtencion||'') + '|' + String(o.turno||'')).toUpperCase();
+        if (['VIRTUAL','VIRT','VIRTUALES','REMOTO','DISTANCIA','A DISTANCIA','ONLINE','SECCION C','TURNO C'].some(k => upAll.includes(k))) return true;
+      }
+      if (nUp === 'AVANZADO') {
         if (gNum === 1 || gNum === 2) return true;
         if (gNum >= 6 && gNum <= 12) return true;
+      }
+      if (nSnorm && cNorm && (nSnorm === cNorm)) return true;
+      // Normalizar strings separados slash / pipes
+      const cUp = cNorm ? cNorm.toUpperCase().replace(/[ |/]+/g,'/') : '';
+      if (cUp === tUpTarget) return true;
+      if (tUpTarget === 'INICIAL/INTERMEDIO') {
+        if (['INICIAL/INTERMEDIO','INICIAL','INTERMEDIO'].includes(cUp)) return true;
       }
       return false;
     } catch(_) { return false; }
