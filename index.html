@@ -14769,14 +14769,22 @@ let _comSendType = 'image';
  * Valores nulos o no reconocidos devuelven "".
  */
 function _normCicloScope(rawCiclo, gNum) {
-  if (typeof gNum !== 'undefined' && Number.isFinite(gNum) && gNum >= 1 && gNum <= 12) {
-    if (gNum >= 1 && gNum <= 6) return 'AVANZADO';
-    // 7..12 -> secundaria/CEBA: también AVANZADO por defecto
-    return 'AVANZADO';
+  const rawStr = String(rawCiclo || '').trim();
+  // ================================================================
+  // ✅ v204 CORRECCIÓN MOISES 2026-09-28 "AVANZADO NO muestra
+  //   INICIAL/INTERMEDIO": regla gNum 1..12→AVANZADO SÓLO si raw
+  //   CADENA VACÍA. Si raw ya tiene texto ('INICIAL/INTERMEDIO',
+  //   'AVANZADO', etc) se RESPETÁ; NUNCA sobre-escribir por grado.
+  // ================================================================
+  if (!rawStr) {
+    if (typeof gNum !== 'undefined' && Number.isFinite(gNum) && gNum >= 1 && gNum <= 12) {
+      if (gNum >= 1 && gNum <= 6) return 'AVANZADO';
+      return 'AVANZADO';
+    }
+    return '';
   }
-  const s = String(rawCiclo || '').trim().toUpperCase();
-  if (!s) return '';
-  // Palabras clave nivel "INICIAL/INTERMEDIO" (solo si no hay grado 1..6)
+  const s = rawStr.toUpperCase();
+  // Palabras clave nivel "INICIAL/INTERMEDIO"
   const iniIntKW = ['INICIAL','INTERMEDIO','JARDIN','JARDÍN','PREESCOLAR','PRE-ESCOLAR','PRE ESCOLAR','INFANTIL'];
   for (let i=0;i<iniIntKW.length;i++) {
     if (s.includes(iniIntKW[i])) return 'INICIAL/INTERMEDIO';
