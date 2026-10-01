@@ -15451,16 +15451,22 @@ function _renderComListaStaff() {
   const rol   = String(document.getElementById('com-staff-rol')?.value || '').trim();
   const cargo = String(document.getElementById('com-staff-cargo')?.value || '').trim();
   const q     = String(document.getElementById('com-staff-search')?.value || '').trim();
-  const usuariosCargados = !!( _comUsuariosLoaded && Array.isArray(_comUsuarios) && _comUsuarios.length > 0 );
-  const haySelPendiente = _comStaffSel && _comStaffSel.size > 0;
-  const hayInteraccion = !!(rol || cargo || q || usuariosCargados || haySelPendiente);
+  const arrRealLen = (Array.isArray(_comUsuarios) ? _comUsuarios.filter(Boolean).length : 0);
+  const arrWinLen = (typeof window !== 'undefined' && Array.isArray(window._comUsuarios) ? window._comUsuarios.filter(Boolean).length : 0);
+  const hayDatosEnMemoria = (arrRealLen > 0) || (arrWinLen > 0);
+  const haySelPendiente = !!( (_comStaffSel && _comStaffSel.size > 0) || (typeof window !== 'undefined' && window._comStaffSel && window._comStaffSel.size > 0) );
+  const hayInteraccion = !!(rol || cargo || q || hayDatosEnMemoria || haySelPendiente);
   if(!hayInteraccion) {
     tbody.innerHTML = '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Cargando personal...</td></tr>';
     const cnt = document.getElementById('com-count-staff');
-    if(cnt) cnt.textContent = String(_comStaffSel.size);
+    if(cnt) cnt.textContent = String(_comStaffSel ? _comStaffSel.size : (window._comStaffSel ? window._comStaffSel.size : 0));
     const hc = document.getElementById('com-staff-all');
     if(hc) { hc.checked = false; hc.indeterminate = false; }
     return;
+  }
+  if(hayDatosEnMemoria && arrRealLen === 0 && Array.isArray(window._comUsuarios) && window._comUsuarios.length > 0) {
+    try { _comUsuarios = window._comUsuarios.slice(); } catch(_) {}
+    try { _comUsuariosLoaded = true; } catch(_) {}
   }
   const rows = _comStaffFiltrados();
   // Actualizar header check (marcar todo)
@@ -15519,8 +15525,11 @@ function _renderComListaStaff() {
       ${telCell}
     </tr>`;
   }).join('') || '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Sin resultados</td></tr>';
+  try { window._comStaffSel = _comStaffSel; } catch(_) {}
   const cnt = document.getElementById('com-count-staff');
-  if(cnt) cnt.textContent = String(_comStaffSel.size);
+  const selSize = _comStaffSel ? _comStaffSel.size : 0;
+  const winSize = (typeof window !== 'undefined' && window._comStaffSel) ? window._comStaffSel.size : 0;
+  if(cnt) cnt.textContent = String(Math.max(selSize, winSize));
 }
 
 function renderComLista() {
@@ -15736,6 +15745,8 @@ async function comSetTarget(tgt) {
         try { console.warn('[comunicado.staff] error cargando usuarios', e?.message||e); } catch(_) {}
         _comUsuarios = []; _comUsuariosLoaded = true;
       }
+      try { window._comUsuarios = Array.isArray(_comUsuarios) ? _comUsuarios.slice() : []; } catch(_) {}
+      try { window._comUsuariosLoaded = true; } catch(_) {}
       // Poblar selector "Cargos" con valores reales de la BD (no hardcodeados)
       const selCargo = document.getElementById('com-staff-cargo');
       if(selCargo) {
@@ -15747,6 +15758,7 @@ async function comSetTarget(tgt) {
       }
     }
     _comStaffSel = new Set();
+    try { window._comStaffSel = _comStaffSel; } catch(_) {}
     const s1 = document.getElementById('com-staff-rol');
     const s2 = document.getElementById('com-staff-cargo');
     const s3 = document.getElementById('com-staff-search');
@@ -15797,6 +15809,13 @@ function _comStaffFiltrados() {
 function comToggleAllStaff(chk) {
   window.comToggleAllStaff = comToggleAllStaff;
   if(!chk) return;
+  try {
+    if(window._comUsuarios && Array.isArray(window._comUsuarios) && window._comUsuarios.length > 0 &&
+       (!Array.isArray(_comUsuarios) || _comUsuarios.length === 0)) {
+      _comUsuarios = window._comUsuarios.slice();
+      _comUsuariosLoaded = true;
+    }
+  } catch(_) {}
   const rows = _comStaffFiltrados();
   const rowsConTel = rows.filter(u => String(u?.telefono || '').trim());
   const conTelIds = rowsConTel.map(u => u.id);
@@ -15809,6 +15828,7 @@ function comToggleAllStaff(chk) {
     }
     const max = Math.min(conTelIds.length, _COM_MAX);
     _comStaffSel = new Set(conTelIds.slice(0, max));
+    try { window._comStaffSel = _comStaffSel; } catch(_) {}
     if(conTelIds.length > _COM_MAX) {
       toast(`Hay ${conTelIds.length} personal filtrados con teléfono. Se seleccionaron ${_COM_MAX} primeros (máximo permitido).`,'warning');
       chk.indeterminate = true;
@@ -15817,6 +15837,7 @@ function comToggleAllStaff(chk) {
     }
   } else {
     _comStaffSel = new Set();
+    try { window._comStaffSel = _comStaffSel; } catch(_) {}
     chk.indeterminate = false;
   }
   renderComLista();
@@ -15827,6 +15848,13 @@ function comToggleAllStaff(chk) {
 // ================================================================
 function comSelectAllFiltradosStaff() {
   window.comSelectAllFiltradosStaff = comSelectAllFiltradosStaff;
+  try {
+    if(window._comUsuarios && Array.isArray(window._comUsuarios) && window._comUsuarios.length > 0 &&
+       (!Array.isArray(_comUsuarios) || _comUsuarios.length === 0)) {
+      _comUsuarios = window._comUsuarios.slice();
+      _comUsuariosLoaded = true;
+    }
+  } catch(_) {}
   const rows = _comStaffFiltrados();
   if(!rows.length) { toast('Sin resultados','warning'); return; }
   const idsOK = rows
@@ -15835,11 +15863,13 @@ function comSelectAllFiltradosStaff() {
   if(idsOK.length === 0) {
     toast('Ninguno de los filtrados tiene teléfono. Agregue teléfonos en Config → Usuarios.','warning');
     _comStaffSel = new Set();
+    try { window._comStaffSel = _comStaffSel; } catch(_) {}
     renderComLista();
     return;
   }
   const max = Math.min(_COM_MAX, idsOK.length);
   _comStaffSel = new Set(idsOK.slice(0, max));
+  try { window._comStaffSel = _comStaffSel; } catch(_) {}
   if(idsOK.length > _COM_MAX) {
     toast(`Personal filtrados con teléfono: ${idsOK.length}. Se seleccionaron ${max} primeros (límite 40).`,'warning');
   } else {
@@ -15862,6 +15892,13 @@ function comToastSinTelefonoStaff(nombreEncoded) {
 // ================================================================
 function comToggleStaffSel(id, on) {
   window.comToggleStaffSel = comToggleStaffSel;
+  try {
+    if(window._comUsuarios && Array.isArray(window._comUsuarios) && window._comUsuarios.length > 0 &&
+       (!Array.isArray(_comUsuarios) || _comUsuarios.length === 0)) {
+      _comUsuarios = window._comUsuarios.slice();
+      _comUsuariosLoaded = true;
+    }
+  } catch(_) {}
   const u = (_comUsuarios || []).find(x => x && String(x.id) === String(id));
   if(u) {
     const tieneTel = !!String(u.telefono || '').trim();
@@ -15882,8 +15919,11 @@ function comToggleStaffSel(id, on) {
   } else {
     _comStaffSel.delete(id);
   }
+  try { window._comStaffSel = _comStaffSel; } catch(_) {}
   const cnt = document.getElementById('com-count-staff');
-  if(cnt) cnt.textContent = String(_comStaffSel.size);
+  const selSize = _comStaffSel ? _comStaffSel.size : 0;
+  const winSize = (typeof window !== 'undefined' && window._comStaffSel) ? window._comStaffSel.size : 0;
+  if(cnt) cnt.textContent = String(Math.max(selSize, winSize));
   renderComLista();
 }
 
