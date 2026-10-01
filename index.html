@@ -15451,9 +15451,11 @@ function _renderComListaStaff() {
   const rol   = String(document.getElementById('com-staff-rol')?.value || '').trim();
   const cargo = String(document.getElementById('com-staff-cargo')?.value || '').trim();
   const q     = String(document.getElementById('com-staff-search')?.value || '').trim();
-  const hayInteraccion = !!(rol || cargo || q);
+  const usuariosCargados = !!( _comUsuariosLoaded && Array.isArray(_comUsuarios) && _comUsuarios.length > 0 );
+  const haySelPendiente = _comStaffSel && _comStaffSel.size > 0;
+  const hayInteraccion = !!(rol || cargo || q || usuariosCargados || haySelPendiente);
   if(!hayInteraccion) {
-    tbody.innerHTML = '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Selecciona un Rol / Cargo o busca por nombre para mostrar al personal</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Cargando personal...</td></tr>';
     const cnt = document.getElementById('com-count-staff');
     if(cnt) cnt.textContent = String(_comStaffSel.size);
     const hc = document.getElementById('com-staff-all');
