@@ -15364,27 +15364,43 @@ function renderComLista() {
     const tel = (tel1 || tel2);
     const checked = _comSel.has(id) ? 'checked' : '';
     // ================================================================
-    // ✅ v205 FIX MOISES REPORTADO: "Ezio no podia marcar checks".
-    //   RC (L15363 anterior): checkbox PONIA disabled='' si alumno
-    //   no tenia telefono → checks GRIS bloqueados. Alumno con
-    //   telefonos vacios (import antiguo) aparecia SIN explicacion.
-    //   SOLUCION 3 pilares:
-    //   (1) NUNCA deshabilitar checkbox por falta de telefono →
-    //       user SIEMPRE puede marcar (no se siente "sistema roto").
-    //   (2) UX VISUAL si no tiene teléfono:
-    //       · Label columna WhatsApp ROJO (color:var(--danger))
-    //       · Texto = ⚠ Sin teléfono (no solo guion)
-    //       · Tooltip title explicando por qué no recibirá.
-    //   (3) VALIDACION FINAL EXISTENTE en enviarComunicado() L15781
-    //       ya SIEMPRE filtra "No hay teléfonos válidos" para no
-    //       enviar vacío. Proteccion no se pierde; solo UX mejora.
+    // ✅ v206 AJUSTE CRITERIO MOISES VERBATIM:
+    //   "esta bien que aparezca deshabilitado y cada vez que quiera
+    //    marcar ese check le salga un msj alumnos sin asignacion de
+    //    telefono o algo parecido."
+    //   FUNDAMENTO: disabled VISUAL + EXPLICACION INMEDIATA > disabled
+    //   en silencio (bug v204 anterior) > enabled ciego (v205 user no
+    //   sabia que no se enviara).
+    //   REGLAS 4 capas:
+    //   (1) CHECKBOX DISABLED="" si !tieneTel (se ve GRIS, no se
+    //       marca por HTML standard).
+    //   (2) WRAPPER <span> alrededor del checkbox SIEMPRE captura
+    //       click/mousedown incluso aunque child este disabled.
+    //       Hace toast('Alumno sin teléfono cargado...') INMEDIATO.
+    //   (3) TOOLTIP title en el wrapper: razón por la que esta gris.
+    //   (4) ULTIMA GUARDIA EN comToggleSel por si algun navegador
+    //       raro disparara change despite disabled. NUNCA debe entrar.
+    //   --- Se MANTIENEN capas v205: fila opacity 0.6, celda roja ⚠,
+    //       ya que complementan (feedback visual + explicativo). ---
     // ================================================================
+    const reasonDisabled = !tieneTel ? (
+      'ALUMNO SIN TELÉFONO ASIGNADO. Este alumno NO tiene teléfonos (teléfono 1 ni teléfono 2) cargados en su ficha de la BD. No se le puede enviar WhatsApp. Edita la ficha del alumno en Gestión Alumnos para agregar los contactos de sus apoderados.'
+    ) : '';
     const telCell = (tieneTel)
       ? `<td style="color:var(--muted);">${tel}</td>`
-      : `<td style="color:var(--danger);font-weight:600;" title="Este alumno NO tiene teléfonos cargados en la BD. Si lo marcas, al dar click en Enviar por WhatsApp este alumno sera ignorado automaticamente (no recibira el mensaje, no hay numero al cual enviar). Puedes editar su ficha para agregar los telefonos de sus apoderados.">⚠ Sin teléfono</td>`;
-    const titleCheck = tieneTel ? 'Incluir este alumno en el comunicado' : 'Incluir en la seleccion (al enviar se omitira automaticamente porque no tiene telefonos cargados)';
-    return `<tr style="${!tieneTel ? 'opacity:0.6;' : ''}">
-      <td style="text-align:center;"><input type="checkbox" ${checked} title="${titleCheck}" onchange="comToggleSel('${id}', this.checked)"></td>
+      : `<td style="color:var(--danger);font-weight:600;" title="${reasonDisabled}">⚠ Sin teléfono asignado</td>`;
+    const titleCheck = tieneTel ? 'Incluir este alumno en el comunicado. Se enviará el WhatsApp al número de la columna derecha.' : reasonDisabled;
+    const checkHTML = tieneTel
+      ? `<input type="checkbox" ${checked} title="${titleCheck}" onchange="comToggleSel('${id}', this.checked)">`
+      : `<span style="cursor:not-allowed;display:inline-block;padding:4px 8px;border-radius:4px;border:1px dashed var(--danger);background:rgba(239,68,68,0.05);" ` +
+        `title="${titleCheck}" ` +
+        `onclick="comToastSinTelefono('${encodeURIComponent(nombre)}');" ` +
+        `onmousedown="comToastSinTelefono('${encodeURIComponent(nombre)}');" ` +
+        `oncontextmenu="event.preventDefault();comToastSinTelefono('${encodeURIComponent(nombre)}');return false;">` +
+          `<input type="checkbox" ${checked} disabled title="${titleCheck}" style="pointer-events:none;margin:0;">` +
+        `</span>`;
+    return `<tr style="${!tieneTel ? 'opacity:0.6;background:rgba(239,68,68,0.03);' : ''}">
+      <td style="text-align:center;">${checkHTML}</td>
       <td style="font-weight:700;color:var(--text);">${nombre}</td>
       <td>${a.grado||''}</td>
       <td>${a.seccion||''}</td>
@@ -15395,7 +15411,27 @@ function renderComLista() {
   document.getElementById('com-count').textContent = String(_comSel.size);
 }
 
+function comToastSinTelefono(nombreEncoded) {
+  const n = decodeURIComponent(String(nombreEncoded || '')).trim() || 'este alumno';
+  toast(`⚠ ${n}: NO TIENE TELÉFONO ASIGNADO en la BD. Para poder marcar y enviar WhatsApp a este alumno: edita su ficha en Gestión Alumnos y agrega teléfono del Apoderado 1 / Apoderado 2.`, 'warning');
+}
+
 function comToggleSel(id, on) {
+  // ================================================================
+  // v206 GUARDIA FINAL (nunca deberia dispararse por wrapper disabled,
+  // pero por seguridad ante navegadores raros):
+  // SI id corresponde a alumno SIN TELEFONO → NO agregar a _comSel.
+  // ================================================================
+  const a = (_comAlumnos || []).find(x => x && String(x.id) === String(id));
+  if (a) {
+    const tieneTel = !!(String(a.telefono||'').trim() || String(a.telefono2||'').trim());
+    if (!tieneTel) {
+      const n = (((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '').trim() || 'este alumno';
+      toast(`⚠ ${n}: sin teléfono asignado. No se puede agregar a la selección.`, 'warning');
+      renderComLista();
+      return;
+    }
+  }
   if(on) {
     if(_comSel.size >= _COM_MAX) { toast('Máximo ' + _COM_MAX + ' destinatarios','warning'); renderComLista(); return; }
     _comSel.add(id);
