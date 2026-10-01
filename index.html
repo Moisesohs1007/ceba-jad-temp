@@ -16549,7 +16549,73 @@ async function enviarComunicado() {
   const publicarPortalAlumnos = !!document.getElementById('com-publicar-portal')?.checked;
   const publicarPortalStaff   = !!document.getElementById('com-publicar-portal-staff')?.checked;
   if(!tpl) { toast('Escribe el mensaje','warning'); return; }
-  if(!_comFile || !_comSendB64) { toast('Sube 1 imagen o 1 PDF','warning'); return; }
+  // ================================================================
+  // ✅ v207f MEJORA PARA PROBAR ENVÍO MOISES:
+  //   (1) NO obliga a subir imagen/PDF. Si no hay nada adjunto, carga
+  //       el LOGO DEFAULT wa-logo.png en base64 automáticamente para
+  //       que el EF (que espera mediaBase64) siga funcionando OK.
+  //   (2) MUESTRA UN RESUMEN ANTES DE ENVIAR (confirmación doble
+  //       window.confirm) para no gastar créditos por error. El resumen
+  //       incluye: cantidad destinatarios, ejemplo del mensaje que
+  //       llegará al PRIMER destinatario para validar texto.
+  // ================================================================
+  let usamosLogoDefault = false;
+  if(!_comFile || !_comSendB64) {
+    // No cargó nada: usamos wa-logo.png para no romper el payload
+    try {
+      const logoURL = new URL('img/wa-logo.png', window.location.href).href;
+      const resp = await fetch(logoURL);
+      const blob = await resp.blob();
+      const b64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      _comSendB64 = String(b64 || '').split(',')[1] || b64;
+      _comSendType = 'image';
+      _comSendName = 'wa-logo.png';
+      usamosLogoDefault = true;
+    } catch(eLogo) {
+      toast('No se pudo cargar el logo default: ' + eLogo.message,'warning');
+      return;
+    }
+  }
+  // ================================================================
+  // RESUMEN ANTES DE ENVIAR (para que Moises valide y no se equivoque)
+  // ================================================================
+  let destinatarios = [];
+  let ejemplo1 = '';
+  if(esStaff) {
+    destinatarios = (_comUsuarios||[]).filter(u => _comStaffSel.has(u.id));
+    if(destinatarios.length > 0) {
+      const u = destinatarios[0];
+      const msg = _waEncabezado() + '\n\nCOMUNICADO INTERNO (Personal)\n\n' + _comMsgStaff(tpl, u) + _waPie();
+      ejemplo1 = msg;
+    }
+  } else {
+    destinatarios = (_comAlumnos||[]).filter(a => _comSel.has(a.id));
+    if(destinatarios.length > 0) {
+      const a = destinatarios[0];
+      const msg = _waEncabezado() + '\n\n' + _comMsg(tpl, a) + _waPie();
+      ejemplo1 = msg;
+    }
+  }
+  const resumen =
+`📢 RESUMEN ANTES DE ENVIAR (doble confirmación para evitar errores):
+
+✅ Destinatarios (${esStaff ? 'Personal/Staff' : 'Alumnos (Apoderados)'}): ${destinatarios.length}
+${usamosLogoDefault ? '🖼️  Sin archivo adjunto → usaremos LOGO DEFAULT (wa-logo.png).' : '📎  Archivo adjunto: ' + (_comSendName||'')}
+${publicarPortalStaff || publicarPortalAlumnos ? '📌  Sí se publicará en ' + (publicarPortalAlumnos ? 'Portal Alumnos' : '') + (publicarPortalAlumnos && publicarPortalStaff ? ' + ' : '') + (publicarPortalStaff ? 'Panel Interno Personal' : '') + '.' : '🔒  No se publicará en ningún portal (solo WhatsApp).'}
+
+👇 EJEMPLO QUE LLEGARÁ AL PRIMER DESTINATARIO (para que valides):
+
+${ejemplo1}
+
+¿ESTÁS SEGURO QUE QUIERES ENVIAR ESTE COMUNICADO AHORA?
+(Cancelar = no se envía nada, no gastas créditos).`;
+  const ok = window.confirm(resumen);
+  if(!ok) { toast('Envío cancelado por ti.','info'); if(st) st.textContent = ''; return; }
   try {
     if(btn) { btn.disabled = true; btn.style.opacity = '0.75'; }
     if(st) st.textContent = 'Preparando envío...';
