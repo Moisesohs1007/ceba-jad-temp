@@ -15472,20 +15472,29 @@ function _renderComListaStaff() {
     try { _comUsuariosLoaded = true; } catch(_) {}
   }
   const rows = _comStaffFiltrados();
-  // Actualizar header check (marcar todo)
+  // ================================================================
+  // ✅ v207e GLOBAL AMBOS TABS: marcar todo / indeterminado
+  //   TOMA EN CUENTA SOLO LOS USUARIOS CON TELÉFONO VÁLIDO PERÚ
+  //   /^9\d{8}$/.  Los inválidos = disabled wrapper v206 (igual vacíos).
+  // ================================================================
   const hc = document.getElementById('com-staff-all');
   if(hc) {
-    const totalConTel = rows.filter(u => String(u?.telefono||'').trim()).length;
-    const marcadosConTel = (Array.from(_comStaffSel)).filter(id => {
-      const u = (_comUsuarios||[]).find(x => String(x.id) === String(id));
-      return !!u && String(u.telefono||'').trim();
+    const totalValidos = rows.filter(u => {
+      const tl = String(u?.telefono||'').trim().replace(/\D/g,'');
+      return _esTelPeruValido(tl);
     }).length;
-    if(totalConTel === 0) {
+    const marcadosValidos = (Array.from(_comStaffSel)).filter(id => {
+      const u = (_comUsuarios||[]).find(x => String(x.id) === String(id));
+      if(!u) return false;
+      const tl = String(u.telefono||'').trim().replace(/\D/g,'');
+      return _esTelPeruValido(tl);
+    }).length;
+    if(totalValidos === 0) {
       hc.checked = false; hc.indeterminate = false;
-    } else if(marcadosConTel === 0) {
+    } else if(marcadosValidos === 0) {
       hc.checked = false; hc.indeterminate = false;
-    } else if(marcadosConTel >= Math.min(totalConTel, _COM_MAX)) {
-      hc.checked = true;  hc.indeterminate = (totalConTel > _COM_MAX);
+    } else if(marcadosValidos >= Math.min(totalValidos, _COM_MAX)) {
+      hc.checked = true;  hc.indeterminate = (totalValidos > _COM_MAX);
     } else {
       hc.checked = false; hc.indeterminate = true;
     }
@@ -15497,37 +15506,64 @@ function _renderComListaStaff() {
     const telLimpio = telRaw.replace(/\D/g, '');
     const valido = _esTelPeruValido(telLimpio);
     const vacio = !telLimpio;
+    const invalido = !vacio && !valido;
     const rolRaw = _normRol(u.rol);
     const rolLbl = _COM_ROL_LABEL[rolRaw.toUpperCase()] || rolRaw || '—';
     const cargoTxt = String(u.cargo || '').trim() || '—';
     const checked = _comStaffSel.has(id) ? 'checked' : '';
     // ================================================================
-    // ✅ v207d REGLA MOISES STAFF VERBATIM (DIFERENTE A ALUMNOS):
-    //   "celulares en peru todos empiezan en 9 y todos tienen 9 digitos
-    //    si alguno de estos no coincide con eso debera estar desbloqueado
-    //    paar q se le encie msjs"
-    //   CONSECUENCIA: STAFF NUNCA disabled. TODO checkbox HABILITADO.
-    //   Solo advertencia visual SUAVE en celda WhatsApp si:
-    //   (a) VACIO (sin telefono): texto "Sin asignar" color warning
-    //   (b) INVALIDO (no empieza 9 o <9/>9 dígitos): texto amarillo warning
-    //   NINGUNO => wrapper rojo / disabled / toast ciego. TODO permitido enviar.
-    //   (Alumnos v206 se mantienen INTACTOS: wrapper rojo + disabled + toast)
+    // ✅ v207e MOISES REGLA GLOBAL (STAFF = ALUMNOS MISMA LÓGICA AHORA):
+    //   SI vacío OR inválido => CHECKBOX DESHABILITADO 4 capas v206
+    //   (wrapper rojo punteado + toast click + title + guardia final).
+    //   Celda WhatsApp:
+    //     - VÁLIDO:  numero original  + color muted normal
+    //     - VACÍO:    "⚠ Sin asignar" + color danger (igual alumnos)
+    //     - INVÁLIDO: NUMERO ORIGINAL VISIBLE (NO reemplazar por
+    //                  "Inválido:" como v207d) + color amarillo bold
+    //                  + title largo explicación formato PERÚ, para que
+    //                  Moises vea exactamente qué número falló.
     // ================================================================
+    let reasonDisabled = '';
+    let toastEncoded = '';
+    if(vacio) {
+      reasonDisabled = 'PERSONAL SIN TELÉFONO ASIGNADO. Este usuario NO tiene teléfono cargado en su ficha. No se le puede enviar WhatsApp. Edite la ficha en Configuración → Usuarios para agregar el contacto (formato Perú: 9xxxxxxx 9 dígitos empieza 9).';
+      const n = (nombre || 'este personal').replace(/'/g, "''");
+      toastEncoded = encodeURIComponent(
+        `⚠ ${n}: SIN TELÉFONO ASIGNADO. Para habilitarlo, agregue un número 9xxxxxxx (9 dígitos empieza CON 9) en Configuración → Usuarios.`
+      );
+    } else if(invalido) {
+      reasonDisabled = `TELÉFONO FORMATO INVÁLIDO (PERÚ). Número registrado: ${telRaw}. El formato válido es 9 dígitos exactos EMPIEZA CON 9 (ej: 916222360). Corrija el número en Configuración → Usuarios para habilitar este usuario.`;
+      const n = (nombre || 'este personal').replace(/'/g, "''");
+      toastEncoded = encodeURIComponent(
+        `⚠ ${n}: TELÉFONO INVÁLIDO → "${telRaw}". Para Perú deben ser 9 dígitos EMPIEZA CON 9 (ej: 916222360). Corríjalo en Configuración → Usuarios para poder marcarlo.`
+      );
+    }
     let telCell;
     if(valido) {
-      telCell = `<td style="color:var(--muted);" title="Teléfono peruano válido (9 dígitos, empieza en 9). Compatible WhatsApp.">${telRaw}</td>`;
+      telCell = `<td style="color:var(--muted);" title="Teléfono peruano válido (9 dígitos empieza con 9). Compatible WhatsApp.">${telRaw||'—'}</td>`;
     } else if(vacio) {
-      telCell = `<td style="color:var(--warning);font-weight:600;" title="Sin teléfono asignado en la ficha usuario. PERO SI ESTÁ HABILITADO para enviar (configuración Moises).">⚠ Sin asignar</td>`;
+      telCell = `<td style="color:var(--danger);font-weight:600;" title="${reasonDisabled}">⚠ Sin asignar</td>`;
     } else {
-      telCell = `<td style="color:var(--warning);font-weight:600;" title="Formato inválido (Perú = 9 dígitos empieza con 9). PERO SI ESTÁ HABILITADO para enviar (configuración Moises).">⚠ Inválido: ${telRaw || '—'}</td>`;
+      // MOISES VERBATIM: "dejar el numero q registraron para q se sepa cual es el error"
+      telCell = `<td style="color:var(--warning);font-weight:600;" title="${reasonDisabled}">${telRaw}</td>`;
     }
     const titleCheck = valido
-      ? 'Incluir a este miembro del personal. Número válido Perú (9xxxxxxx).'
-      : vacio
-        ? 'Incluir a este miembro del personal. Sin teléfono asignado (permitido enviar).'
-        : 'Incluir a este miembro del personal. Número formato inválido PERO PERMITIDO enviar.';
-    const checkHTML = `<input type="checkbox" ${checked} title="${titleCheck}" onchange="comToggleStaffSel('${id}', this.checked)">`;
-    const trStyle = valido ? '' : 'background:rgba(245,158,11,0.04);';
+      ? `Incluir a este miembro del personal. Número válido Perú (${telRaw}).`
+      : reasonDisabled;
+    let checkHTML;
+    if(valido) {
+      checkHTML = `<input type="checkbox" ${checked} title="${titleCheck}" onchange="comToggleStaffSel('${id}', this.checked)">`;
+    } else {
+      // Wrapper disabled 4 capas v206 (exactamente igual que alumnos):
+      checkHTML = `<span style="cursor:not-allowed;display:inline-block;padding:4px 8px;border-radius:4px;border:1px dashed var(--danger);background:rgba(239,68,68,0.05);" ` +
+        `title="${titleCheck}" ` +
+        `onclick="comToastWrapper('${toastEncoded}');" ` +
+        `onmousedown="comToastWrapper('${toastEncoded}');" ` +
+        `oncontextmenu="event.preventDefault();comToastWrapper('${toastEncoded}');return false;">` +
+          `<input type="checkbox" ${checked} disabled title="${titleCheck}" style="pointer-events:none;margin:0;">` +
+        `</span>`;
+    }
+    const trStyle = valido ? '' : (invalido ? 'background:rgba(245,158,11,0.04);' : 'opacity:0.6;background:rgba(239,68,68,0.03);');
     return `<tr style="${trStyle}">
       <td style="text-align:center;">${checkHTML}</td>
       <td style="font-weight:700;color:var(--text);">${nombre||'—'}</td>
@@ -15568,48 +15604,85 @@ function renderComLista() {
   tbody.innerHTML = rows.map(a=>{
     const id = a.id;
     const nombre = (((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '').trim();
-    const tel1 = (String(a.telefono || '').trim());
-    const tel2 = (String(a.telefono2 || '').trim());
-    const tieneTel = !!(tel1 || tel2);
-    const tel = (tel1 || tel2);
+    const tel1Raw = String(a.telefono || '').trim();
+    const tel2Raw = String(a.telefono2 || '').trim();
+    const tel1Limpio = tel1Raw.replace(/\D/g, '');
+    const tel2Limpio = tel2Raw.replace(/\D/g, '');
+    const valido1 = _esTelPeruValido(tel1Limpio);
+    const valido2 = _esTelPeruValido(tel2Limpio);
+    const valido = valido1 || valido2;
+    const vacio1 = !tel1Limpio;
+    const vacio2 = !tel2Limpio;
+    const ambosVacios = vacio1 && vacio2;
+
     const checked = _comSel.has(id) ? 'checked' : '';
     // ================================================================
-    // ✅ v206 AJUSTE CRITERIO MOISES VERBATIM:
-    //   "esta bien que aparezca deshabilitado y cada vez que quiera
-    //    marcar ese check le salga un msj alumnos sin asignacion de
-    //    telefono o algo parecido."
-    //   FUNDAMENTO: disabled VISUAL + EXPLICACION INMEDIATA > disabled
-    //   en silencio (bug v204 anterior) > enabled ciego (v205 user no
-    //   sabia que no se enviara).
-    //   REGLAS 4 capas:
-    //   (1) CHECKBOX DISABLED="" si !tieneTel (se ve GRIS, no se
-    //       marca por HTML standard).
-    //   (2) WRAPPER <span> alrededor del checkbox SIEMPRE captura
-    //       click/mousedown incluso aunque child este disabled.
-    //       Hace toast('Alumno sin teléfono cargado...') INMEDIATO.
-    //   (3) TOOLTIP title en el wrapper: razón por la que esta gris.
-    //   (4) ULTIMA GUARDIA EN comToggleSel por si algun navegador
-    //       raro disparara change despite disabled. NUNCA debe entrar.
-    //   --- Se MANTIENEN capas v205: fila opacity 0.6, celda roja ⚠,
-    //       ya que complementan (feedback visual + explicativo). ---
+    // ✅ v207e MOISES GLOBAL (AHORA ALUMNOS TAMBIEN = MISMA REGLA STAFF):
+    //
+    //   ALUMNO HABILITADO  <=> AL MENOS 1 telefono VALIDO PERU (/^9\d{8}$/)
+    //
+    //   SI ninguno valido (ambos vacíos O alguno inválido pero ninguno válido)
+    //   => WRAPPER DISABLED 4 capas v206 (igual antes v206 solo vacios).
+    //
+    //   Celda WhatsApp:
+    //     - Ambos vacíos: "⚠ Sin teléfono asignado" color danger bold.
+    //     - Al menos 1 inválido (ninguno válido): MUESTRA LOS NÚMEROS QUE
+    //       REGISTRARON (NO reemplaza por "Inválido: X") en color amarillo
+    //       bold, para Moises "se sepa cual es el error".
+    //     - Al menos 1 válido => todos los números que existen visibles
+    //       color muted normal (se envía 1 seleccionado en el dropdown
+    //       "Enviar a").
     // ================================================================
-    const reasonDisabled = !tieneTel ? (
-      'ALUMNO SIN TELÉFONO ASIGNADO. Este alumno NO tiene teléfonos (teléfono 1 ni teléfono 2) cargados en su ficha de la BD. No se le puede enviar WhatsApp. Edita la ficha del alumno en Gestión Alumnos para agregar los contactos de sus apoderados.'
-    ) : '';
-    const telCell = (tieneTel)
-      ? `<td style="color:var(--muted);">${tel}</td>`
-      : `<td style="color:var(--danger);font-weight:600;" title="${reasonDisabled}">⚠ Sin teléfono asignado</td>`;
-    const titleCheck = tieneTel ? 'Incluir este alumno en el comunicado. Se enviará el WhatsApp al número de la columna derecha.' : reasonDisabled;
-    const checkHTML = tieneTel
-      ? `<input type="checkbox" ${checked} title="${titleCheck}" onchange="comToggleSel('${id}', this.checked)">`
-      : `<span style="cursor:not-allowed;display:inline-block;padding:4px 8px;border-radius:4px;border:1px dashed var(--danger);background:rgba(239,68,68,0.05);" ` +
+    let numerosMostrar = [];
+    if(tel1Raw) numerosMostrar.push(tel1Raw);
+    if(tel2Raw) numerosMostrar.push(tel2Raw);
+    const numerosUnidos = numerosMostrar.join(' / ') || '';
+
+    let toastEncoded = '';
+    let reasonDisabled = '';
+    if(ambosVacios) {
+      reasonDisabled = 'ALUMNO SIN TELÉFONO ASIGNADO. Este alumno NO tiene teléfonos (teléfono 1 ni teléfono 2) cargados en su ficha de la BD. Formato válido Perú: 9xxxxxxx 9 dígitos empieza 9. Edita la ficha en Gestión Alumnos para agregar contactos.';
+      const n = (nombre || 'este alumno').replace(/'/g,"''");
+      toastEncoded = encodeURIComponent(
+        `⚠ ${n}: SIN TELÉFONO ASIGNADO. Edita su ficha en Gestión Alumnos y agrega teléfono(s) de apoderados válidos Perú (9xxxxxxx 9 dígitos empieza 9).`
+      );
+    } else if (!valido) {
+      // Ambos inválidos o 1 inválido y el otro vacío
+      reasonDisabled = `TELÉFONOS FORMATO INVÁLIDO PERÚ. Números registrados: ${numerosUnidos}. Formato válido = 9 dígitos exactos EMPIEZA CON 9 (ej: 916222360). Corrija los números en Gestión Alumnos para habilitar este alumno.`;
+      const n = (nombre || 'este alumno').replace(/'/g,"''");
+      toastEncoded = encodeURIComponent(
+        `⚠ ${n}: TELÉFONO(S) INVÁLIDOS → "${numerosUnidos}". Para Perú deben ser 9 dígitos EMPIEZA CON 9 (ej: 916222360). Corrígelos en Gestión Alumnos para habilitar.`
+      );
+    }
+
+    let telCell;
+    if(ambosVacios) {
+      telCell = `<td style="color:var(--danger);font-weight:600;" title="${reasonDisabled}">⚠ Sin teléfono asignado</td>`;
+    } else if(!valido) {
+      // MOISES VERBATIM: "dejar el numero q registraron para q se sepa cual es el error"
+      telCell = `<td style="color:var(--warning);font-weight:600;" title="${reasonDisabled}">${numerosUnidos}</td>`;
+    } else {
+      telCell = `<td style="color:var(--muted);" title="${numerosUnidos ? 'Contactos cargados: ' + numerosUnidos : ''}">${numerosUnidos || '—'}</td>`;
+    }
+    const titleCheck = valido
+      ? `Incluir este alumno. ${numerosUnidos ? 'Contactos: ' + numerosUnidos + '.' : ''} Selecciona abajo "Enviar a" para elegir cuál (Ap 1, Ap 2, Ambos).`
+      : reasonDisabled;
+
+    let checkHTML;
+    if(valido) {
+      checkHTML = `<input type="checkbox" ${checked} title="${titleCheck}" onchange="comToggleSel('${id}', this.checked)">`;
+    } else {
+      // 4 capas v206 wrapper disabled (igual original, ahora tambien INVALIDOS):
+      checkHTML = `<span style="cursor:not-allowed;display:inline-block;padding:4px 8px;border-radius:4px;border:1px dashed var(--danger);background:rgba(239,68,68,0.05);" ` +
         `title="${titleCheck}" ` +
-        `onclick="comToastSinTelefono('${encodeURIComponent(nombre)}');" ` +
-        `onmousedown="comToastSinTelefono('${encodeURIComponent(nombre)}');" ` +
-        `oncontextmenu="event.preventDefault();comToastSinTelefono('${encodeURIComponent(nombre)}');return false;">` +
+        `onclick="comToastWrapper('${toastEncoded}');" ` +
+        `onmousedown="comToastWrapper('${toastEncoded}');" ` +
+        `oncontextmenu="event.preventDefault();comToastWrapper('${toastEncoded}');return false;">` +
           `<input type="checkbox" ${checked} disabled title="${titleCheck}" style="pointer-events:none;margin:0;">` +
         `</span>`;
-    return `<tr style="${!tieneTel ? 'opacity:0.6;background:rgba(239,68,68,0.03);' : ''}">
+    }
+    const trStyle = valido ? '' : (!ambosVacios && !valido ? 'background:rgba(245,158,11,0.04);' : 'opacity:0.6;background:rgba(239,68,68,0.03);');
+    return `<tr style="${trStyle}">
       <td style="text-align:center;">${checkHTML}</td>
       <td style="font-weight:700;color:var(--text);">${nombre}</td>
       <td>${a.grado||''}</td>
@@ -15623,21 +15696,39 @@ function renderComLista() {
 
 function comToastSinTelefono(nombreEncoded) {
   const n = decodeURIComponent(String(nombreEncoded || '')).trim() || 'este alumno';
-  toast(`⚠ ${n}: NO TIENE TELÉFONO ASIGNADO en la BD. Para poder marcar y enviar WhatsApp a este alumno: edita su ficha en Gestión Alumnos y agrega teléfono del Apoderado 1 / Apoderado 2.`, 'warning');
+  toast(`⚠ ${n}: NO TIENE TELÉFONO ASIGNADO en la BD. Para poder marcar y enviar WhatsApp a este alumno: edita su ficha en Gestión Alumnos y agrega teléfono del Apoderado 1 / Apoderado 2 en formato válido Perú (9 dígitos empieza con 9: 9xxxxxxx).`, 'warning');
+}
+
+// ================================================================
+// v207e: wrapper GENÉRICO reusable (alumnos + staff: mismo toast inline.
+// ================================================================
+function comToastWrapper(msgEncoded) {
+  window.comToastWrapper = comToastWrapper;
+  const m = decodeURIComponent(String(msgEncoded || '')).trim();
+  if (m) toast(m, 'warning');
 }
 
 function comToggleSel(id, on) {
   // ================================================================
-  // v206 GUARDIA FINAL (nunca deberia dispararse por wrapper disabled,
-  // pero por seguridad ante navegadores raros):
-  // SI id corresponde a alumno SIN TELEFONO → NO agregar a _comSel.
+  // v207e GUARDIA FINAL (por si wrapper disabled fallara en navegador raro):
+  //   Rechaza: alumnos SIN AL MENOS 1 TELÉFONO VÁLIDO Perú (/^9\d{8}$/).
+  //   Ahora cubre: vacíos (v206 original) + inválidos (v207e nuevo).
   // ================================================================
   const a = (_comAlumnos || []).find(x => x && String(x.id) === String(id));
   if (a) {
-    const tieneTel = !!(String(a.telefono||'').trim() || String(a.telefono2||'').trim());
-    if (!tieneTel) {
+    const t1 = String(a.telefono||'').trim().replace(/\D/g,'');
+    const t2 = String(a.telefono2||'').trim().replace(/\D/g,'');
+    const valido1 = _esTelPeruValido(t1);
+    const valido2 = _esTelPeruValido(t2);
+    const ningunoValido = !valido1 && !valido2;
+    if (ningunoValido) {
       const n = (((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '').trim() || 'este alumno';
-      toast(`⚠ ${n}: sin teléfono asignado. No se puede agregar a la selección.`, 'warning');
+      const numerosMostrar = [String(a.telefono||'').trim(), String(a.telefono2||'').trim()].filter(Boolean).join(' / ');
+      if (!numerosMostrar) {
+        toast(`⚠ ${n}: sin teléfono asignado. No se puede agregar a la selección.`, 'warning');
+      } else {
+        toast(`⚠ ${n}: teléfono(s) inválido(s) "${numerosMostrar}". Para Perú deben ser 9 dígitos empieza CON 9 (ej: 916222360). No se puede agregar a la selección.`, 'warning');
+      }
       renderComLista();
       return;
     }
@@ -15653,9 +15744,26 @@ function comToggleSel(id, on) {
 
 function comSelectAllFiltrados() {
   const rows = _comFiltrados();
+  let added = 0;
+  let omitidos = 0;
   for(const a of rows) {
     if(_comSel.size >= _COM_MAX) break;
-    if(a.telefono || a.telefono2) _comSel.add(a.id);
+    const t1 = String(a.telefono||'').trim().replace(/\D/g,'');
+    const t2 = String(a.telefono2||'').trim().replace(/\D/g,'');
+    const valido = _esTelPeruValido(t1) || _esTelPeruValido(t2);
+    if(valido) {
+      _comSel.add(a.id);
+      added++;
+    } else {
+      omitidos++;
+    }
+  }
+  if(added > 0 && omitidos === 0) {
+    toast(`Seleccionados ${added}.`, 'success');
+  } else if(added > 0 && omitidos > 0) {
+    toast(`${added} seleccionados. ${omitidos} omitidos por formato inválido o sin teléfono (deben ser 9xxxxxxx).`, 'warning');
+  } else {
+    toast('Ninguno de los filtrados tiene teléfono válido Perú (9 dígitos empieza con 9). Revisar Gestión Alumnos → fichas.', 'warning');
   }
   renderComLista();
 }
@@ -15828,21 +15936,38 @@ function comToggleAllStaff(chk) {
     }
   } catch(_) {}
   const rows = _comStaffFiltrados();
-  const todosIds = rows.filter(Boolean).map(u => u.id);
+  // ================================================================
+  // v207e AMBOS TABS: solo seleccionar USUARIOS CON TELEFONO VALIDO PERU
+  //   /^9\d{8}$/.  Los inválidos = disabled wrapper; no se seleccionan.
+  // ================================================================
+  const idsValidos = rows
+    .filter(Boolean)
+    .filter(u => {
+      const tl = String(u.telefono||'').trim().replace(/\D/g,'');
+      return _esTelPeruValido(tl);
+    })
+    .map(u => u.id);
   if(chk.checked) {
-    if(todosIds.length === 0) {
-      toast('Sin personal filtrado.','warning');
+    if(idsValidos.length === 0) {
+      const total = rows.length;
+      if(total === 0) toast('Sin personal filtrado.','warning');
+      else toast('Ningún personal filtrado tiene teléfono VÁLIDO Perú (9 dígitos empieza con 9). Corrija las fichas en Configuración → Usuarios.','warning');
       chk.checked = false; chk.indeterminate = false;
       renderComLista();
       return;
     }
-    const max = Math.min(todosIds.length, _COM_MAX);
-    _comStaffSel = new Set(todosIds.slice(0, max));
+    const max = Math.min(idsValidos.length, _COM_MAX);
+    _comStaffSel = new Set(idsValidos.slice(0, max));
     try { window._comStaffSel = _comStaffSel; } catch(_) {}
-    if(todosIds.length > _COM_MAX) {
-      toast(`Hay ${todosIds.length} personal filtrado. Se seleccionaron ${_COM_MAX} primeros (máximo permitido).`,'warning');
+    const totalInval = rows.length - idsValidos.length;
+    if(idsValidos.length > _COM_MAX) {
+      toast(`Hay ${idsValidos.length} con teléfono válido (${totalInval} omitidos inválidos/sin tel). Se seleccionaron ${_COM_MAX} primeros (máximo permitido).`,'warning');
       chk.indeterminate = true;
+    } else if(totalInval > 0) {
+      toast(`${idsValidos.length} seleccionados (${totalInval} omitidos por teléfono inválido/sin asignar; deben ser 9xxxxxxx).`,'info');
+      chk.indeterminate = false;
     } else {
+      toast(`Seleccionados ${idsValidos.length}.`,'success');
       chk.indeterminate = false;
     }
   } else {
@@ -15867,14 +15992,28 @@ function comSelectAllFiltradosStaff() {
   } catch(_) {}
   const rows = _comStaffFiltrados();
   if(!rows.length) { toast('Sin resultados','warning'); return; }
-  const idsTodos = rows.filter(Boolean).map(u => u.id);
-  const max = Math.min(_COM_MAX, idsTodos.length);
-  _comStaffSel = new Set(idsTodos.slice(0, max));
+  // ================================================================
+  // v207e GLOBAL: filtrar SOLO los VALIDOS /^9\d{8}$/.  Invalido = omit.
+  // ================================================================
+  let added = 0;
+  let omitidos = 0;
+  for(const u of rows) {
+    if(_comStaffSel.size >= _COM_MAX) break;
+    const tl = String(u.telefono||'').trim().replace(/\D/g,'');
+    if(_esTelPeruValido(tl)) {
+      _comStaffSel.add(u.id);
+      added++;
+    } else {
+      omitidos++;
+    }
+  }
   try { window._comStaffSel = _comStaffSel; } catch(_) {}
-  if(idsTodos.length > _COM_MAX) {
-    toast(`Personal filtrado: ${idsTodos.length}. Se seleccionaron ${max} primeros (límite 40).`,'warning');
+  if(added === 0) {
+    toast('Ningún personal filtrado tiene teléfono VÁLIDO Perú (9 dígitos empieza con 9). Revise Configuración → Usuarios.','warning');
+  } else if(omitidos === 0) {
+    toast(`Seleccionados ${added}.`,'success');
   } else {
-    toast(`Seleccionados ${max}.`,'success');
+    toast(`${added} seleccionados. ${omitidos} omitidos (sin teléfono o inválido = debe ser 9xxxxxxx).`,'warning');
   }
   renderComLista();
 }
@@ -15900,6 +16039,27 @@ function comToggleStaffSel(id, on) {
       _comUsuariosLoaded = true;
     }
   } catch(_) {}
+  // ================================================================
+  // v207e GUARDIA (ahora STAFF = ALUMNOS, MISMA REGLA):
+  //   Si usuario existe y telefono NO VALIDO /^9\d{8}$/ => reject.
+  //   Vacio = toast sin asignado. Invalido = toast con numero visible.
+  // ================================================================
+  const u = (_comUsuarios || []).find(x => x && String(x.id) === String(id));
+  if(u) {
+    const tl = String(u.telefono||'').trim().replace(/\D/g,'');
+    const valido = _esTelPeruValido(tl);
+    if(!valido) {
+      const nombre = String(u.nombre || '').trim() || 'este personal';
+      const telRaw = String(u.telefono || '').trim();
+      if(!telRaw) {
+        toast(`⚠ ${nombre}: SIN TELÉFONO ASIGNADO. Para marcarlo, agregue un número válido Perú 9xxxxxxx (9 dígitos empieza con 9) en Configuración → Usuarios.`, 'warning');
+      } else {
+        toast(`⚠ ${nombre}: TELÉFONO INVÁLIDO → "${telRaw}". Para Perú deben ser 9 dígitos EMPIEZA CON 9 (ej: 916222360). No se puede agregar a la selección.`, 'warning');
+      }
+      renderComLista();
+      return;
+    }
+  }
   if(on) {
     if(_comStaffSel.size >= _COM_MAX) {
       toast('Máximo ' + _COM_MAX + ' destinatarios','warning');
@@ -16399,52 +16559,87 @@ async function enviarComunicado() {
     if(esStaff) {
       rows = (_comUsuarios||[]).filter(u => _comStaffSel.has(u.id));
       // ================================================================
-      // ✅ v207d MOISES STAFF VERBATIM: inválidos/sin validez PERU DESBLOQUEADO.
-      // Enviar SIEMPRE que exista algún texto (no vacío), incluso si NO
-      // cumple /^9\d{8}$/ (Moises lo requiere explicitamente desbloqueado).
-      // Solo se omiten los que tienen campo VACIO (no hay numero destinatario).
+      // ✅ v207e MOISES GLOBAL (AMBOS TABS): SOLO ENVÍA VÁLIDOS /^9\d{8}$/.
+      //   Los inválidos (o vacíos) se cuentan en omitidosInvalidos para
+      //   toast info al final. No disparan error blocking.
       // ================================================================
-      let omitidosVacios = 0;
+      let omitVacios = 0;
+      let omitInvalidos = 0;
       rows.forEach(u => {
         const msg = _waEncabezado() + '\n\nCOMUNICADO INTERNO (Personal)\n\n' + _comMsgStaff(tpl, u) + _waPie();
-        const tel = String(u?.telefono || '').trim();
-        if(tel) {
-          items.push({ telefono: tel, mensaje: msg });
+        const telRaw = String(u?.telefono || '').trim();
+        const telLimpio = telRaw.replace(/\D/g,'');
+        if(!telRaw) {
+          omitVacios++;
+        } else if(!_esTelPeruValido(telLimpio)) {
+          omitInvalidos++;
         } else {
-          omitidosVacios++;
+          items.push({ telefono: telRaw, mensaje: msg });
         }
       });
-      if(omitidosVacios > 0 && items.length > 0) {
-        toast(`${omitidosVacios} personal sin campo teléfono se omitieron (el resto se enviará).`,'info');
-      } else if(omitidosVacios > 0 && items.length === 0) {
-        // Nadie tiene teléfono: warning pero seguir intentando (Moises dice desbloqueado)
-        toast('Ninguno del personal seleccionado tiene teléfono en su ficha.','warning');
+      const omitTotal = omitVacios + omitInvalidos;
+      if(omitTotal > 0 && items.length > 0) {
+        const parts = [];
+        if(omitVacios) parts.push(`${omitVacios} sin teléfono`);
+        if(omitInvalidos) parts.push(`${omitInvalidos} con formato inválido (Perú=9xxxxxxx)`);
+        toast(`${rows.length} seleccionados → ${items.length} enviarán WhatsApp. Omitidos: ${parts.join(', ')}.`, 'info');
+      } else if(omitTotal > 0 && items.length === 0) {
+        toast('Ninguno del personal seleccionado tiene teléfono VÁLIDO Perú (9 dígitos empieza con 9). Revisar Configuración → Usuarios.','warning');
       }
     } else {
       const enviarA = document.getElementById('com-enviar-a').value;
       rows = (_comAlumnos||[]).filter(a=>_comSel.has(a.id));
+      // ================================================================
+      // v207e GLOBAL (ALUMNOS): SOLO ENVÍA TELEFONOS VALIDOS PERU
+      // Cada tel se valida individualmente (si 1 valido 1 invalido =>
+      // solo se manda el valido).  Dropdown "otro" tambien valida.
+      // ================================================================
+      let omitInvAlumnos = 0;
       rows.forEach(a=>{
         const msg = _waEncabezado() + '\n\n' + _comMsg(tpl, a) + _waPie();
-        const tel1 = (a.telefono||'').trim();
-        const tel2 = (a.telefono2||'').trim();
-        if(enviarA === 'tel1' && tel1) items.push({ telefono: tel1, mensaje: msg });
-        if(enviarA === 'tel2' && tel2) items.push({ telefono: tel2, mensaje: msg });
-        if(enviarA === 'ambos') {
-          if(tel1) items.push({ telefono: tel1, mensaje: msg });
-          if(tel2 && tel2.replace(/\D/g,'').slice(-9) !== tel1.replace(/\D/g,'').slice(-9)) items.push({ telefono: tel2, mensaje: msg });
+        const tel1Raw = String(a.telefono||'').trim();
+        const tel2Raw = String(a.telefono2||'').trim();
+        const t1 = tel1Raw.replace(/\D/g,'');
+        const t2 = tel2Raw.replace(/\D/g,'');
+        const v1 = _esTelPeruValido(t1);
+        const v2 = _esTelPeruValido(t2);
+        const teniaAlguno = (!!tel1Raw || !!tel2Raw);
+        let enviadoEsteAlumno = false;
+        if(enviarA === 'tel1') {
+          if(v1) { items.push({ telefono: tel1Raw, mensaje: msg }); enviadoEsteAlumno = true; }
+          else if(tel1Raw) omitInvAlumnos++;
         }
-        if(enviarA === 'otro' && otroTel) items.push({ telefono: otroTel, mensaje: msg });
+        if(enviarA === 'tel2') {
+          if(v2) { items.push({ telefono: tel2Raw, mensaje: msg }); enviadoEsteAlumno = true; }
+          else if(tel2Raw) omitInvAlumnos++;
+        }
+        if(enviarA === 'ambos') {
+          if(v1) { items.push({ telefono: tel1Raw, mensaje: msg }); enviadoEsteAlumno = true; }
+          else if(tel1Raw) omitInvAlumnos++;
+          if(v2 && t2.slice(-9) !== t1.slice(-9)) { items.push({ telefono: tel2Raw, mensaje: msg }); enviadoEsteAlumno = true; }
+          else if(tel2Raw && !v2 && t2.slice(-9) !== t1.slice(-9)) omitInvAlumnos++;
+        }
+        if(enviarA === 'otro') {
+          const otroLimpio = otroTel.replace(/\D/g,'');
+          if(_esTelPeruValido(otroLimpio)) { items.push({ telefono: otroTel, mensaje: msg }); enviadoEsteAlumno = true; }
+          else if(otroTel) omitInvAlumnos++;
+        }
+        if(teniaAlguno && !enviadoEsteAlumno) {
+          // tenia alguno pero ninguno valido -> el contador ya se incremento arriba
+        }
       });
       const limite = (enviarA === 'ambos') ? _COM_MAX_MSG : _COM_MAX;
       if(items.length > limite) { toast(`Demasiados mensajes (${items.length}). Máximo ${limite}.`, 'warning'); return; }
+      if(omitInvAlumnos > 0 && items.length > 0) {
+        toast(`${items.length} mensajes listos para enviar. ${omitInvAlumnos} teléfono(s) omitidos por formato inválido Perú (deben ser 9 dígitos empieza con 9: 9xxxxxxx).`,'info');
+      }
     }
     if(!items.length) {
       if(esStaff) {
-        toast('No hay teléfonos cargados en el personal seleccionado. Revisar fichas en Configuración → Usuarios.','warning');
-        // Moises dice DESBLOQUEADO: no return aqui, pero sin items no hay nada que enviar.
+        toast('Ningún personal seleccionado tiene teléfono VÁLIDO Perú (9 dígitos empieza con 9). Revisar fichas en Configuración → Usuarios.','warning');
         return;
       } else {
-        toast('No hay teléfonos válidos para enviar','warning');
+        toast('Ningún alumno tiene teléfono VÁLIDO Perú (9 dígitos empieza con 9) para enviar. Revise Gestión Alumnos → fichas.','warning');
         return;
       }
     }
