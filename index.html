@@ -15358,16 +15358,38 @@ function renderComLista() {
   tbody.innerHTML = rows.map(a=>{
     const id = a.id;
     const nombre = (((a.apellidos||'') + ' ' + (a.nombres||'')).trim() || a.nombre || '').trim();
-    const tel = (a.telefono || a.telefono2 || '').trim();
+    const tel1 = (String(a.telefono || '').trim());
+    const tel2 = (String(a.telefono2 || '').trim());
+    const tieneTel = !!(tel1 || tel2);
+    const tel = (tel1 || tel2);
     const checked = _comSel.has(id) ? 'checked' : '';
-    const disabled = tel ? '' : 'disabled';
-    return `<tr>
-      <td style="text-align:center;"><input type="checkbox" ${checked} ${disabled} onchange="comToggleSel('${id}', this.checked)"></td>
+    // ================================================================
+    // ✅ v205 FIX MOISES REPORTADO: "Ezio no podia marcar checks".
+    //   RC (L15363 anterior): checkbox PONIA disabled='' si alumno
+    //   no tenia telefono → checks GRIS bloqueados. Alumno con
+    //   telefonos vacios (import antiguo) aparecia SIN explicacion.
+    //   SOLUCION 3 pilares:
+    //   (1) NUNCA deshabilitar checkbox por falta de telefono →
+    //       user SIEMPRE puede marcar (no se siente "sistema roto").
+    //   (2) UX VISUAL si no tiene teléfono:
+    //       · Label columna WhatsApp ROJO (color:var(--danger))
+    //       · Texto = ⚠ Sin teléfono (no solo guion)
+    //       · Tooltip title explicando por qué no recibirá.
+    //   (3) VALIDACION FINAL EXISTENTE en enviarComunicado() L15781
+    //       ya SIEMPRE filtra "No hay teléfonos válidos" para no
+    //       enviar vacío. Proteccion no se pierde; solo UX mejora.
+    // ================================================================
+    const telCell = (tieneTel)
+      ? `<td style="color:var(--muted);">${tel}</td>`
+      : `<td style="color:var(--danger);font-weight:600;" title="Este alumno NO tiene teléfonos cargados en la BD. Si lo marcas, al dar click en Enviar por WhatsApp este alumno sera ignorado automaticamente (no recibira el mensaje, no hay numero al cual enviar). Puedes editar su ficha para agregar los telefonos de sus apoderados.">⚠ Sin teléfono</td>`;
+    const titleCheck = tieneTel ? 'Incluir este alumno en el comunicado' : 'Incluir en la seleccion (al enviar se omitira automaticamente porque no tiene telefonos cargados)';
+    return `<tr style="${!tieneTel ? 'opacity:0.6;' : ''}">
+      <td style="text-align:center;"><input type="checkbox" ${checked} title="${titleCheck}" onchange="comToggleSel('${id}', this.checked)"></td>
       <td style="font-weight:700;color:var(--text);">${nombre}</td>
       <td>${a.grado||''}</td>
       <td>${a.seccion||''}</td>
       <td>${_alumnoNivelText(a)||a.turno||''}</td>
-      <td style="color:var(--muted);">${tel || '—'}</td>
+      ${telCell}
     </tr>`;
   }).join('') || '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Sin resultados</td></tr>';
   document.getElementById('com-count').textContent = String(_comSel.size);
