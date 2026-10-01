@@ -4792,48 +4792,104 @@
   <!-- ===== COMUNICADO ===== -->
   <div class="section" id="sec-comunicado">
     <div class="page-title">Comunicado</div>
-    <div class="page-sub">Selecciona alumnos y envía una imagen con texto personalizado por WhatsApp</div>
+    <div class="page-sub" id="com-page-sub">Selecciona alumnos y envía una imagen con texto personalizado por WhatsApp</div>
 
-    <div class="card com-toolbar" style="padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <div style="display:flex;align-items:center;gap:6px;">
-        <label style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Nivel:</label>
-        <select id="com-nivel" onchange="onComNivelChange()" style="min-width:140px;">
-          <option value="">Todos</option>
-        </select>
+    <!-- ================================================================
+         ✅ v207 COMUNICADO: 2 TABS MISMA PANTALLA.
+         Moises VERBATIM: "misma pantalla (no modal) misma logica alumnos/tabs.
+         Tab 1 = 🎓 Alumnos (Apoderados) (100% lo que existia, no se toca NADA).
+         Tab 2 = 👨‍🏫 Personal / Staff / Docente (identica experiencia: seleccion
+         todos o 1x1, filtros rol/cargo/buscar, seleccionar/limpiar, limite 40,
+         validacion sin telefono v206 wrapper rojo dashed + toast click).
+         Permite al Director enviar comunicado general a todo el Staff sin
+         salir de la pantalla Comunicado.
+         ================================================================ -->
+    <div id="com-tabs" style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-primary com-tab-btn" data-target="ALUMNOS" onclick="comSetTarget('ALUMNOS')" style="justify-content:center;">🎓 Alumnos (Apoderados)</button>
+      <button class="btn btn-ghost   com-tab-btn" data-target="STAFF"   onclick="comSetTarget('STAFF')"   style="justify-content:center;">👨‍🏫 Personal / Staff</button>
+    </div>
+
+    <div id="com-filtros-alumnos" style="display:block;">
+      <div class="card com-toolbar" style="padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Nivel:</label>
+          <select id="com-nivel" onchange="onComNivelChange()" style="min-width:140px;">
+            <option value="">Todos</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Grado:</label>
+          <select id="com-grado" onchange="onComGradoChange()" disabled style="min-width:120px;opacity:0.45;">
+            <option value="">Todos</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Sección:</label>
+          <select id="com-seccion" onchange="renderComLista()" disabled style="min-width:120px;opacity:0.45;">
+            <option value="">Todas</option>
+          </select>
+        </div>
+        <div style="width:1px;height:20px;background:var(--border);flex-shrink:0;"></div>
+        <div style="flex:1;min-width:190px;">
+          <input id="com-search" type="text" placeholder="Buscar alumno..." oninput="renderComLista()"
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-family:var(--font-body);font-size:0.82rem;">
+        </div>
+        <div id="com-aula-all-wrap" style="display:none;align-items:center;gap:6px;">
+          <input type="checkbox" id="com-aula-all" onchange="comToggleAllAula(this)">
+          <span style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Marcar todos (aula)</span>
+        </div>
+        <button class="btn btn-ghost" onclick="comSelectAllFiltrados()" style="font-size:0.78rem;padding:5px 10px;">Seleccionar</button>
+        <button class="btn btn-ghost" onclick="comLimpiarComunicado()" style="font-size:0.78rem;padding:5px 10px;">✕ Limpiar</button>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
+          <div style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Seleccionados: <b id="com-count">0</b>/40</div>
+        </div>
       </div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <label style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Grado:</label>
-        <select id="com-grado" onchange="onComGradoChange()" disabled style="min-width:120px;opacity:0.45;">
-          <option value="">Todos</option>
-        </select>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <label style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Sección:</label>
-        <select id="com-seccion" onchange="renderComLista()" disabled style="min-width:120px;opacity:0.45;">
-          <option value="">Todas</option>
-        </select>
-      </div>
-      <div style="width:1px;height:20px;background:var(--border);flex-shrink:0;"></div>
-      <div style="flex:1;min-width:190px;">
-        <input id="com-search" type="text" placeholder="Buscar alumno..." oninput="renderComLista()"
-          style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-family:var(--font-body);font-size:0.82rem;">
-      </div>
-      <div id="com-aula-all-wrap" style="display:none;align-items:center;gap:6px;">
-        <input type="checkbox" id="com-aula-all" onchange="comToggleAllAula(this)">
-        <span style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Marcar todos (aula)</span>
-      </div>
-      <button class="btn btn-ghost" onclick="comSelectAllFiltrados()" style="font-size:0.78rem;padding:5px 10px;">Seleccionar</button>
-      <button class="btn btn-ghost" onclick="comLimpiarComunicado()" style="font-size:0.78rem;padding:5px 10px;">✕ Limpiar</button>
-      <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
-        <div style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Seleccionados: <b id="com-count">0</b>/40</div>
+    </div>
+
+    <div id="com-filtros-staff" style="display:none;">
+      <div class="card com-toolbar" id="com-toolbar-staff" style="padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Rol:</label>
+          <select id="com-staff-rol" onchange="renderComLista()" style="min-width:170px;">
+            <option value="">Todos los roles</option>
+            <option value="ADMIN">Administrador</option>
+            <option value="DIRECTOR">Director</option>
+            <option value="COORDINADOR">Coordinador</option>
+            <option value="PSICOLOGO">Psicólogo</option>
+            <option value="PROFESOR">Profesor</option>
+            <option value="AUXILIAR">Auxiliar</option>
+            <option value="INVITADO">Invitado</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Cargo:</label>
+          <select id="com-staff-cargo" onchange="renderComLista()" style="min-width:160px;">
+            <option value="">Todos los cargos</option>
+          </select>
+        </div>
+        <div style="width:1px;height:20px;background:var(--border);flex-shrink:0;"></div>
+        <div style="flex:1;min-width:190px;">
+          <input id="com-staff-search" type="text" placeholder="Buscar personal por nombre, correo, DNI..." oninput="renderComLista()"
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-family:var(--font-body);font-size:0.82rem;">
+        </div>
+        <div id="com-staff-all-wrap" style="display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="com-staff-all" onchange="comToggleAllStaff(this)">
+          <span style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Marcar todo el personal</span>
+        </div>
+        <button class="btn btn-ghost" onclick="comSelectAllFiltradosStaff()" style="font-size:0.78rem;padding:5px 10px;">Seleccionar</button>
+        <button class="btn btn-ghost" onclick="comLimpiarComunicado()" style="font-size:0.78rem;padding:5px 10px;">✕ Limpiar</button>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
+          <div style="font-size:0.78rem;color:var(--muted);white-space:nowrap;">Seleccionados: <b id="com-count-staff">0</b>/40</div>
+        </div>
       </div>
     </div>
 
     <div class="com-layout">
       <div class="card" style="padding:0;overflow:hidden;">
-        <div class="card-title" style="padding:14px 14px 10px;"><span class="dot"></span>Destinatarios</div>
+        <div class="card-title" id="com-card-dest-title" style="padding:14px 14px 10px;"><span class="dot"></span>Destinatarios</div>
         <div id="com-dest-wrap" style="max-height:520px;overflow:auto;">
-          <table class="table" style="width:100%;">
+          <!-- HEADER ALUMNOS (default) -->
+          <table class="table" id="com-table-alumnos" style="width:100%;">
             <thead>
               <tr>
                 <th style="width:44px;"></th>
@@ -4846,6 +4902,20 @@
             </thead>
             <tbody id="com-tbody"></tbody>
           </table>
+          <!-- HEADER STAFF (default display:none; visible al hacer tab STAFF) -->
+          <table class="table" id="com-table-staff" style="width:100%;display:none;">
+            <thead>
+              <tr>
+                <th style="width:44px;"></th>
+                <th>Nombre Completo</th>
+                <th style="width:140px;">Rol</th>
+                <th style="width:160px;">Cargo</th>
+                <th>Correo</th>
+                <th style="width:150px;">WhatsApp</th>
+              </tr>
+            </thead>
+            <tbody id="com-tbody-staff"></tbody>
+          </table>
         </div>
       </div>
 
@@ -4853,27 +4923,40 @@
         <div class="card-title"><span class="dot" style="background:var(--accent2)"></span>Mensaje</div>
         <div class="form-group" style="margin-top:10px;">
           <label>Enviar a</label>
-          <select id="com-enviar-a" onchange="onComEnviarAChange()">
-            <option value="tel1">Apoderado 1</option>
-            <option value="tel2">Apoderado 2</option>
-            <option value="ambos">Ambos</option>
-            <option value="otro">Otro número</option>
-          </select>
+          <!-- Selector segun TARGET: Alumnos 4 opc (tel1/tel2/ambos/otro). Staff solo 1 opc (su telefono) -->
+          <div id="com-enviar-a-wrap-alumnos">
+            <select id="com-enviar-a" onchange="onComEnviarAChange()">
+              <option value="tel1">Apoderado 1</option>
+              <option value="tel2">Apoderado 2</option>
+              <option value="ambos">Ambos</option>
+              <option value="otro">Otro número</option>
+            </select>
+          </div>
+          <div id="com-enviar-a-wrap-staff" style="display:none;">
+            <select id="com-enviar-a-staff" disabled style="opacity:1;color:var(--text);background:var(--surface2);">
+              <option value="staff_tel">Teléfono del Personal</option>
+            </select>
+            <div style="margin-top:4px;font-size:0.78rem;color:var(--muted);line-height:1.35;">Se usa el campo <b>Teléfono / WhatsApp</b> de la ficha de cada usuario (Ejemplo: José Aruata = 916222360).</div>
+          </div>
         </div>
         <div class="form-group" id="com-otro-wrap" style="display:none;">
           <label>Teléfono (WhatsApp)</label>
           <input id="com-otro-tel" type="text" placeholder="Ej: 999888777 o +51999888777" oninput="this.value=this.value.replace(/[^0-9+ ]/g,'')">
         </div>
         <div class="form-group">
-        <label>Título para portal (opcional)</label>
+        <label id="com-label-titulo-portal">Título para portal (opcional)</label>
         <input id="com-titulo" type="text" placeholder="Ej: Reunión de padres" style="width:100%;">
       </div>
-      <label style="display:flex;align-items:center;gap:10px;margin:8px 0 0 0;">
+      <label id="com-publicar-wrap" style="display:flex;align-items:center;gap:10px;margin:8px 0 0 0;">
         <input type="checkbox" id="com-publicar-portal" checked>
         <span style="font-size:0.82rem;color:var(--muted);">Publicar también en el Portal Apoderado</span>
       </label>
+      <label id="com-publicar-wrap-staff" style="display:none;align-items:center;gap:10px;margin:8px 0 0 0;">
+        <input type="checkbox" id="com-publicar-portal-staff">
+        <span style="font-size:0.82rem;color:var(--muted);">Publicar también en el Panel Interno del Personal (solo visible para usuarios logueados en el sistema)</span>
+      </label>
       <div class="form-group">
-          <label>Texto (puedes usar: {alumno}, {grado}, {seccion}, {nivel})</label>
+          <label id="com-label-txt-vars">Texto (puedes usar: {alumno}, {grado}, {seccion}, {nivel})</label>
           <textarea id="com-texto" rows="7" placeholder="Ej: Hola, se informa sobre {alumno}..." style="resize:vertical;"></textarea>
         </div>
         <div class="form-group">
@@ -14743,6 +14826,15 @@ let _comSel = new Set();
 let _comInit = false;
 const _COM_MAX = 40;
 const _COM_MAX_MSG = 80;
+// ================================================================
+// v207 TARGET ALUMNOS | STAFF
+// ================================================================
+let _comTarget = 'ALUMNOS';   // 'ALUMNOS' | 'STAFF'
+let _comUsuarios = [];        // lista usuarios (staff) cache (mismo schema que _usuariosCacheData)
+let _comUsuariosLoaded = false;
+let _comStaffSel = new Set(); // Set<usuario.id> seleccion STAFF. _comSel = Set<alumno.id> seleccion ALUMNOS.
+const _COM_ROL_LABEL = { ADMIN:'Administrador', DIRECTOR:'Director', COORDINADOR:'Coordinador',
+  PSICOLOGO:'Psicólogo', PROFESOR:'Profesor', AUXILIAR:'Auxiliar', INVITADO:'Invitado' };
 let _comFile = null;
 let _comMediaB64 = '';
 let _comMediaName = '';
@@ -14755,6 +14847,18 @@ let _comPreviewMime = 'image/jpeg';
 let _comPreviewBytes = 0;
 let _comPreviewW = 0;
 let _comPreviewH = 0;
+// ===== v207 Exponer variables a window (consistencia Project Memory scope let vs window) =====
+window._comAlumnos = _comAlumnos;
+window._comSel = _comSel;
+window._COM_MAX = _COM_MAX;
+window._COM_MAX_MSG = _COM_MAX_MSG;
+window._comTarget = _comTarget;
+window._comUsuarios = _comUsuarios;
+window._comUsuariosLoaded = _comUsuariosLoaded;
+window._comStaffSel = _comStaffSel;
+window._COM_ROL_LABEL = _COM_ROL_LABEL;
+window._comFile = _comFile;
+window._comMediaB64 = _comMediaB64;
 let _comSendB64 = '';
 let _comSendName = '';
 let _comSendType = 'image';
@@ -15340,7 +15444,91 @@ function _comFiltrados() {
   return rows;
 }
 
+function _renderComListaStaff() {
+  window._renderComListaStaff = _renderComListaStaff;
+  const tbody = document.getElementById('com-tbody-staff');
+  if(!tbody) return;
+  const rol   = String(document.getElementById('com-staff-rol')?.value || '').trim();
+  const cargo = String(document.getElementById('com-staff-cargo')?.value || '').trim();
+  const q     = String(document.getElementById('com-staff-search')?.value || '').trim();
+  const hayInteraccion = !!(rol || cargo || q);
+  if(!hayInteraccion) {
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Selecciona un Rol / Cargo o busca por nombre para mostrar al personal</td></tr>';
+    const cnt = document.getElementById('com-count-staff');
+    if(cnt) cnt.textContent = String(_comStaffSel.size);
+    const hc = document.getElementById('com-staff-all');
+    if(hc) { hc.checked = false; hc.indeterminate = false; }
+    return;
+  }
+  const rows = _comStaffFiltrados();
+  // Actualizar header check (marcar todo)
+  const hc = document.getElementById('com-staff-all');
+  if(hc) {
+    const totalConTel = rows.filter(u => String(u?.telefono||'').trim()).length;
+    const marcadosConTel = (Array.from(_comStaffSel)).filter(id => {
+      const u = (_comUsuarios||[]).find(x => String(x.id) === String(id));
+      return !!u && String(u.telefono||'').trim();
+    }).length;
+    if(totalConTel === 0) {
+      hc.checked = false; hc.indeterminate = false;
+    } else if(marcadosConTel === 0) {
+      hc.checked = false; hc.indeterminate = false;
+    } else if(marcadosConTel >= Math.min(totalConTel, _COM_MAX)) {
+      hc.checked = true;  hc.indeterminate = (totalConTel > _COM_MAX);
+    } else {
+      hc.checked = false; hc.indeterminate = true;
+    }
+  }
+  tbody.innerHTML = rows.map(u => {
+    const id = u.id;
+    const nombre = String(u.nombre || '').trim();
+    const tel = String(u.telefono || '').trim();
+    const correo = String(u.email || '').trim();
+    const tieneTel = !!tel;
+    const rolRaw = _normRol(u.rol);
+    const rolLbl = _COM_ROL_LABEL[rolRaw.toUpperCase()] || rolRaw || '—';
+    const cargoTxt = String(u.cargo || '').trim() || '—';
+    const checked = _comStaffSel.has(id) ? 'checked' : '';
+    // MISMA 4 capas v206 VERBATIM MOISES: disabled visual + explicacion
+    const reasonDisabled = !tieneTel ? (
+      'PERSONAL SIN TELÉFONO ASIGNADO. Este usuario NO tiene campo "Teléfono / WhatsApp" en su ficha (Configuración → Usuarios → Editar). No se le puede enviar WhatsApp. Edite su ficha y agregue el número de contacto.'
+    ) : '';
+    const telCell = tieneTel
+      ? `<td style="color:var(--muted);">${tel}</td>`
+      : `<td style="color:var(--danger);font-weight:600;" title="${reasonDisabled}">⚠ Sin teléfono asignado</td>`;
+    const titleCheck = tieneTel
+      ? 'Incluir a este miembro del personal. Se enviará el WhatsApp al número de la columna derecha.'
+      : reasonDisabled;
+    const checkHTML = tieneTel
+      ? `<input type="checkbox" ${checked} title="${titleCheck}" onchange="comToggleStaffSel('${id}', this.checked)">`
+      : `<span style="cursor:not-allowed;display:inline-block;padding:4px 8px;border-radius:4px;border:1px dashed var(--danger);background:rgba(239,68,68,0.05);" ` +
+        `title="${titleCheck}" ` +
+        `onclick="comToastSinTelefonoStaff('${encodeURIComponent(nombre)}');" ` +
+        `onmousedown="comToastSinTelefonoStaff('${encodeURIComponent(nombre)}');" ` +
+        `oncontextmenu="event.preventDefault();comToastSinTelefonoStaff('${encodeURIComponent(nombre)}');return false;">` +
+          `<input type="checkbox" ${checked} disabled title="${titleCheck}" style="pointer-events:none;margin:0;">` +
+        `</span>`;
+    return `<tr style="${!tieneTel ? 'opacity:0.6;background:rgba(239,68,68,0.03);' : ''}">
+      <td style="text-align:center;">${checkHTML}</td>
+      <td style="font-weight:700;color:var(--text);">${nombre||'—'}</td>
+      <td>${rolLbl}</td>
+      <td>${cargoTxt}</td>
+      <td style="color:var(--muted);">${correo||'—'}</td>
+      ${telCell}
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Sin resultados</td></tr>';
+  const cnt = document.getElementById('com-count-staff');
+  if(cnt) cnt.textContent = String(_comStaffSel.size);
+}
+
 function renderComLista() {
+  window.renderComLista = renderComLista;
+  // ================================================================
+  // v207 DUAL RENDER: _comTarget = 'ALUMNOS' (default, 100% original no
+  // se toca comportamiento) O 'STAFF' (Personal: usuarios/roles/cargos)
+  // ================================================================
+  if (_comTarget === 'STAFF') return _renderComListaStaff();
+
   const tbody = document.getElementById('com-tbody');
   if(!tbody) return;
   _comUpdateAulaAll();
@@ -15451,35 +15639,296 @@ function comSelectAllFiltrados() {
 }
 
 function comClearSelection() {
-  _comSel = new Set();
+  window.comClearSelection = comClearSelection;
+  if(_comTarget === 'STAFF') _comStaffSel = new Set();
+  else                        _comSel = new Set();
+  renderComLista();
+}
+
+// ================================================================
+// ✅ v207 comSetTarget(tgt): SWITCH TAB 🎓 ALUMNOS ↔ 👨‍🏫 STAFF
+// Misma pantalla, no nueva página. Limpia selecciones y filtros de
+// la otra tab cuando cambias. Carga _comUsuarios (cache usuarios
+// desde _cargarUsuariosCache) 1 vez sola 1a vez q entra a STAFF.
+// ================================================================
+async function comSetTarget(tgt) {
+  window.comSetTarget = comSetTarget;
+  const _t = String(tgt || '').toUpperCase();
+  const target = (_t === 'STAFF') ? 'STAFF' : 'ALUMNOS';
+  _comTarget = target;
+  const allBtns = Array.from(document.querySelectorAll('.com-tab-btn'));
+  allBtns.forEach(btn => {
+    const t = (btn.dataset.target || '').toUpperCase();
+    if(t === target) {
+      btn.classList.remove('btn-ghost');
+      btn.classList.add('btn-primary');
+    } else {
+      btn.classList.remove('btn-primary');
+      btn.classList.add('btn-ghost');
+    }
+  });
+  // Display filtros
+  const fA = document.getElementById('com-filtros-alumnos');
+  const fS = document.getElementById('com-filtros-staff');
+  if(fA) fA.style.display = (target === 'ALUMNOS') ? 'block' : 'none';
+  if(fS) fS.style.display = (target === 'STAFF')   ? 'block' : 'none';
+  // Tablas destinatarios
+  const tA = document.getElementById('com-table-alumnos');
+  const tS = document.getElementById('com-table-staff');
+  if(tA) tA.style.display = (target === 'ALUMNOS') ? '' : 'none';
+  if(tS) tS.style.display = (target === 'STAFF')   ? '' : 'none';
+  // Card title + page sub
+  const cardT = document.getElementById('com-card-dest-title');
+  if(cardT) {
+    cardT.innerHTML = target === 'STAFF'
+      ? '<span class="dot"></span>Personal / Destinatarios'
+      : '<span class="dot"></span>Destinatarios';
+  }
+  const pageSub = document.getElementById('com-page-sub');
+  if(pageSub) {
+    pageSub.textContent = target === 'STAFF'
+      ? 'Selecciona personal (docentes, auxiliares, directivos) y envía una imagen con texto personalizado por WhatsApp'
+      : 'Selecciona alumnos y envía una imagen con texto personalizado por WhatsApp';
+  }
+  // Enviar a: Alumnos 4 opciones; Staff solo "Teléfono Personal" (disabled info)
+  const wA = document.getElementById('com-enviar-a-wrap-alumnos');
+  const wS = document.getElementById('com-enviar-a-wrap-staff');
+  const otroWrap = document.getElementById('com-otro-wrap');
+  if(wA) wA.style.display = (target === 'ALUMNOS') ? '' : 'none';
+  if(wS) wS.style.display = (target === 'STAFF')   ? '' : 'none';
+  if(otroWrap && target === 'STAFF') otroWrap.style.display = 'none';
+  // Publicar Portal: Alumnos = Portal Apoderado; Staff = Panel Interno Personal
+  const pA = document.getElementById('com-publicar-wrap');
+  const pS = document.getElementById('com-publicar-wrap-staff');
+  if(pA) pA.style.display = (target === 'ALUMNOS') ? 'flex' : 'none';
+  if(pS) pS.style.display = (target === 'STAFF')   ? 'flex' : 'none';
+  // Labels de textarea variables (distintas)
+  const lblVars = document.getElementById('com-label-txt-vars');
+  const lblTit = document.getElementById('com-label-titulo-portal');
+  const txtArea = document.getElementById('com-texto');
+  if(lblVars) {
+    lblVars.textContent = target === 'STAFF'
+      ? 'Texto (puedes usar: {nombre}, {cargo}, {rol}, {correo})'
+      : 'Texto (puedes usar: {alumno}, {grado}, {seccion}, {nivel})';
+  }
+  if(lblTit) {
+    lblTit.textContent = target === 'STAFF'
+      ? 'Título para panel (opcional)'
+      : 'Título para portal (opcional)';
+  }
+  if(txtArea) {
+    const placeholder = target === 'STAFF'
+      ? 'Ej: Estimado {nombre} ({cargo}), se le recuerda la reunión...'
+      : 'Ej: Hola, se informa sobre {alumno}...';
+    txtArea.placeholder = placeholder;
+  }
+  // Limpiar selecciones/filtros tab destino. No mezclar estados.
+  if(target === 'STAFF') {
+    // (1) Cargar usuarios 1 sola vez
+    if(!_comUsuariosLoaded) {
+      try {
+        const arr = await _cargarUsuariosCache();
+        _comUsuarios = Array.isArray(arr) ? arr.filter(Boolean) : [];
+        _comUsuariosLoaded = true;
+      } catch(e) {
+        try { console.warn('[comunicado.staff] error cargando usuarios', e?.message||e); } catch(_) {}
+        _comUsuarios = []; _comUsuariosLoaded = true;
+      }
+      // Poblar selector "Cargos" con valores reales de la BD (no hardcodeados)
+      const selCargo = document.getElementById('com-staff-cargo');
+      if(selCargo) {
+        const setC = new Set();
+        _comUsuarios.forEach(u => { const c = String(u?.cargo || '').trim(); if(c) setC.add(c); });
+        const arr = Array.from(setC).sort((a,b)=>a.localeCompare(b));
+        selCargo.innerHTML = '<option value="">Todos los cargos</option>' +
+          arr.map(c => `<option value="${_escHtml(c)}">${_escHtml(c)}</option>`).join('');
+      }
+    }
+    _comStaffSel = new Set();
+    const s1 = document.getElementById('com-staff-rol');
+    const s2 = document.getElementById('com-staff-cargo');
+    const s3 = document.getElementById('com-staff-search');
+    const hc = document.getElementById('com-staff-all');
+    if(s1) s1.value = '';
+    if(s2) s2.value = '';
+    if(s3) s3.value = '';
+    if(hc) { hc.checked = false; hc.indeterminate = false; }
+    const cnt = document.getElementById('com-count-staff');
+    if(cnt) cnt.textContent = '0';
+  } else {
+    // ALUMNOS: limpiar sin tocar filtros si acaban de entrar.
+    _comSel = new Set();
+    // Repintar grado/seccion si existen (deberian estar llenos si initComunicado ya se ejecutó)
+    const cnt = document.getElementById('com-count');
+    if(cnt) cnt.textContent = '0';
+  }
+  renderComLista();
+}
+
+// ================================================================
+// v207 helpers: staff filtrados (por rol/cargo/buscar)
+// ================================================================
+function _comStaffFiltrados() {
+  window._comStaffFiltrados = _comStaffFiltrados;
+  const arr = Array.isArray(_comUsuarios) ? _comUsuarios : [];
+  const rUp = String(document.getElementById('com-staff-rol')?.value || '').toUpperCase();
+  const cIn = String(document.getElementById('com-staff-cargo')?.value || '').trim();
+  const q   = String(document.getElementById('com-staff-search')?.value || '').trim().toLowerCase();
+  return arr.filter(u => {
+    if(!u) return false;
+    const rolUp = _normRol(u.rol).toUpperCase();
+    if(rUp && rolUp !== rUp) return false;
+    const cargo = String(u.cargo || '').trim();
+    if(cIn && cargo !== cIn) return false;
+    if(q) {
+      const texto = [u.nombre, u.email, u.dni, u.telefono, cargo, rolUp]
+        .map(x => String(x||'').toLowerCase()).join(' ');
+      if(!texto.includes(q)) return false;
+    }
+    return true;
+  }).sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||'')));
+}
+
+// ================================================================
+// v207 STAFF HEADER CHECK "Marcar todo el personal"
+// ================================================================
+function comToggleAllStaff(chk) {
+  window.comToggleAllStaff = comToggleAllStaff;
+  if(!chk) return;
+  const rows = _comStaffFiltrados();
+  const rowsConTel = rows.filter(u => String(u?.telefono || '').trim());
+  const conTelIds = rowsConTel.map(u => u.id);
+  if(chk.checked) {
+    if(conTelIds.length === 0) {
+      toast('Ningún personal filtrado tiene teléfono asignado.','warning');
+      chk.checked = false; chk.indeterminate = false;
+      renderComLista();
+      return;
+    }
+    const max = Math.min(conTelIds.length, _COM_MAX);
+    _comStaffSel = new Set(conTelIds.slice(0, max));
+    if(conTelIds.length > _COM_MAX) {
+      toast(`Hay ${conTelIds.length} personal filtrados con teléfono. Se seleccionaron ${_COM_MAX} primeros (máximo permitido).`,'warning');
+      chk.indeterminate = true;
+    } else {
+      chk.indeterminate = false;
+    }
+  } else {
+    _comStaffSel = new Set();
+    chk.indeterminate = false;
+  }
+  renderComLista();
+}
+
+// ================================================================
+// v207 STAFF: BOTÓN "Seleccionar" (igualito a alumnos)
+// ================================================================
+function comSelectAllFiltradosStaff() {
+  window.comSelectAllFiltradosStaff = comSelectAllFiltradosStaff;
+  const rows = _comStaffFiltrados();
+  if(!rows.length) { toast('Sin resultados','warning'); return; }
+  const idsOK = rows
+    .filter(u => String(u?.telefono || '').trim())
+    .map(u => u.id);
+  if(idsOK.length === 0) {
+    toast('Ninguno de los filtrados tiene teléfono. Agregue teléfonos en Config → Usuarios.','warning');
+    _comStaffSel = new Set();
+    renderComLista();
+    return;
+  }
+  const max = Math.min(_COM_MAX, idsOK.length);
+  _comStaffSel = new Set(idsOK.slice(0, max));
+  if(idsOK.length > _COM_MAX) {
+    toast(`Personal filtrados con teléfono: ${idsOK.length}. Se seleccionaron ${max} primeros (límite 40).`,'warning');
+  } else {
+    toast(`Seleccionados ${max}.`,'success');
+  }
+  renderComLista();
+}
+
+// ================================================================
+// v207: toast wrapper reusable (mismo pattern v206 pero NOMBRE staff)
+// ================================================================
+function comToastSinTelefonoStaff(nombreEncoded) {
+  window.comToastSinTelefonoStaff = comToastSinTelefonoStaff;
+  const n = decodeURIComponent(String(nombreEncoded || '')).trim() || 'este usuario';
+  toast(`⚠ ${n}: NO TIENE TELÉFONO ASIGNADO en su ficha usuario. Para poder marcar y enviar WhatsApp a este miembro del personal: Configuración → Usuarios → Editar → completar "Teléfono / WhatsApp".`, 'warning');
+}
+
+// ================================================================
+// v207: STAFF checkbox 1x1. Con guardia final v206.
+// ================================================================
+function comToggleStaffSel(id, on) {
+  window.comToggleStaffSel = comToggleStaffSel;
+  const u = (_comUsuarios || []).find(x => x && String(x.id) === String(id));
+  if(u) {
+    const tieneTel = !!String(u.telefono || '').trim();
+    if(!tieneTel) {
+      const n = String(u.nombre || '').trim() || 'este usuario';
+      toast(`⚠ ${n}: sin teléfono asignado. No se puede agregar a la selección.`, 'warning');
+      renderComLista();
+      return;
+    }
+  }
+  if(on) {
+    if(_comStaffSel.size >= _COM_MAX) {
+      toast('Máximo ' + _COM_MAX + ' destinatarios','warning');
+      renderComLista();
+      return;
+    }
+    _comStaffSel.add(id);
+  } else {
+    _comStaffSel.delete(id);
+  }
+  const cnt = document.getElementById('com-count-staff');
+  if(cnt) cnt.textContent = String(_comStaffSel.size);
   renderComLista();
 }
 
 function comLimpiarComunicado() {
+  window.comLimpiarComunicado = comLimpiarComunicado;
   comClearSelection();
-  const nivelSel = document.getElementById('com-nivel');
-  const gradoSel = document.getElementById('com-grado');
-  const seccSel  = document.getElementById('com-seccion');
-  const search   = document.getElementById('com-search');
-  if(nivelSel) nivelSel.value = '';
-  if(gradoSel) {
-    gradoSel.value = '';
-    gradoSel.innerHTML = '<option value="">Todos</option>';
-    gradoSel.disabled = true;
-    gradoSel.style.opacity = '0.45';
+  if(_comTarget === 'ALUMNOS') {
+    const nivelSel = document.getElementById('com-nivel');
+    const gradoSel = document.getElementById('com-grado');
+    const seccSel  = document.getElementById('com-seccion');
+    const search   = document.getElementById('com-search');
+    if(nivelSel) nivelSel.value = '';
+    if(gradoSel) {
+      gradoSel.value = '';
+      gradoSel.innerHTML = '<option value="">Todos</option>';
+      gradoSel.disabled = true;
+      gradoSel.style.opacity = '0.45';
+    }
+    if(seccSel) {
+      seccSel.value = '';
+      seccSel.innerHTML = '<option value="">Todas</option>';
+      seccSel.disabled = true;
+      seccSel.style.opacity = '0.45';
+    }
+    if(search) search.value = '';
+    const enviarA = document.getElementById('com-enviar-a');
+    if(enviarA) enviarA.value = 'tel1';
+    onComEnviarAChange();
+  } else {
+    // STAFF limpiar filtros
+    const r = document.getElementById('com-staff-rol');
+    const c = document.getElementById('com-staff-cargo');
+    const s = document.getElementById('com-staff-search');
+    const h = document.getElementById('com-staff-all');
+    if(r) r.value = '';
+    if(c) c.value = '';
+    if(s) s.value = '';
+    if(h) { h.checked = false; h.indeterminate = false; }
   }
-  if(seccSel) {
-    seccSel.value = '';
-    seccSel.innerHTML = '<option value="">Todas</option>';
-    seccSel.disabled = true;
-    seccSel.style.opacity = '0.45';
-  }
-  if(search) search.value = '';
-  const enviarA = document.getElementById('com-enviar-a');
-  if(enviarA) enviarA.value = 'tel1';
-  onComEnviarAChange();
   const texto = document.getElementById('com-texto');
   if(texto) texto.value = '';
+  const titulo = document.getElementById('com-titulo');
+  if(titulo) titulo.value = '';
+  const pA = document.getElementById('com-publicar-portal');
+  const pS = document.getElementById('com-publicar-portal-staff');
+  if(pA) pA.checked = true;
+  if(pS) pS.checked = false;
   const status = document.getElementById('com-status');
   if(status) status.textContent = '';
   const file = document.getElementById('com-img');
@@ -15749,6 +16198,25 @@ function _comMsg(tpl, a) {
     .replaceAll('{nivel}', String(_labelNivelLargoAlumno(a) || a.turno || ''));
 }
 
+// ================================================================
+// v207: _comMsgStaff (tpl variables para STAFF): {nombre} {cargo} {rol} {correo}
+// ================================================================
+function _comMsgStaff(tpl, u) {
+  window._comMsgStaff = _comMsgStaff;
+  const nombre = String(u?.nombre || '').trim();
+  const cargo = String(u?.cargo || '').trim();
+  const rolRaw = _normRol(u?.rol);
+  const rol = _COM_ROL_LABEL[rolRaw.toUpperCase()] || rolRaw || '';
+  const correo = String(u?.email || '').trim();
+  return String(tpl||'')
+    .replaceAll('{nombre}', nombre)
+    .replaceAll('{cargo}', cargo)
+    .replaceAll('{rol}', rol)
+    .replaceAll('{correo}', correo)
+    // backwards: por si acaso user escribe {alumno} en tab staff por error.
+    .replaceAll('{alumno}', nombre);
+}
+
 async function _publicarComunicadosPortal(rows, titulo, tpl) {
   try {
     const t = String(titulo || '').trim();
@@ -15807,38 +16275,125 @@ async function _publicarComunicadosPortal(rows, titulo, tpl) {
   }
 }
 
+// ================================================================
+// v207: STAFF Panel Interno (NO debe mezclarse con Portal Apoderado)
+//   -> nueva coleccion firestore "comunicados_staff"
+//   = 1 documento por cada usuario del staff seleccionado.
+//   = con campos usuarioId, rol, cargo, correo; NO alumnoId/grado/seccion.
+// ================================================================
+async function _publicarComunicadosStaffPortal(rows, titulo, tpl) {
+  window._publicarComunicadosStaffPortal = _publicarComunicadosStaffPortal;
+  try {
+    const t = String(titulo || '').trim();
+    const titleFinal = t ? t : 'Comunicado Interno Personal';
+    let ok = 0, failed = 0;
+    let lastErr = '';
+    const autor = String(document.getElementById('user-name-display')?.textContent || '').trim() || (currentUser?.email || '');
+    for (const u of (rows || [])) {
+      const detalle = _comMsgStaff(tpl, u);
+      try {
+        const payload = {
+          usuarioId: u.id,
+          rol: String(u?.rol || ''),
+          cargo: String(u?.cargo || ''),
+          email: String(u?.email || ''),
+          telefono: String(u?.telefono || ''),
+          titulo: titleFinal,
+          detalle: detalle || '',
+          createdBy: (currentUser && currentUser.uid) ? currentUser.uid : null,
+          createdByName: autor || '',
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          adjuntoTipo: _comAdjTipo || null,
+          adjuntoNombre: _comAdjNombre || null,
+          adjuntoMime: _comAdjMime || null,
+          adjuntoBytes: _comAdjBytes || null,
+          adjuntoPaginas: _comAdjPaginas || null,
+          previewMime: _comPreviewMime || 'image/jpeg',
+          previewBytes: _comPreviewBytes || null,
+          previewW: _comPreviewW || null,
+          previewH: _comPreviewH || null,
+          previewBase64: _comMediaB64 || null,
+        };
+        try {
+          await db.collection('comunicados_staff').add(payload);
+        } catch(e0) {
+          const msg = String(e0?.message || e0 || '');
+          if(/created_by_name/i.test(msg)) {
+            delete payload.createdByName;
+            await db.collection('comunicados_staff').add(payload);
+          } else {
+            throw e0;
+          }
+        }
+        ok++;
+      } catch (e1) {
+        failed++;
+        lastErr = e1?.message || String(e1);
+      }
+    }
+    if (failed) toast(`Aviso: publicados panel staff ${ok}, sin permiso ${failed}` + (lastErr ? ` (${lastErr})` : ''), 'warning');
+    else toast(`✅ Publicado en Panel Interno Personal: ${ok}`, 'success');
+  } catch(e) {
+    toast('Aviso: no se pudo publicar en Panel Interno (' + (e?.message || String(e)) + ')', 'warning');
+  }
+}
+
 async function enviarComunicado() {
+  window.enviarComunicado = enviarComunicado;
   const btn = document.getElementById('com-btn-enviar');
   const st = document.getElementById('com-status');
-  if(_comSel.size < 1) { toast('Selecciona al menos un alumno','warning'); return; }
-  if(_comSel.size > _COM_MAX) { toast('Máximo ' + _COM_MAX + ' destinatarios','warning'); return; }
+  const TARGET = String(_comTarget || '').toUpperCase();
+  const esStaff = TARGET === 'STAFF';
+  if(esStaff) {
+    if(_comStaffSel.size < 1) { toast('Selecciona al menos 1 miembro del personal','warning'); return; }
+    if(_comStaffSel.size > _COM_MAX) { toast('Máximo ' + _COM_MAX + ' destinatarios','warning'); return; }
+  } else {
+    if(_comSel.size < 1) { toast('Selecciona al menos un alumno','warning'); return; }
+    if(_comSel.size > _COM_MAX) { toast('Máximo ' + _COM_MAX + ' destinatarios','warning'); return; }
+  }
   const tpl = (document.getElementById('com-texto').value||'').trim();
   const tituloPortal = String(document.getElementById('com-titulo')?.value || '').trim();
-  const publicarPortal = !!document.getElementById('com-publicar-portal')?.checked;
+  const publicarPortalAlumnos = !!document.getElementById('com-publicar-portal')?.checked;
+  const publicarPortalStaff   = !!document.getElementById('com-publicar-portal-staff')?.checked;
   if(!tpl) { toast('Escribe el mensaje','warning'); return; }
   if(!_comFile || !_comSendB64) { toast('Sube 1 imagen o 1 PDF','warning'); return; }
   try {
     if(btn) { btn.disabled = true; btn.style.opacity = '0.75'; }
     if(st) st.textContent = 'Preparando envío...';
-    const enviarA = document.getElementById('com-enviar-a').value;
-    const otroTel = (document.getElementById('com-otro-tel')?.value || '').trim();
-    const rows = (_comAlumnos||[]).filter(a=>_comSel.has(a.id));
     const items = [];
-    rows.forEach(a=>{
-      const msg = _waEncabezado() + '\n\n' + _comMsg(tpl, a) + _waPie();
-      const tel1 = (a.telefono||'').trim();
-      const tel2 = (a.telefono2||'').trim();
-      if(enviarA === 'tel1' && tel1) items.push({ telefono: tel1, mensaje: msg });
-      if(enviarA === 'tel2' && tel2) items.push({ telefono: tel2, mensaje: msg });
-      if(enviarA === 'ambos') {
-        if(tel1) items.push({ telefono: tel1, mensaje: msg });
-        if(tel2 && tel2.replace(/\D/g,'').slice(-9) !== tel1.replace(/\D/g,'').slice(-9)) items.push({ telefono: tel2, mensaje: msg });
-      }
-      if(enviarA === 'otro' && otroTel) items.push({ telefono: otroTel, mensaje: msg });
-    });
+    let rows = [];
+    const otroTel = (document.getElementById('com-otro-tel')?.value || '').trim();
+    if(esStaff) {
+      rows = (_comUsuarios||[]).filter(u => _comStaffSel.has(u.id));
+      rows.forEach(u => {
+        const msg = _waEncabezado() + '\n\nCOMUNICADO INTERNO (Personal)\n\n' + _comMsgStaff(tpl, u) + _waPie();
+        const tel = String(u?.telefono || '').trim();
+        if(tel) items.push({ telefono: tel, mensaje: msg });
+      });
+    } else {
+      const enviarA = document.getElementById('com-enviar-a').value;
+      rows = (_comAlumnos||[]).filter(a=>_comSel.has(a.id));
+      rows.forEach(a=>{
+        const msg = _waEncabezado() + '\n\n' + _comMsg(tpl, a) + _waPie();
+        const tel1 = (a.telefono||'').trim();
+        const tel2 = (a.telefono2||'').trim();
+        if(enviarA === 'tel1' && tel1) items.push({ telefono: tel1, mensaje: msg });
+        if(enviarA === 'tel2' && tel2) items.push({ telefono: tel2, mensaje: msg });
+        if(enviarA === 'ambos') {
+          if(tel1) items.push({ telefono: tel1, mensaje: msg });
+          if(tel2 && tel2.replace(/\D/g,'').slice(-9) !== tel1.replace(/\D/g,'').slice(-9)) items.push({ telefono: tel2, mensaje: msg });
+        }
+        if(enviarA === 'otro' && otroTel) items.push({ telefono: otroTel, mensaje: msg });
+      });
+      const limite = (enviarA === 'ambos') ? _COM_MAX_MSG : _COM_MAX;
+      if(items.length > limite) { toast(`Demasiados mensajes (${items.length}). Máximo ${limite}.`, 'warning'); return; }
+    }
     if(!items.length) { toast('No hay teléfonos válidos para enviar','warning'); return; }
-    const limite = (enviarA === 'ambos') ? _COM_MAX_MSG : _COM_MAX;
-    if(items.length > limite) { toast(`Demasiados mensajes (${items.length}). Máximo ${limite}.`, 'warning'); return; }
+    if(!esStaff) {
+      // ALUMNOS límite = ya revisado arriba. Si hay overflow no repetir warning doble.
+    } else {
+      if(items.length > _COM_MAX) { toast(`Demasiados mensajes (${items.length}). Máximo ${_COM_MAX}.`, 'warning'); return; }
+    }
     const { data: { session } } = await _sb.auth.getSession();
     const jwt = session?.access_token;
     if(!jwt) { toast('Inicia sesión para enviar WhatsApp','warning'); return; }
@@ -15863,8 +16418,11 @@ async function enviarComunicado() {
     const fail = results.length - ok;
     if(st) st.textContent = `Envío terminado: ${ok} ok, ${fail} fallos`;
     toast(`📢 Comunicado: ${ok} ok, ${fail} fallos`, fail ? 'warning' : 'success');
-    if(publicarPortal) {
+    if(!esStaff && publicarPortalAlumnos) {
       await _publicarComunicadosPortal(rows, tituloPortal, tpl);
+    }
+    if(esStaff && publicarPortalStaff) {
+      await _publicarComunicadosStaffPortal(rows, tituloPortal, tpl);
     }
   } catch(e) {
     toast('❌ Error: ' + e.message, 'error');
