@@ -4909,8 +4909,7 @@
                 <th style="width:44px;"></th>
                 <th>Nombre Completo</th>
                 <th style="width:140px;">Rol</th>
-                <th style="width:160px;">Cargo</th>
-                <th>Correo</th>
+                <th style="width:180px;">Cargo</th>
                 <th style="width:150px;">WhatsApp</th>
               </tr>
             </thead>
@@ -6576,6 +6575,10 @@ function _normRol(r) {
   const v = String(r || '').trim().toLowerCase();
   if(v === 'portero') return 'auxiliar';
   return v;
+}
+function _esTelPeruValido(t) {
+  const v = String(t || '').trim().replace(/\D/g, '');
+  return /^9\d{8}$/.test(v);
 }
 function _isDocenteAula() {
   // 2026-08-20: Ampliado al MAXIMO (no falla por cargo estandarizado).
@@ -15457,7 +15460,7 @@ function _renderComListaStaff() {
   const haySelPendiente = !!( (_comStaffSel && _comStaffSel.size > 0) || (typeof window !== 'undefined' && window._comStaffSel && window._comStaffSel.size > 0) );
   const hayInteraccion = !!(rol || cargo || q || hayDatosEnMemoria || haySelPendiente);
   if(!hayInteraccion) {
-    tbody.innerHTML = '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Cargando personal...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="padding:14px;color:var(--muted);text-align:center;">Cargando personal...</td></tr>';
     const cnt = document.getElementById('com-count-staff');
     if(cnt) cnt.textContent = String(_comStaffSel ? _comStaffSel.size : (window._comStaffSel ? window._comStaffSel.size : 0));
     const hc = document.getElementById('com-staff-all');
@@ -15490,41 +15493,49 @@ function _renderComListaStaff() {
   tbody.innerHTML = rows.map(u => {
     const id = u.id;
     const nombre = String(u.nombre || '').trim();
-    const tel = String(u.telefono || '').trim();
-    const correo = String(u.email || '').trim();
-    const tieneTel = !!tel;
+    const telRaw = String(u.telefono || '').trim();
+    const telLimpio = telRaw.replace(/\D/g, '');
+    const valido = _esTelPeruValido(telLimpio);
+    const vacio = !telLimpio;
     const rolRaw = _normRol(u.rol);
     const rolLbl = _COM_ROL_LABEL[rolRaw.toUpperCase()] || rolRaw || '—';
     const cargoTxt = String(u.cargo || '').trim() || '—';
     const checked = _comStaffSel.has(id) ? 'checked' : '';
-    // MISMA 4 capas v206 VERBATIM MOISES: disabled visual + explicacion
-    const reasonDisabled = !tieneTel ? (
-      'PERSONAL SIN TELÉFONO ASIGNADO. Este usuario NO tiene campo "Teléfono / WhatsApp" en su ficha (Configuración → Usuarios → Editar). No se le puede enviar WhatsApp. Edite su ficha y agregue el número de contacto.'
-    ) : '';
-    const telCell = tieneTel
-      ? `<td style="color:var(--muted);">${tel}</td>`
-      : `<td style="color:var(--danger);font-weight:600;" title="${reasonDisabled}">⚠ Sin teléfono asignado</td>`;
-    const titleCheck = tieneTel
-      ? 'Incluir a este miembro del personal. Se enviará el WhatsApp al número de la columna derecha.'
-      : reasonDisabled;
-    const checkHTML = tieneTel
-      ? `<input type="checkbox" ${checked} title="${titleCheck}" onchange="comToggleStaffSel('${id}', this.checked)">`
-      : `<span style="cursor:not-allowed;display:inline-block;padding:4px 8px;border-radius:4px;border:1px dashed var(--danger);background:rgba(239,68,68,0.05);" ` +
-        `title="${titleCheck}" ` +
-        `onclick="comToastSinTelefonoStaff('${encodeURIComponent(nombre)}');" ` +
-        `onmousedown="comToastSinTelefonoStaff('${encodeURIComponent(nombre)}');" ` +
-        `oncontextmenu="event.preventDefault();comToastSinTelefonoStaff('${encodeURIComponent(nombre)}');return false;">` +
-          `<input type="checkbox" ${checked} disabled title="${titleCheck}" style="pointer-events:none;margin:0;">` +
-        `</span>`;
-    return `<tr style="${!tieneTel ? 'opacity:0.6;background:rgba(239,68,68,0.03);' : ''}">
+    // ================================================================
+    // ✅ v207d REGLA MOISES STAFF VERBATIM (DIFERENTE A ALUMNOS):
+    //   "celulares en peru todos empiezan en 9 y todos tienen 9 digitos
+    //    si alguno de estos no coincide con eso debera estar desbloqueado
+    //    paar q se le encie msjs"
+    //   CONSECUENCIA: STAFF NUNCA disabled. TODO checkbox HABILITADO.
+    //   Solo advertencia visual SUAVE en celda WhatsApp si:
+    //   (a) VACIO (sin telefono): texto "Sin asignar" color warning
+    //   (b) INVALIDO (no empieza 9 o <9/>9 dígitos): texto amarillo warning
+    //   NINGUNO => wrapper rojo / disabled / toast ciego. TODO permitido enviar.
+    //   (Alumnos v206 se mantienen INTACTOS: wrapper rojo + disabled + toast)
+    // ================================================================
+    let telCell;
+    if(valido) {
+      telCell = `<td style="color:var(--muted);" title="Teléfono peruano válido (9 dígitos, empieza en 9). Compatible WhatsApp.">${telRaw}</td>`;
+    } else if(vacio) {
+      telCell = `<td style="color:var(--warning);font-weight:600;" title="Sin teléfono asignado en la ficha usuario. PERO SI ESTÁ HABILITADO para enviar (configuración Moises).">⚠ Sin asignar</td>`;
+    } else {
+      telCell = `<td style="color:var(--warning);font-weight:600;" title="Formato inválido (Perú = 9 dígitos empieza con 9). PERO SI ESTÁ HABILITADO para enviar (configuración Moises).">⚠ Inválido: ${telRaw || '—'}</td>`;
+    }
+    const titleCheck = valido
+      ? 'Incluir a este miembro del personal. Número válido Perú (9xxxxxxx).'
+      : vacio
+        ? 'Incluir a este miembro del personal. Sin teléfono asignado (permitido enviar).'
+        : 'Incluir a este miembro del personal. Número formato inválido PERO PERMITIDO enviar.';
+    const checkHTML = `<input type="checkbox" ${checked} title="${titleCheck}" onchange="comToggleStaffSel('${id}', this.checked)">`;
+    const trStyle = valido ? '' : 'background:rgba(245,158,11,0.04);';
+    return `<tr style="${trStyle}">
       <td style="text-align:center;">${checkHTML}</td>
       <td style="font-weight:700;color:var(--text);">${nombre||'—'}</td>
       <td>${rolLbl}</td>
       <td>${cargoTxt}</td>
-      <td style="color:var(--muted);">${correo||'—'}</td>
       ${telCell}
     </tr>`;
-  }).join('') || '<tr><td colspan="6" style="padding:14px;color:var(--muted);text-align:center;">Sin resultados</td></tr>';
+  }).join('') || '<tr><td colspan="5" style="padding:14px;color:var(--muted);text-align:center;">Sin resultados</td></tr>';
   try { window._comStaffSel = _comStaffSel; } catch(_) {}
   const cnt = document.getElementById('com-count-staff');
   const selSize = _comStaffSel ? _comStaffSel.size : 0;
@@ -15817,20 +15828,19 @@ function comToggleAllStaff(chk) {
     }
   } catch(_) {}
   const rows = _comStaffFiltrados();
-  const rowsConTel = rows.filter(u => String(u?.telefono || '').trim());
-  const conTelIds = rowsConTel.map(u => u.id);
+  const todosIds = rows.filter(Boolean).map(u => u.id);
   if(chk.checked) {
-    if(conTelIds.length === 0) {
-      toast('Ningún personal filtrado tiene teléfono asignado.','warning');
+    if(todosIds.length === 0) {
+      toast('Sin personal filtrado.','warning');
       chk.checked = false; chk.indeterminate = false;
       renderComLista();
       return;
     }
-    const max = Math.min(conTelIds.length, _COM_MAX);
-    _comStaffSel = new Set(conTelIds.slice(0, max));
+    const max = Math.min(todosIds.length, _COM_MAX);
+    _comStaffSel = new Set(todosIds.slice(0, max));
     try { window._comStaffSel = _comStaffSel; } catch(_) {}
-    if(conTelIds.length > _COM_MAX) {
-      toast(`Hay ${conTelIds.length} personal filtrados con teléfono. Se seleccionaron ${_COM_MAX} primeros (máximo permitido).`,'warning');
+    if(todosIds.length > _COM_MAX) {
+      toast(`Hay ${todosIds.length} personal filtrado. Se seleccionaron ${_COM_MAX} primeros (máximo permitido).`,'warning');
       chk.indeterminate = true;
     } else {
       chk.indeterminate = false;
@@ -15857,21 +15867,12 @@ function comSelectAllFiltradosStaff() {
   } catch(_) {}
   const rows = _comStaffFiltrados();
   if(!rows.length) { toast('Sin resultados','warning'); return; }
-  const idsOK = rows
-    .filter(u => String(u?.telefono || '').trim())
-    .map(u => u.id);
-  if(idsOK.length === 0) {
-    toast('Ninguno de los filtrados tiene teléfono. Agregue teléfonos en Config → Usuarios.','warning');
-    _comStaffSel = new Set();
-    try { window._comStaffSel = _comStaffSel; } catch(_) {}
-    renderComLista();
-    return;
-  }
-  const max = Math.min(_COM_MAX, idsOK.length);
-  _comStaffSel = new Set(idsOK.slice(0, max));
+  const idsTodos = rows.filter(Boolean).map(u => u.id);
+  const max = Math.min(_COM_MAX, idsTodos.length);
+  _comStaffSel = new Set(idsTodos.slice(0, max));
   try { window._comStaffSel = _comStaffSel; } catch(_) {}
-  if(idsOK.length > _COM_MAX) {
-    toast(`Personal filtrados con teléfono: ${idsOK.length}. Se seleccionaron ${max} primeros (límite 40).`,'warning');
+  if(idsTodos.length > _COM_MAX) {
+    toast(`Personal filtrado: ${idsTodos.length}. Se seleccionaron ${max} primeros (límite 40).`,'warning');
   } else {
     toast(`Seleccionados ${max}.`,'success');
   }
@@ -15899,16 +15900,6 @@ function comToggleStaffSel(id, on) {
       _comUsuariosLoaded = true;
     }
   } catch(_) {}
-  const u = (_comUsuarios || []).find(x => x && String(x.id) === String(id));
-  if(u) {
-    const tieneTel = !!String(u.telefono || '').trim();
-    if(!tieneTel) {
-      const n = String(u.nombre || '').trim() || 'este usuario';
-      toast(`⚠ ${n}: sin teléfono asignado. No se puede agregar a la selección.`, 'warning');
-      renderComLista();
-      return;
-    }
-  }
   if(on) {
     if(_comStaffSel.size >= _COM_MAX) {
       toast('Máximo ' + _COM_MAX + ' destinatarios','warning');
@@ -16407,11 +16398,28 @@ async function enviarComunicado() {
     const otroTel = (document.getElementById('com-otro-tel')?.value || '').trim();
     if(esStaff) {
       rows = (_comUsuarios||[]).filter(u => _comStaffSel.has(u.id));
+      // ================================================================
+      // ✅ v207d MOISES STAFF VERBATIM: inválidos/sin validez PERU DESBLOQUEADO.
+      // Enviar SIEMPRE que exista algún texto (no vacío), incluso si NO
+      // cumple /^9\d{8}$/ (Moises lo requiere explicitamente desbloqueado).
+      // Solo se omiten los que tienen campo VACIO (no hay numero destinatario).
+      // ================================================================
+      let omitidosVacios = 0;
       rows.forEach(u => {
         const msg = _waEncabezado() + '\n\nCOMUNICADO INTERNO (Personal)\n\n' + _comMsgStaff(tpl, u) + _waPie();
         const tel = String(u?.telefono || '').trim();
-        if(tel) items.push({ telefono: tel, mensaje: msg });
+        if(tel) {
+          items.push({ telefono: tel, mensaje: msg });
+        } else {
+          omitidosVacios++;
+        }
       });
+      if(omitidosVacios > 0 && items.length > 0) {
+        toast(`${omitidosVacios} personal sin campo teléfono se omitieron (el resto se enviará).`,'info');
+      } else if(omitidosVacios > 0 && items.length === 0) {
+        // Nadie tiene teléfono: warning pero seguir intentando (Moises dice desbloqueado)
+        toast('Ninguno del personal seleccionado tiene teléfono en su ficha.','warning');
+      }
     } else {
       const enviarA = document.getElementById('com-enviar-a').value;
       rows = (_comAlumnos||[]).filter(a=>_comSel.has(a.id));
@@ -16430,7 +16438,16 @@ async function enviarComunicado() {
       const limite = (enviarA === 'ambos') ? _COM_MAX_MSG : _COM_MAX;
       if(items.length > limite) { toast(`Demasiados mensajes (${items.length}). Máximo ${limite}.`, 'warning'); return; }
     }
-    if(!items.length) { toast('No hay teléfonos válidos para enviar','warning'); return; }
+    if(!items.length) {
+      if(esStaff) {
+        toast('No hay teléfonos cargados en el personal seleccionado. Revisar fichas en Configuración → Usuarios.','warning');
+        // Moises dice DESBLOQUEADO: no return aqui, pero sin items no hay nada que enviar.
+        return;
+      } else {
+        toast('No hay teléfonos válidos para enviar','warning');
+        return;
+      }
+    }
     if(!esStaff) {
       // ALUMNOS límite = ya revisado arriba. Si hay overflow no repetir warning doble.
     } else {
