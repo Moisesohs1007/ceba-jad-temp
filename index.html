@@ -22514,8 +22514,17 @@ async function generarAlertasAsistencia() {
     if(btnGen) btnGen.disabled = true;
     if(btnXls) btnXls.disabled = true;
     if(btnPdf) btnPdf.disabled = true;
-    const tardTh = Math.max(1, parseInt(document.getElementById(prefix + '-alert-tard')?.value || '3', 10) || 3);
-    const ausTh  = Math.max(1, parseInt(document.getElementById(prefix + '-alert-aus')?.value  || '3', 10) || 3);
+    const tardThEl = document.getElementById(prefix + '-alert-tard');
+    const ausThEl  = document.getElementById(prefix + '-alert-aus');
+    const tardThRaw = String(tardThEl?.value || '3');
+    const ausThRaw  = String(ausThEl?.value || '3');
+    const tardTh = Math.max(1, parseInt(tardThRaw, 10) || 3);
+    const ausTh  = Math.max(1, parseInt(ausThRaw, 10) || 3);
+    // ✅ MOISES: MOSTRAR VALORES REALES (sin conjeturas):
+    //  - Muestro en el status + toast EXTRA INFO para que MOISES pueda COMPRUEBE que lee el input actual:
+    const modoCalc = (() => { const cfg = typeof configCache !== 'undefined' ? configCache : (typeof window !== 'undefined' ? window._cfg : null); try { if(cfg) { const v = String(cfg.tipo_colegio || cfg.modalidad || cfg.nombre_colegio || '').toUpperCase(); if(v.includes('EBR') && !v.includes('CEBA') && !v.includes('EBA')) return 'L-V (EBR)'; if(v.includes('CEBA') || v.includes('EBA')) return 'L-D (CEBA)'; } } catch(_){} return 'L-D (CEBA)';})();
+    if(status) status.textContent = `💡 Valores: Tard ≥ ${tardTh} · Fal ≥ ${ausTh} · Días: ${modoCalc}. Cargando alumnos...`;
+    toast(`💡 Valores que usa el código: Tard ≥ ${tardTh} · Fal ≥ ${ausTh} · Días: ${modoCalc}. Si esto NO coincide con lo que escribiste → refresca (Ctrl+F5) y avísame.`, 'info');
     const mesSel = (prefix === 'al'
       ? (document.getElementById('al-mes-select')?.value || mesActual())
       : (document.getElementById('rep-mes-select')?.value || mesActual())
@@ -22958,6 +22967,23 @@ async function enviarWhatsAppAlertaAsistencia(alumnoId) {
       return s.slice(8,10) + '/' + s.slice(5,7);
     };
     const _compact = (arr, max = 16) => arr.length <= max ? arr.join(', ') : (arr.slice(0, max).join(', ') + ` … (+${arr.length - max})`);
+    // ================================================================
+    // ✅ MOISES FIX: Mismo cálculo de días que generarAlertasAsistencia.
+    //   CEBA / EBA = TODOS los días (Sábado y Domingo incluidos).
+    //   NO USAR más el patrón viejo L-V que desincronizaba el mensaje
+    //   de WhatsApp con lo que la tabla mostraba.
+    // ================================================================
+    const _alertasIncluyeFinesSemana = (() => {
+      try {
+        const cfg = typeof configCache !== 'undefined' ? configCache : (typeof window !== 'undefined' ? window._cfg : null);
+        if (cfg) {
+          const v = String(cfg.tipo_colegio || cfg.modalidad || cfg.nombre_colegio || '').toUpperCase();
+          if (v.includes('EBR') && !v.includes('CEBA') && !v.includes('EBA')) return false;
+          if (v.includes('CEBA') || v.includes('EBA')) return true;
+        }
+      } catch(_){}
+      return true;
+    })();
     const _buildBusinessDays = (startIso, endIso) => {
       const s = _repIsoToDate(startIso);
       const e = _repIsoToDate(endIso);
@@ -22965,6 +22991,7 @@ async function enviarWhatsAppAlertaAsistencia(alumnoId) {
       const out = [];
       for(let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
         const dow = d.getDay();
+        if(_alertasIncluyeFinesSemana) { out.push(_repDateToIso(d)); continue; }
         if(dow !== 0 && dow !== 6) out.push(_repDateToIso(d));
       }
       return out;
