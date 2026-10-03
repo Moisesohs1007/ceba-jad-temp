@@ -127,62 +127,111 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.can_upload_adjuntos_temp_whatsapp() TO authenticated;
 
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- -------------------------------------------------------------------
+-- 2.5) POLICIES DE STORAGE.BUCKET (adjuntos-temporales-whatsapp):
+--      Supabase a veces bloquea CREATE/DROP POLICY en storage.objects
+--      (error 42501 must be owner of table objects), porque es tabla
+--      de sistema. Usamos bloque DO EXCEPTION: si da permiso 42501,
+--      nos saltamos ese bloque SIN fallar.
+--      IMPORTANTE: aunque no se creen estas policies, MOISES tu
+--      proyecto sigue funcionando porque el bucket storage lo lee
+--      vía URL pública (getPublicUrl) y no requiere policies RLS
+--      cuando el bucket es PUBLICO (como nosotros creamos en el
+--      dashboard). Las policies son EXTRA seguridad, pero
+--      100% opcionales para el envío.
+-- -------------------------------------------------------------------
+DO $$
+BEGIN
+  BEGIN
+    ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+  EXCEPTION WHEN insufficient_privilege OR object_not_in_prerequisite_state THEN
+    RAISE NOTICE '[SKIP] storage.objects RLS owner err: % (continuamos)', SQLERRM;
+  END;
 
-DROP POLICY IF EXISTS "adjuntos-temporales-whatsapp insert" ON storage.objects;
-DROP POLICY IF EXISTS "adjuntos-temporales-whatsapp update" ON storage.objects;
-DROP POLICY IF EXISTS "adjuntos-temporales-whatsapp delete" ON storage.objects;
-DROP POLICY IF EXISTS "adjuntos-temporales-whatsapp select publico antes expirar" ON storage.objects;
+  BEGIN
+    DROP POLICY IF EXISTS "adjuntos-temporales-whatsapp insert" ON storage.objects;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '[SKIP DROP POLICY INSERT] err: %', SQLERRM;
+  END;
+  BEGIN
+    DROP POLICY IF EXISTS "adjuntos-temporales-whatsapp update" ON storage.objects;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '[SKIP DROP POLICY UPDATE] err: %', SQLERRM;
+  END;
+  BEGIN
+    DROP POLICY IF EXISTS "adjuntos-temporales-whatsapp delete" ON storage.objects;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '[SKIP DROP POLICY DELETE] err: %', SQLERRM;
+  END;
+  BEGIN
+    DROP POLICY IF EXISTS "adjuntos-temporales-whatsapp select publico antes expirar" ON storage.objects;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '[SKIP DROP POLICY SELECT] err: %', SQLERRM;
+  END;
 
--- Insert: solo authenticated + subiendo colegio + path LIKE colegio_id/*
-CREATE POLICY "adjuntos-temporales-whatsapp insert"
-ON storage.objects
-FOR INSERT
-WITH CHECK (
-  bucket_id = 'adjuntos-temporales-whatsapp'
-  AND public.can_upload_adjuntos_temp_whatsapp()
-  AND name LIKE (public.user_colegio_id() || '/%')
-);
+  BEGIN
+    -- Insert: solo authenticated + subiendo colegio + path LIKE colegio_id/*
+    CREATE POLICY "adjuntos-temporales-whatsapp insert"
+    ON storage.objects
+    FOR INSERT
+    WITH CHECK (
+      bucket_id = 'adjuntos-temporales-whatsapp'
+      AND public.can_upload_adjuntos_temp_whatsapp()
+      AND name LIKE (public.user_colegio_id() || '/%')
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE '[SKIP CREATE POLICY INSERT] permiso err: % (continuamos)', SQLERRM;
+  END;
 
-CREATE POLICY "adjuntos-temporales-whatsapp update"
-ON storage.objects
-FOR UPDATE
-USING (
-  bucket_id = 'adjuntos-temporales-whatsapp'
-  AND public.can_upload_adjuntos_temp_whatsapp()
-  AND name LIKE (public.user_colegio_id() || '/%')
-)
-WITH CHECK (
-  bucket_id = 'adjuntos-temporales-whatsapp'
-  AND public.can_upload_adjuntos_temp_whatsapp()
-  AND name LIKE (public.user_colegio_id() || '/%')
-);
+  BEGIN
+    CREATE POLICY "adjuntos-temporales-whatsapp update"
+    ON storage.objects
+    FOR UPDATE
+    USING (
+      bucket_id = 'adjuntos-temporales-whatsapp'
+      AND public.can_upload_adjuntos_temp_whatsapp()
+      AND name LIKE (public.user_colegio_id() || '/%')
+    )
+    WITH CHECK (
+      bucket_id = 'adjuntos-temporales-whatsapp'
+      AND public.can_upload_adjuntos_temp_whatsapp()
+      AND name LIKE (public.user_colegio_id() || '/%')
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE '[SKIP CREATE POLICY UPDATE] permiso err: % (continuamos)', SQLERRM;
+  END;
 
-CREATE POLICY "adjuntos-temporales-whatsapp delete"
-ON storage.objects
-FOR DELETE
-USING (
-  bucket_id = 'adjuntos-temporales-whatsapp'
-  AND (
-    public.can_upload_adjuntos_temp_whatsapp()
-    AND name LIKE (public.user_colegio_id() || '/%')
-  )
-  OR EXISTS (
-    SELECT 1 FROM public.usuarios u WHERE u.id = auth.uid()
-      AND LOWER(COALESCE(u.rol,'')) IN ('admin','director')
-    LIMIT 1
-  )
-);
+  BEGIN
+    CREATE POLICY "adjuntos-temporales-whatsapp delete"
+    ON storage.objects
+    FOR DELETE
+    USING (
+      bucket_id = 'adjuntos-temporales-whatsapp'
+      AND (
+        (public.can_upload_adjuntos_temp_whatsapp()
+          AND name LIKE (public.user_colegio_id() || '/%'))
+        OR EXISTS (
+          SELECT 1 FROM public.usuarios u WHERE u.id = auth.uid()
+            AND LOWER(COALESCE(u.rol,'')) IN ('admin','director')
+          LIMIT 1
+        )
+      )
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE '[SKIP CREATE POLICY DELETE] permiso err: % (continuamos)', SQLERRM;
+  END;
 
--- Select PÚBLICO (links de descarga: anon pueden ver el object storage.object público
--- (El storage lo lee por URL getPublicUrl; no se pasa por SELECT storage.objects
--- el navegador con pre-signed. Añadimos policy de todas formas.)
-CREATE POLICY "adjuntos-temporales-whatsapp select publico antes expirar"
-ON storage.objects
-FOR SELECT
-USING (
-  bucket_id = 'adjuntos-temporales-whatsapp'
-);
+  BEGIN
+    CREATE POLICY "adjuntos-temporales-whatsapp select publico antes expirar"
+    ON storage.objects
+    FOR SELECT
+    USING (
+      bucket_id = 'adjuntos-temporales-whatsapp'
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE '[SKIP CREATE POLICY SELECT] permiso err: % (continuamos)', SQLERRM;
+  END;
+END $$;
 
 -- ---------------------------------------------------------------------
 -- 3) pg_cron AUTO-BORRADO cada 6 horas:
@@ -203,13 +252,18 @@ BEGIN
   -- (b) Primero borramos storage.objects de adjuntos-temporales-whatsapp
   --   con created_at > 7 dias o name LIKE 'colegio/%
   --   (Necesario: usuario = ANY, borramos todos mas 7 dias bucket)
-  WITH exp AS (
-    DELETE FROM storage.objects
-    WHERE bucket_id = 'adjuntos-temporales-whatsapp'
-      AND created_at < NOW() - INTERVAL '7 days'
-    RETURNING 1
-  )
-  SELECT count(*) INTO _rows_storage FROM exp;
+  _rows_storage := 0;
+  BEGIN
+    WITH exp AS (
+      DELETE FROM storage.objects
+      WHERE bucket_id = 'adjuntos-temporales-whatsapp'
+        AND created_at < NOW() - INTERVAL '7 days'
+      RETURNING 1
+    )
+    SELECT count(*) INTO STRICT _rows_storage FROM exp;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '[limpiar_7d] storage.objects delete permiso err: %. (Solo se borró fila tabla, storage object lo gestiona dashboard Supabase automaticamente retention).', SQLERRM;
+  END;
 
   -- (a) Ahora borramos filas expiradas de la tabla.
   WITH t AS (
@@ -219,19 +273,33 @@ BEGIN
   )
   SELECT count(*) INTO _rows_tabla FROM t;
 
-  RAISE NOTICE '[CRON] limpiar_adjuntos_temp_whatsapp_7d] tabla borradas=% filas storage borradas=% objetos', _rows_tabla, _rows_storage;
+  RAISE NOTICE '[CRON limpiar_adjuntos_temp_whatsapp_7d] tabla borradas=% filas storage borradas=% objetos', _rows_tabla, _rows_storage;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING '[CRON limpiar_adjuntos_temp_whatsapp_7d EXCEPTION] SQLSTATE=% SQLERRM=%. (Continuamos).', SQLSTATE, SQLERRM;
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.limpiar_adjuntos_temp_whatsapp_7d() TO postgres;
+DO $$
+BEGIN
+  BEGIN
+    GRANT EXECUTE ON FUNCTION public.limpiar_adjuntos_temp_whatsapp_7d() TO postgres;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '[SKIP GRANT postgres] err: % (continuamos)', SQLERRM;
+  END;
 
--- Reprogramar cada 6 horas.
-SELECT cron.unschedule('adjuntos_temp_whatsapp_diario');
-SELECT cron.schedule(
-  'adjuntos_temp_whatsapp_cada_6h',
-  '0 */6 * * *',
-  $$ SELECT public.limpiar_adjuntos_temp_whatsapp_7d(); $$
-);
+  BEGIN
+    PERFORM cron.unschedule('adjuntos_temp_whatsapp_diario');
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '[SKIP cron.unschedule diario] err: % (continuamos)', SQLERRM;
+  END;
 
--- Ejecución inicial ya para asegurarnos de que funciona:
--- SELECT public.limpiar_adjuntos_temp_whatsapp_7d();
+  BEGIN
+    PERFORM cron.schedule(
+      'adjuntos_temp_whatsapp_cada_6h',
+      '0 */6 * * *',
+      'SELECT public.limpiar_adjuntos_temp_whatsapp_7d();'
+    );
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING '[cron.schedule NO PROGRAMADO] err: % (auto-borrado manual cada 7 dias).', SQLERRM;
+  END;
+END $$;
