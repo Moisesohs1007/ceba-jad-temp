@@ -3734,7 +3734,7 @@
 
       <!-- WhatsApp Factiliza -->
       <div class="card" style="margin-bottom:20px;padding:20px 24px;">
-        <div style="font-family:var(--font-display);font-size:1rem;font-weight:700;margin-bottom:4px;color:var(--accent);">📱 WhatsApp — Factiliza</div>
+        <div id="factiliza-cfg-label" style="font-family:var(--font-display);font-size:1rem;font-weight:700;margin-bottom:4px;color:var(--accent);">📱 WhatsApp — Factiliza</div>
         <div style="color:var(--muted);font-size:0.82rem;margin-bottom:16px;">Configura tu API para enviar mensajes automáticos a los apoderados</div>
         <div class="form-grid">
           <div class="form-group form-full">
@@ -13302,24 +13302,127 @@ async function guardarFactiliza() {
   const instancia = document.getElementById('factiliza-instancia').value.trim();
   if(!token || !instancia) { toast('Completa token e instancia','warning'); return; }
   try {
-    await db.collection('config').doc('factiliza').set({ token, instancia });
-    toast('✅ Configuración WhatsApp guardada','success');
+    // ================================================================
+    // ✅ v207g MOISES FIX ROOT CAUSE: FUENTE DE VERDAD = SQL TABLA COLEGIOS
+    // Anteriormente se guardaba SOLO en Firestore config/factiliza,
+    // PERO los Edge Functions (enviar-whatsapp, enviar-comunicado, cron)
+    // LEEN DESDE SQL TABLA COLEGIOS → columnas factiliza_token /
+    // factiliza_instancia. Ahora guardamos PRIMERO en SQL via RPC
+    // set_whatsapp_config (rol=admin colegio coincide). Como respaldo
+    // también copiamos a Firestore (legacy) para NO romper otros usos.
+    // ================================================================
+    const colegioId = (typeof getCurrentUserColegioId === 'function')
+      ? (getCurrentUserColegioId() || '')
+      : String((currentUser && currentUser.app_metadata && currentUser.app_metadata.colegio_id) || '');
+    if(!colegioId) { toast('No se detectó colegio del usuario','error'); return; }
+    try {
+      const { error: rpcErr } = await _sb.rpc('set_whatsapp_config', {
+        p_colegio_id: String(colegioId),
+        p_token: String(token),
+        p_instancia: String(instancia),
+      });
+      if(rpcErr) {
+        console.warn('[guardarFactiliza] RPC SQL falló, intento direct update.', rpcErr);
+        // FALLBACK direct UPDATE Supabase (si RLS colegios_write lo permite: admin)
+        const { error: updateErr } = await _sb
+          .from('colegios')
+          .update({ factiliza_token: String(token), factiliza_instancia: String(instancia) })
+          .eq('id', String(colegioId));
+        if(updateErr) throw new Error(`SQL update falló (RPC ${rpcErr.message} / Update ${updateErr.message})`);
+      }
+    } catch(eSQL) {
+      toast('Error al guardar en BD SQL: ' + (eSQL?.message || String(eSQL)),'error');
+      return;
+    }
+    // === (Legacy opcional) Copia respaldo en Firestore config/factiliza ===
+    try {
+      await db.collection('config').doc('factiliza').set({ token, instancia });
+    } catch(_eFS) { console.warn('[guardarFactiliza] Firestore respaldo falló (no crítico).', _eFS); }
+    toast('✅ Configuración WhatsApp guardada (SQL + Firestore)','success');
   } catch(e) { toast('Error al guardar: '+e.message,'error'); }
 }
 
+async function getFactilizaConfigFromSQL() {
+  try {
+    const colegioId = (typeof getCurrentUserColegioId === 'function')
+      ? (getCurrentUserColegioId() || '')
+      : String((currentUser && currentUser.app_metadata && currentUser.app_metadata.colegio_id) || '');
+    if(!colegioId) return null;
+    const { data, error } = await _sb
+      .from('colegios')
+      .select('factiliza_token, factiliza_instancia')
+      .eq('id', String(colegioId))
+      .single();
+    if(error || !data) { console.warn('[getFactilizaConfigFromSQL] falló', error); return null; }
+    return {
+      token: String(data.factiliza_token || ''),
+      instancia: String(data.factiliza_instancia || ''),
+    };
+  } catch(e) {
+    console.warn('[getFactilizaConfigFromSQL] excepción', e);
+    return null;
+  }
+}
+
 async function probarFactiliza() {
-  const token    = document.getElementById('factiliza-token').value.trim();
-  const instancia = document.getElementById('factiliza-instancia').value.trim();
+  const tokenEl    = document.getElementById('factiliza-token');
+  const instanciaEl = document.getElementById('factiliza-instancia');
+  if(!tokenEl || !instanciaEl) return;
+  const token    = tokenEl.value.trim();
+  const instancia = instanciaEl.value.trim();
   if(!token || !instancia) { toast('Completa token e instancia primero','warning'); return; }
   try {
     await guardarFactiliza();
   } catch(e) { toast('Error al guardar: '+e.message,'error'); return; }
   toast('Enviando mensaje de prueba...','info');
   const cfg = await getConfig();
-  const msg = `✅ *Conexión exitosa*\n${_waEncabezado()}\n\nLa integración WhatsApp está funcionando correctamente. 🎉${_waPie()}`;
-  const ok = await sendWhatsApp('51972898389', msg);
-  if(ok) toast('✅ Mensaje de prueba enviado correctamente','success');
-  else toast('❌ Error al enviar. Verifica token e instancia','error');
+  const msg = `✅ *Conexión exitosa*\n${_waEncabezado()}\n\nLa integración WhatsApp Factiliza está funcionando correctamente. 🎉${_waPie()}`;
+  // ---------------------------------------------------------------
+  // 🔬 v207g: Lanzamos el fetch YO MISMO (sin helper sendWhatsApp)
+  //   para capturar el BODY DEL ERROR y mostrárselo a Moises EN LA
+  //   VENTANA toast, así puede diagnosticar el problema EXACTO.
+  // ---------------------------------------------------------------
+  try {
+    const { data: { session } } = await _sb.auth.getSession();
+    const jwt = session?.access_token;
+    if(!jwt) { toast('Inicia sesión para enviar WhatsApp','warning'); return; }
+    let num = '51972898389'.replace(/[^0-9]/g, '');
+    if(num.startsWith('0')) num = num.substring(1);
+    if(num.length === 9) num = '51' + num;
+    const img = new URL('img/wa-logo.png', window.location.href).href;
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/enviar-whatsapp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${jwt}`,
+        'apikey': SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({ telefono: num, mensaje: msg, urlImagen: img })
+    });
+    const body = await res.json().catch(() => ({}));
+    if(!res.ok) {
+      const errTxt = (body && typeof body === 'object' && body.error) ? String(body.error) : ('HTTP ' + res.status);
+      let detalles = '';
+      if(body && body.factilizaStatus) detalles += ` [status Factiliza=${body.factilizaStatus}]`;
+      if(body && body.details && typeof body.details === 'object') {
+        try { detalles += ' ' + JSON.stringify(body.details).substring(0,200); } catch(_){}
+      } else if(body && body.details) {
+        detalles += ' ' + String(body.details).substring(0,200);
+      }
+      const msgFull = `❌ Error al enviar: ${errTxt}${detalles}`;
+      toast(msgFull,'error');
+      // Mostramos también en consola para Moises (si abre DevTools)
+      console.error('[probarFactiliza] Body completo del error EF:', body, 'Status HTTP EF=', res.status);
+      return false;
+    } else {
+      toast('✅ Mensaje de prueba enviado correctamente (llegará en ~1 minuto)','success');
+      return true;
+    }
+  } catch(e) {
+    toast('❌ Error conexión WhatsApp: ' + e.message, 'error');
+    console.error('[probarFactiliza] excepción:', e);
+    return false;
+  }
 }
 
 // ============================================================
@@ -30238,6 +30341,52 @@ async function onShowConfig() {
           modBadge.textContent = mod || '—';
           modBadge.style.background = mod === 'CEBA' ? '#1469ff' : mod === 'EBR' ? '#16a34a' : mod === 'EBA' ? '#f97316' : '#111';
         }
+
+        // 6) v207g MOISES FIX: Precargar inputs Token Factiliza e Instancia
+        //    DESDE SQL TABLA COLEGIOS (NO Firestore). Si no hay nada en SQL,
+        //    intentamos Firestore config/factiliza como fallback legacy. Luego
+        //    se informan los campos para que Moises vea el valor REAL que los
+        //    Edge Functions usan para enviar WhatsApp.
+        (async function precargarFactilizaConfig() {
+          try {
+            const tokInput = document.getElementById('factiliza-token');
+            const insInput = document.getElementById('factiliza-instancia');
+            if(!tokInput || !insInput) return;
+            // No sobrescribir si Moises ya está escribiendo (evitar borrar trabajo):
+            if(tokInput.value.trim() || insInput.value.trim()) return;
+            let c = null;
+            if(typeof getFactilizaConfigFromSQL === 'function') {
+              c = await getFactilizaConfigFromSQL();
+            }
+            if(!c || (!c.token && !c.instancia)) {
+              // Fallback legacy (intentamos Firestore config/factiliza):
+              try {
+                const doc = await (typeof db !== 'undefined' ? db.collection('config').doc('factiliza').get() : Promise.resolve(null));
+                if(doc && doc.exists) {
+                  const d = doc.data() || {};
+                  c = { token: String(d.token || ''), instancia: String(d.instancia || '') };
+                }
+              } catch(_eLeg){}
+            }
+            if(c) {
+              if(c.token) tokInput.value = c.token;
+              if(c.instancia) insInput.value = c.instancia;
+              // Mostrar info tiny si hay datos cargados desde SQL (sin toast molesto):
+              if(c.token || c.instancia) {
+                try {
+                  const lb = document.getElementById('factiliza-cfg-label');
+                  if(lb && !lb.dataset.cfgInitDone) {
+                    lb.dataset.cfgInitDone = '1';
+                    const hint = document.createElement('div');
+                    hint.style.cssText = 'font-size:0.72rem;color:#64748B;margin-top:2px;line-height:1.2;';
+                    hint.textContent = `💡 Cargado ${c.token || c.instancia ? 'desde SQL (tabla colegios - valor real EFs)' : 'vacio - ingresa token e instancia'}.`;
+                    lb.insertAdjacentElement('afterend', hint);
+                  }
+                } catch(_hint){}
+              }
+            }
+          } catch(_eFact) { console.warn('[precargarFactilizaConfig] falló', _eFact); }
+        })();
       } catch(eCfg) {
         console.warn('[onShowConfig] Error cargando datos colegio:', eCfg);
       }
