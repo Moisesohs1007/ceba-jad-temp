@@ -22522,22 +22522,17 @@ async function generarAlertasAsistencia() {
     const ausTh  = Math.max(1, parseInt(ausThRaw, 10) || 3);
 
     // ================================================================
-    // ✅ MOISES v207p FIX: INVALIDAR CACHE REGISTROS FUERZA TOTAL
+    // ✅ MOISES v207q FIX: INVALIDAR CACHE REGISTROS FUERZA TOTAL
     //   RC confirmado: caché local (_registrosCache, LS reg_*) retorna
-    //   datos ANTIGUOS incompletos para Septiembre = 8 días menos.
-    //   Ejemplo ANTUANET: 9 faltas real = 21 presencias →
-    //                     caché antiguo: 13 presencias = 17 faltas (ERROR).
-    //   Antes del cálculo de alertas: BORRAMOS TODO el caché y el LS.
+    //   datos ANTIGUOS. Sin toast UI, solo console.log silent.
     // ================================================================
     try {
       if (typeof DB !== 'undefined') {
-        // Clear RAM cache:
         const antesRegKeys = Object.keys(DB._registrosCache || {}).length;
         DB._registrosCache = {};
         DB._registrosCacheTime = {};
         DB._resumenMesCache = {};
         DB._resumenMesCacheTime = {};
-        // Clear localStorage cache reg_* (mismo prefijo save db_supabase.js L569 asmqr_reg_*)
         let lsBorrados = 0;
         try {
           const borrables = Object.keys(localStorage).filter(k =>
@@ -22545,16 +22540,12 @@ async function generarAlertasAsistencia() {
           );
           borrables.forEach(k => { try { localStorage.removeItem(k); lsBorrados++; } catch(_){} });
         } catch(_) {}
-        toast(`🗑️ Caché registros invalidado (RAM ${antesRegKeys} keys · LS ${lsBorrados} keys). Datos en limpio desde DB.`, 'info');
-        console.log(`[ALERTAS v207p] Cache invalidada pre-cálculo: RAM keys=${antesRegKeys} · LS borrados=${lsBorrados}`);
+        console.log(`[ALERTAS v207q] Cache invalidada pre-cálculo (silent): RAM keys=${antesRegKeys} · LS borrados=${lsBorrados}`);
       }
     } catch(_) {}
 
-    // ✅ MOISES: MOSTRAR VALORES REALES (sin conjeturas):
-    //  - Muestro en el status + toast EXTRA INFO para que MOISES pueda COMPRUEBE que lee el input actual:
     const modoCalc = (() => { const cfg = typeof configCache !== 'undefined' ? configCache : (typeof window !== 'undefined' ? window._cfg : null); try { if(cfg) { const v = String(cfg.tipo_colegio || cfg.modalidad || cfg.nombre_colegio || '').toUpperCase(); if(v.includes('EBR') && !v.includes('CEBA') && !v.includes('EBA')) return 'L-V (EBR)'; if(v.includes('CEBA') || v.includes('EBA')) return 'L-D (CEBA)'; } } catch(_){} return 'L-D (CEBA)';})();
     if(status) status.textContent = `💡 Valores: Tard ≥ ${tardTh} · Fal ≥ ${ausTh} · Días: ${modoCalc}. Cargando alumnos...`;
-    toast(`💡 Valores que usa el código: Tard ≥ ${tardTh} · Fal ≥ ${ausTh} · Días: ${modoCalc}. Si esto NO coincide con lo que escribiste → refresca (Ctrl+F5) y avísame.`, 'info');
     const mesSel = (prefix === 'al'
       ? (document.getElementById('al-mes-select')?.value || mesActual())
       : (document.getElementById('rep-mes-select')?.value || mesActual())
@@ -22753,7 +22744,7 @@ async function generarAlertasAsistencia() {
           };
         });
 
-      // Debug distribución modo RANGO (mismo patrón v207n)
+      // Debug distribución modo RANGO (silent, solo console.log):
       const todasAusR = preFilterRangoRows.map(r => r.ausencias);
       const minAR = todasAusR.length ? Math.min(...todasAusR) : 0;
       const maxAR = todasAusR.length ? Math.max(...todasAusR) : 0;
@@ -22761,16 +22752,15 @@ async function generarAlertasAsistencia() {
       const cntR = (n1,n2) => todasAusR.filter(v => v>=n1 && v<=n2).length;
       const cntGER = (n) => todasAusR.filter(v => v>=n).length;
       const statsR = [`[0-2]=${cntR(0,2)}`,`[3-5]=${cntR(3,5)}`,`[6-9]=${cntR(6,9)}`,`[10-15]=${cntR(10,15)}`,`[16-20]=${cntR(16,20)}`,`[21-29]=${cntR(21,29)}`,`[30+]=${cntR(30,999)}`,`≥${ausTh}=${cntGER(ausTh)}`].join(' · ');
-      console.log(`[ALERTAS v207n RANGO] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${minAR} Max=${maxAR} Prom=${avgAR} | Dist: ${statsR}`);
-      console.log(`[ALERTAS v207n RANGO] 20 alumnos CON MENOS faltas:`,
+      console.log(`[ALERTAS v207q RANGO] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${minAR} Max=${maxAR} Prom=${avgAR} | Dist: ${statsR}`);
+      console.log(`[ALERTAS v207q RANGO] 20 alumnos CON MENOS faltas:`,
         [...preFilterRangoRows].sort((a,b)=>a.ausencias-b.ausencias).slice(0,20).map(r => `${r.nombre.split(' ').slice(0,2).join(' ')}=${r.ausencias}`).join(' | ')
       );
-      window.__ALERTAS_DIST_FALTAS__ = { modo: 'RANGO', minA: minAR, maxA: maxAR, avgA: avgAR, rangos: statsR, umbralAus: ausTh, totalAlumnos: preFilterRangoRows.length };
 
       const absentRows = preFilterRangoRows
         .filter(x => x.ausencias >= ausTh)
-        // ✅ MOISES v207n FIX BLOQUEO 17: ORDEN ASCENDENTE (MENORES faltas PRIMEROS = visibles ARRIBA sin scroll)
-        .sort((a,b) => (a.ausencias - b.ausencias) || a.nombre.localeCompare(b.nombre));
+        // ✅ v207q: ORDEN ORIGINAL DESCENDENTE (mayores faltas PRIMEROS)
+        .sort((a,b) => (b.ausencias - a.ausencias) || a.nombre.localeCompare(b.nombre));
 
       rows = [...tardyRows, ...absentRows];
     } else {
@@ -22836,7 +22826,6 @@ async function generarAlertasAsistencia() {
       //   CON ALUMNOIDSLIST (igual que tardanzas). NUNCA más resumen_mensual,
       //   nunca más absentCandidates, nunca más chunks. Presencia Set por alumno.
       // ================================================================
-      toast('🔄 Cargando TODOS los INGRESOS del mes (mismo método que Tardanzas)...', 'info');
       const regsIngreso = await DB.getRegistros({
         desde: periodoInicio,
         hasta: periodoFin,
@@ -22847,7 +22836,7 @@ async function generarAlertasAsistencia() {
         alumnoIds: alumnoIdsList || undefined,
         columns: 'alumno_id,fecha,estado,tipo'
       });
-      console.log(`[ALERTAS v207o MES] regsIngreso TOTAL recuperados: ${(regsIngreso||[]).length}`);
+      console.log(`[ALERTAS v207q MES] regsIngreso TOTAL recuperados: ${(regsIngreso||[]).length}`);
       console.log(`[ALERTAS v207o MES] regsIngreso aleatorios 10:`, (regsIngreso||[]).slice(0,10).map(r=>`${r.alumnoId}|${r.fecha}|${r.estado||'-'}`).join(' · '));
 
       const presTotal = {};
@@ -22931,46 +22920,52 @@ async function generarAlertasAsistencia() {
         `[30]=${cnt(30,30)}`,
         `≥${ausTh}=${cntGE(ausTh)}`
       ].join(' · ');
-      console.log(`[ALERTAS v207o MES] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${minA} Max=${maxA} Prom=${avgA} | Dist: ${statsDebug}`);
-      console.log(`[ALERTAS v207o MES] 20 alumnos CON MENOS faltas:`,
+      console.log(`[ALERTAS v207q MES] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${minA} Max=${maxA} Prom=${avgA} | Dist: ${statsDebug}`);
+      console.log(`[ALERTAS v207q MES] 20 alumnos CON MENOS faltas:`,
         [...preFilterRows].sort((a,b)=>a.ausencias-b.ausencias).slice(0,20).map(r => `${r.nombre.split(' ').slice(0,2).join(' ')}=${r.ausencias}`).join(' | ')
       );
-      toast(`📊 Debug: Min=${minA} · Máx=${maxA} · Prom=${avgA} · Rangos: ${statsDebug}`, 'info');
-      window.__ALERTAS_DIST_FALTAS__ = { modo: 'MES', minA, maxA, avgA, rangos: statsDebug, umbralAus: ausTh, totalAlumnos: preFilterRows.length };
 
       const absentRows = preFilterRows
         .filter(x => x.ausencias >= ausTh)
-        .sort((a,b) => (a.ausencias - b.ausencias) || a.nombre.localeCompare(b.nombre));
+        // ✅ v207q: ORDEN ORIGINAL DESCENDENTE (mayores faltas PRIMEROS)
+        //   El usuario ordena por headers si quiere cambiar.
+        .sort((a,b) => (b.ausencias - a.ausencias) || a.nombre.localeCompare(b.nombre));
 
       rows = [...tardyRows, ...absentRows];
     }
 
     _repAlertasCache = { periodoInicio, periodoFin, mes: mesSel, tardTh, ausTh, rows, alumnosById };
+    // Estado ordenamiento headers (default: sin columna activa, orden original rows)
+    if(!_repAlertasCache.sort) _repAlertasCache.sort = { col: null, dir: 'desc' };
 
     const mkUnifiedTable = (rows) => {
       if(!rows.length) return `<div style="color:var(--muted);font-size:.85rem;margin-top:6px;">Sin resultados con los filtros actuales.</div>`;
-      const dist = typeof window !== 'undefined' ? window.__ALERTAS_DIST_FALTAS__ : null;
-      const distHtml = dist ? `
-        <div style="background:linear-gradient(135deg,#0ea5e9,#6366f1);color:#fff;padding:12px 16px;border-radius:10px;margin:10px 0 14px;font-weight:600;">
-          <div style="font-size:.92rem;opacity:.95;letter-spacing:.2px;">📊 DISTRIBUCIÓN FALTAS · MODO: ${dist.modo} · UMBRAL ≥ ${dist.umbralAus}</div>
-          <div style="font-size:1rem;margin-top:6px;letter-spacing:.2px;">${dist.rangos}</div>
-          <div style="font-size:.78rem;margin-top:4px;opacity:.9;">Total alumnos: ${dist.totalAlumnos} · Mínimo: ${dist.minA} · Máximo: ${dist.maxA} · Promedio: ${dist.avgA}</div>
-        </div>` : '';
+      const sortState = _repAlertasCache ? _repAlertasCache.sort : { col: null, dir: 'desc' };
+      const thCls = (col) => {
+        const base = 'cursor:pointer;user-select:none;transition:background .15s;';
+        const hov  = ' &:hover{ background: rgba(255,255,255,0.05); }';
+        const act  = (sortState.col === col) ? ' background:rgba(99,102,241,.18);' : '';
+        return base + act;
+      };
+      const arrow = (col) => {
+        if(sortState.col !== col) return '';
+        return sortState.dir === 'asc' ? ' <span style="opacity:.85">↑</span>' : ' <span style="opacity:.85">↓</span>';
+      };
+      const onClk = (col) => ` onclick="window._alertasOrdenarColumna('${prefix}','${col}')" `;
       return `
         <div style="margin-top:10px;">
-          ${distHtml}
           <div style="overflow:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface2);">
             <table class="table" style="width:100%;">
               <thead>
                 <tr>
-                  <th>DNI</th>
-                  <th>Alumno</th>
-                  <th>Grado</th>
-                  <th>Sección</th>
-                  <th>Nivel</th>
+                  <th style="${thCls('alumnoId')}" ${onClk('alumnoId')}>DNI${arrow('alumnoId')}</th>
+                  <th style="${thCls('nombre')}"   ${onClk('nombre')}>Alumno${arrow('nombre')}</th>
+                  <th style="${thCls('grado')}"    ${onClk('grado')}>Grado${arrow('grado')}</th>
+                  <th style="${thCls('seccion')}"  ${onClk('seccion')}>Sección${arrow('seccion')}</th>
+                  <th style="${thCls('nivel')}"    ${onClk('nivel')}>Nivel${arrow('nivel')}</th>
                   <th>Día</th>
-                  <th>Faltas</th>
-                  <th>Tardanza</th>
+                  <th style="${thCls('ausencias')}" ${onClk('ausencias')}>Faltas${arrow('ausencias')}</th>
+                  <th style="${thCls('tardanzas')}" ${onClk('tardanzas')}>Tardanza${arrow('tardanzas')}</th>
                   <th style="text-align:right;">Acción</th>
                 </tr>
               </thead>
@@ -23005,6 +23000,49 @@ async function generarAlertasAsistencia() {
     const cantT = rows.filter(r => r.tipo === 'TARDANZA').length;
     const cantA = rows.filter(r => r.tipo === 'AUSENCIA').length;
     if(status) status.textContent = `✅ Alertas generadas: ${cantT} tardanzas y ${cantA} faltas.`;
+
+    // ================================================================
+    // ✅ v207q ORDENAMIENTO POR ENCABEZADOS (asignacion temprana window):
+    //   Handler global expuesto a window para los <th> con onclick.
+    //   Usa clausura para reutilizar rows del cálculo + re-render.
+    // ================================================================
+    window._alertasOrdenarColumna = function(pfx, col) {
+      try {
+        const c  = _repAlertasCache; if(!c || !c.rows) return;
+        if(!c.sort) c.sort = { col: null, dir: 'desc' };
+        if(c.sort.col === col) {
+          c.sort.dir = (c.sort.dir === 'asc') ? 'desc' : 'asc';
+        } else {
+          c.sort.col = col;
+          // Por defecto: columnas numéricas DESC primero, string ASC primero
+          if(['ausencias','tardanzas'].includes(col)) c.sort.dir = 'desc';
+          else                                          c.sort.dir = 'asc';
+        }
+        const sortCol = c.sort.col;
+        const sortDir = c.sort.dir;
+        const s = [...c.rows];
+        const numOrStr = (aVal, bVal) => {
+          const aIsNum = (!isNaN(parseFloat(aVal)) && isFinite(aVal));
+          const bIsNum = (!isNaN(parseFloat(bVal)) && isFinite(bVal));
+          if(aIsNum && bIsNum) {
+            const aN = parseFloat(aVal), bN = parseFloat(bVal);
+            return sortDir === 'asc' ? (aN-bN) : (bN-aN);
+          }
+          const aS = String(aVal ?? '').trim().toUpperCase();
+          const bS = String(bVal ?? '').trim().toUpperCase();
+          return sortDir === 'asc' ? aS.localeCompare(bS) : bS.localeCompare(aS);
+        };
+        const cmp = (a, b) => numOrStr(a[sortCol], b[sortCol]);
+        s.sort(cmp);
+        if(wrap) {
+          const periodLine = `<div style="font-size:0.82rem;color:var(--muted);">Período: ${periodoInicio} a ${periodoFin} · Mes: ${mesSel} · Días hábiles (período): ${diasHab}</div>`;
+          wrap.innerHTML = periodLine + mkUnifiedTable(s);
+          wrap.style.display = '';
+        }
+      } catch(e) { console.warn('[Alertas] Ordenar:', e.message); }
+    };
+    // ================================================================
+
     if(prefix === 'al') {
       const mesEl = document.getElementById('al-mes-select');
       if(mesEl) { mesEl.disabled = false; mesEl.style.opacity = '1'; }
