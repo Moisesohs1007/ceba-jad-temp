@@ -13297,24 +13297,63 @@ async function handleExcel(e) {
   reader.readAsArrayBuffer(file);
 }
 
+async function _getColegioIdDelUsuarioActual() {
+  // 4 niveles de fallback alineados al resto del sistema. Orden:
+  // 1) window.COLEGIO_ID (usado en storage, reportes, backup keys de TODO el código)
+  // 2) window._cfg.colegio_id
+  // 3) _sb.auth.getUser.app_metadata.colegio_id (verificado L18633)
+  // 4) currentUser global
+  try { if (typeof window._getColegioIdDelUsuarioActual !== 'function' || window._getColegioIdDelUsuarioActual._isStub) window._getColegioIdDelUsuarioActual = _getColegioIdDelUsuarioActual; } catch(_){}
+  if (typeof window !== 'undefined' && window.COLEGIO_ID) {
+    const v = String(window.COLEGIO_ID || '').trim();
+    if (v && v !== 'default' && v !== 'sigece') return v;
+  }
+  try {
+    if (typeof window._cfg !== 'undefined' && window._cfg && window._cfg.colegio_id) {
+      const v = String(window._cfg.colegio_id || '').trim();
+      if (v) return v;
+    }
+  } catch(_){}
+  try {
+    if (typeof _sb !== 'undefined' && _sb && _sb.auth) {
+      const { data: { user } } = await _sb.auth.getUser();
+      const v = String(user?.app_metadata?.colegio_id || '').trim();
+      if (v) return v;
+    }
+  } catch(_sbErr){ console.warn('[getColegioId] fallback _sb.auth.getUser falló', _sbErr); }
+  try {
+    const cU = (typeof currentUser !== 'undefined') ? currentUser : (typeof window.currentUser !== 'undefined' ? window.currentUser : null);
+    if (cU && cU.app_metadata && cU.app_metadata.colegio_id) {
+      const v = String(cU.app_metadata.colegio_id || '').trim();
+      if (v) return v;
+    }
+  } catch(_){}
+  return '';
+}
+
 async function guardarFactiliza() {
   const token    = document.getElementById('factiliza-token').value.trim();
   const instancia = document.getElementById('factiliza-instancia').value.trim();
   if(!token || !instancia) { toast('Completa token e instancia','warning'); return; }
   try {
-    // ================================================================
-    // ✅ v207g MOISES FIX ROOT CAUSE: FUENTE DE VERDAD = SQL TABLA COLEGIOS
-    // Anteriormente se guardaba SOLO en Firestore config/factiliza,
-    // PERO los Edge Functions (enviar-whatsapp, enviar-comunicado, cron)
-    // LEEN DESDE SQL TABLA COLEGIOS → columnas factiliza_token /
-    // factiliza_instancia. Ahora guardamos PRIMERO en SQL via RPC
-    // set_whatsapp_config (rol=admin colegio coincide). Como respaldo
-    // también copiamos a Firestore (legacy) para NO romper otros usos.
-    // ================================================================
-    const colegioId = (typeof getCurrentUserColegioId === 'function')
-      ? (getCurrentUserColegioId() || '')
-      : String((currentUser && currentUser.app_metadata && currentUser.app_metadata.colegio_id) || '');
-    if(!colegioId) { toast('No se detectó colegio del usuario','error'); return; }
+    let colegioId = await _getColegioIdDelUsuarioActual();
+    if(!colegioId) {
+      // Fallback más agresivo si ninguna fuente retorna: usar _sb auth getSession metadata
+      try {
+        if (typeof _sb !== 'undefined') {
+          const { data:{ session } } = await _sb.auth.getSession();
+          const v = String(session?.user?.app_metadata?.colegio_id || '').trim();
+          if (v) {
+            colegioId = v;
+            console.info('[guardarFactiliza] colegioId recuperado via getSession fallback =', v);
+          }
+        }
+      } catch(_fsb){}
+      if(!colegioId) {
+        toast('No se detectó colegio del usuario. Refresca la página (Ctrl+F5) y vuelve a iniciar sesión si persiste.','error');
+        return;
+      }
+    }
     try {
       const { error: rpcErr } = await _sb.rpc('set_whatsapp_config', {
         p_colegio_id: String(colegioId),
@@ -13323,7 +13362,6 @@ async function guardarFactiliza() {
       });
       if(rpcErr) {
         console.warn('[guardarFactiliza] RPC SQL falló, intento direct update.', rpcErr);
-        // FALLBACK direct UPDATE Supabase (si RLS colegios_write lo permite: admin)
         const { error: updateErr } = await _sb
           .from('colegios')
           .update({ factiliza_token: String(token), factiliza_instancia: String(instancia) })
@@ -13344,10 +13382,8 @@ async function guardarFactiliza() {
 
 async function getFactilizaConfigFromSQL() {
   try {
-    const colegioId = (typeof getCurrentUserColegioId === 'function')
-      ? (getCurrentUserColegioId() || '')
-      : String((currentUser && currentUser.app_metadata && currentUser.app_metadata.colegio_id) || '');
-    if(!colegioId) return null;
+    const colegioId = await _getColegioIdDelUsuarioActual();
+    if(!colegioId) { console.warn('[getFactilizaConfigFromSQL] sin colegioId'); return null; }
     const { data, error } = await _sb
       .from('colegios')
       .select('factiliza_token, factiliza_instancia')
