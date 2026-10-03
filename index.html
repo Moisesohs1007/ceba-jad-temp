@@ -17015,7 +17015,13 @@ ${ejemplo1}
     });
     const body = await res.json().catch(() => ({}));
     if(!res.ok) {
-      toast('❌ Error: ' + (body.error || ('HTTP ' + res.status)), 'warning');
+      const msgRaw = String(body?.error || body?.message || (body?.error?.message) || ('HTTP ' + res.status) || '');
+      let msgUser = '❌ Error: ' + msgRaw;
+      if(msgRaw.includes('falta de pago') || msgRaw.includes('405') || msgRaw.toLowerCase().includes('token')) {
+        msgUser = `💰 🚨 ERROR FACTILIZA (NO TIENES SALDO): ${msgRaw}\n\n👉 CONTACTA SOPORTE FACTILIZA AHORA POR WHATSAPP: +51 949035687\n\n(Esto NO es un error del sistema; el proveedor WhatsApp Factiliza bloqueó el envío por falta de pago/saldo).`;
+      }
+      toast(msgUser, 'warning', 14000);
+      try { console.error('[EF enviar-comunicado HTTP ERROR] res.status=', res.status, 'body=', body); } catch(_){}
       if(st) st.textContent = '';
       return;
     }
@@ -17023,7 +17029,23 @@ ${ejemplo1}
     const ok = results.filter(r=>r.ok).length;
     const fail = results.length - ok;
     if(st) st.textContent = `Envío terminado: ${ok} ok, ${fail} fallos`;
-    toast(`📢 Comunicado: ${ok} ok, ${fail} fallos`, fail ? 'warning' : 'success');
+
+    // ✅ v207v: feedback DETALLADO de fallos (mostrar primer error Factiliza si hay)
+    const fallosDetalle = results.filter(r => !r.ok).slice(0, 3).map((r, i) => {
+      const er = String(r?.error || r?.message || 'sin detalle').slice(0, 240);
+      const tl = String(r?.telefono || '').slice(-9);
+      const payErr = (er.includes('falta de pago') || er.includes('405') || er.toLowerCase().includes('token'));
+      return `  ${i+1}) Tel ...${tl}: ${payErr ? '💰 FALTA PAGO Factiliza → ' : ''}${er}`;
+    }).join('\n');
+    let msjFin = `📢 Comunicado enviado: ${ok} ok, ${fail} fallos.`;
+    if(fail > 0 && fallosDetalle) msjFin += `\n\n🔍 Detalle fallos (primeros ${Math.min(3, fail)}):\n${fallosDetalle}`;
+    const payGlobal = results.some(r => {
+      const m = String(r?.error||r?.message||'');
+      return m.includes('falta de pago') || m.includes('405') || m.toLowerCase().includes('token');
+    });
+    if(payGlobal) msjFin += `\n\n💰 🚨 GLOBAL: Factiliza sin saldo. Escribe a Soporte WhatsApp +51 949035687 para recargar.`;
+    toast(msjFin, fail ? (payGlobal ? 'warning' : 'warning') : 'success', fail > 0 ? 16000 : 5000);
+    try { console.log(`[ENVIO COMUNICADO FIN] items=${items.length} · results=${results.length} · ok=${ok} · fail=${fail}`, results); } catch(_){}
     if(!esStaff && publicarPortalAlumnos) {
       await _publicarComunicadosPortal(rows, tituloPortal, tpl);
     }
