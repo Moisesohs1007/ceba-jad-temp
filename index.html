@@ -16871,6 +16871,147 @@ async function enviarComunicado() {
   // (Si el usuario no subió archivo: usamos encabezado normal igual que
   //  la asistencia SALIDA Luis Belleza que llegó OK.)
   const _comFileSizeKBString = _comFile ? _tamanoHumano(_comFile.size || 0) : '';
+
+  // ================================================================
+  // ✅ v209: SUBIR ARCHIVO REAL A SUPABASE STORAGE TEMPORAL
+  // 7 dias, auto-borrado pg_cron cada 6 horas (SI bucket existe).
+  // SI falla o bucket todavía no está creado → FALLBACK MODO v208
+  // (solo texto referencia archivo, NO link descarga). No bloquea.
+  // Variables exportadas:
+  //   _archivoTempStorage: { bucket_path, public_url, ok, size_bytes, mime, nombre_orig }
+  //   _refArchivoAdjunto: enriquecida con LINK DESCARGA si hubo storage OK
+  // ================================================================
+  let _archivoTempStorage = null;
+  if(_comFile && _comSendName) {
+    try {
+      if(st) st.textContent = 'Subiendo archivo adjunto al almacén temporal... (0%)';
+      // ColegioId (mismo helper que antes 4 niveles)
+      let colId = String(window.COLEGIO_ID || '').trim();
+      if(!colId && window._cfg && window._cfg.colegio_id) colId = String(window._cfg.colegio_id).trim();
+      if(!colId) {
+        try {
+          const { data: { user } } = await _sb.auth.getUser();
+          if(user) {
+            try {
+              const { data: filaU } = await _sb.from('usuarios').select('colegio_id').eq('id', user.id).limit(1).maybeSingle();
+              if(filaU?.colegio_id) colId = String(filaU.colegio_id).trim();
+            } catch(_) {}
+          }
+        } catch(_) {}
+      }
+      if(!colId) colId = 'colegio-default';
+
+      const now = new Date();
+      const YYYYMM = (new Date().getFullYear()) + String((now.getMonth()+1)).padStart(2,'0');
+      const sanear = (s) => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]/g,'_').replace(/_+/g,'_').slice(0,120);
+      const nombreLimpio = sanear(_comSendName || 'archivo');
+      const suuid = (crypto && crypto.randomUUID ? String(crypto.randomUUID()).slice(0,10) : (Math.random().toString(36).slice(2,12)));
+      const file_path = `${colId}/${YYYYMM}/${suuid}__${nombreLimpio}`;
+      const mime = String(_comFile.type || _comSendType || 'application/octet-stream');
+
+      // Subida storage Supabase bucket: adjuntos-temporales-whatsapp
+      const { data: upData, error: upErr } = await _sb
+        .storage
+        .from('adjuntos-temporales-whatsapp')
+        .upload(file_path, _comFile, {
+          cacheControl: '3600',
+          contentType: mime,
+          upsert: false,
+        }, {
+          onUploadProgress: (e) => {
+            const pct = e && e.total ? Math.round( (e.loaded||0) * 100 / e.total ) : 0;
+            if(st) st.textContent = `Subiendo archivo adjunto... (${pct}%)`;
+            try { console.log(`[v209 storage upload] ${pct}%  size=${e?.total} loaded=${e?.loaded}  path=${file_path}`); } catch(_) {}
+          }
+        });
+
+      const bucketPublicOk = !!(upData && !upErr);
+      let publicUrl = '';
+      if(bucketPublicOk) {
+        try {
+          const { data } = _sb.storage.from('adjuntos-temporales-whatsapp').getPublicUrl(file_path);
+          publicUrl = (data && data.publicUrl) ? String(data.publicUrl) : '';
+        } catch(_) {}
+      }
+      _archivoTempStorage = {
+        ok: bucketPublicOk && !!publicUrl,
+        bucket_path: file_path,
+        public_url: publicUrl,
+        size_bytes: Number(_comFile.size || 0),
+        mime: mime,
+        nombre_orig: String(_comSendName||''),
+        colegio_id: colId,
+      };
+
+      // Insert fila tabla adjuntos_whatsapp_temp (track expiracion 7 dias + descargas 0 inicial)
+      if(_archivoTempStorage.ok) {
+        try {
+          let uid = null;
+          try {
+            const { data: { user } } = await _sb.auth.getUser();
+            if(user) uid = user.id;
+          } catch(_) {}
+          await _sb.from('adjuntos_whatsapp_temp').insert({
+            colegio_id: colId,
+            usuario_subio_id: uid,
+            bucket_path: file_path,
+            archivo_nombre: String(_comSendName||''),
+            size_bytes: Number(_comFile.size || 0),
+            mime: mime,
+            public_url: publicUrl,
+          });
+        } catch(eTabla) {
+          // Fallo SQL no bloquea (podría ser que tabla no se creó aun en dashboard).
+          try { console.warn('[v209 tabla adjuntos_whatsapp_temp todavía no existe en Supabase?] No se guardó fila. storage upload OK. err=', eTabla && eTabla.message || eTabla); } catch(_) {}
+          // Aún así nos guardamos el link public_url para el destinatario (storage object sí existe).
+        }
+      }
+
+      // =============================================================
+      // ENRIQUECER refArchivoAdjunto CON EL LINK DE DESCARGA 7 DIAS
+      // =============================================================
+      if(_archivoTempStorage.ok) {
+        // Quitamos la línea simple "📎 adjunto" anterior, y la reemplazamos
+        // por versión NUEVA con LINK REAL.
+        const sizeStr = _tamanoHumano(_comFile.size||0);
+        const tipoStr = String(_comFile.type || _comSendType || 'archivo').slice(0,80);
+        _refArchivoAdjunto =
+`📎 [Archivo adjunto: «${String(_comSendName||'')}» · Tamaño: ${sizeStr} · Tipo: ${tipoStr}]
+🔗 CLICK AQUÍ para DESCARGAR el archivo:
+${_archivoTempStorage.public_url}
+💡 Archivo disponible 7 días (se borrará automáticamente después de este plazo).
+
+`;
+      } else {
+        // FALLBACK (bucket no creado aún, upErr 404/403 etc)
+        // → mantenemos _refArchivoAdjunto SOLO TEXTO (ya estaba calculado antes).
+        // Toast AMARILLO info una sola vez para que Moises lo cree.
+        const tip = (upErr && upErr.message) ? upErr.message : '';
+        try {
+          if(upErr) {
+            let explicacion = '';
+            const errLower = String(tip||'').toLowerCase();
+            if(errLower.includes('not found') || errLower.includes('no such bucket') || errLower.includes('404')) {
+              explicacion = ' Todavía NO se ha creado el BUCKET STORAGE "adjuntos-temporales-whatsapp" PUBLICO en Dashboard Supabase Storage. (Mira los PASOS MANUALES al final de este mensaje).';
+            } else if(errLower.includes('403') || errLower.includes('row level') || errLower.includes('policy')) {
+              explicacion = ' Policies RLS storage bucket no aplicadas aún o bucket PRIVADO. Debes crearlo PUBLICO + ejecutar SQL migration.';
+            } else {
+              explicacion = ' Error Storage: ' + tip;
+            }
+            toast(`⚠️  Link descarga NO disponible de momento. (Se usará modo solo-texto como antes).${explicacion}`, 'warning', 30000);
+          } else {
+            toast('⚠️  Link descarga no disponible (storage no configurado aún). Continuando sin link (igual que antes).','warning',18000);
+          }
+        } catch(_) {}
+      }
+    } catch(eUp) {
+      // Caída general excepción (pérdida de red etc). FALLBACK modo sin link, bloqueo 0.
+      try { console.warn('[v209 UPLOAD STORAGE TOTAL CAÍDA. fallback v208 modo solo-texto] err=', eUp && eUp.message || eUp); } catch(_) {}
+      try { toast('⚠️  Error al subir archivo temporal. Continuando en modo solo-texto (igual que antes): ' + (eUp && eUp.message || eUp), 'warning', 15000); } catch(_) {}
+      _archivoTempStorage = { ok:false, error: String(eUp && eUp.message || eUp || '') };
+    }
+  }
+
   // ================================================================
   // RESUMEN ANTES DE ENVIAR (para que Moises valide y no se equivoque)
   // ================================================================
@@ -16906,12 +17047,25 @@ async function enviarComunicado() {
   // ✅ v207u FIX MODAL: STAFF NUNCA publica en Portal Alumnos (aunque la variable vieja tenga true).
   const publicarPortalAlumnosOK = esStaff ? false : !!publicarPortalAlumnos;
   const publicarPortalStaffOK = !!publicarPortalStaff;
+  // ================================================================
+  // v209: Actualizar banner info RESUMEN (storage link descarga 7 días)
+  // ================================================================
+  let lineaStorageResumen = '';
+  if(_archivoTempStorage?.ok) {
+    lineaStorageResumen = `🔗 LINK DESCARGABLE GENERADO ✔️ · Caducidad 7 días (auto-borrado después).\n${_archivoTempStorage.public_url}\n`;
+  } else if(_comFile && _comSendName) {
+    lineaStorageResumen = `⚠️  Link descarga TEMPORALMENTE NO disponible (falta crear bucket Storage en Dashboard Supabase, mira paso manual).\nEnvío continúa IGUAL con referencia de nombre/tamaño/tipo dentro del texto.\n`;
+  } else {
+    lineaStorageResumen = '';
+  }
   const modoEnvioTextoExplicacion =
 `🟡 MODO ENVÍO: SOLO-TEXTO (igual que las notificaciones de ASISTENCIA que SÍ llegan).
 (Razón temporal: endpoint multimedia de Factiliza está presentando fallos.
 Para no perder la información: el nombre, tamaño y tipo del archivo adjunto
 SÍ se incluye DENTRO DEL TEXTO DEL MENSAJE que recibe cada destinatario,
-para que tenga la referencia completa.)\n`;
+y además si está configurado el Storage se agrega LINK DE DESCARGA.)
+
+${lineaStorageResumen}`;
   const resumen =
 `📢 RESUMEN ANTES DE ENVIAR (doble confirmación para evitar errores):
 
