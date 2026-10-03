@@ -17004,13 +17004,18 @@ ${ejemplo1}
     const jwt = session?.access_token;
     if(!jwt) { toast('Inicia sesión para enviar WhatsApp','warning'); return; }
     if(st) st.textContent = `Enviando a ${items.length} destinatarios...`;
-    const payload = { mediatype: _comSendType, mediaBase64: _comSendB64, filename: _comSendName, items };
-    // Si hay url logo default, se la pasamos TAMBIÉN como fallback urlImagen
-    if(usamosLogoDefault) {
-      try {
-        const logoURL = new URL('img/wa-logo.png', window.location.href).href;
-        payload.urlImagen = logoURL;
-      } catch(_) {}
+    // ✅ v207z: SOLO-TEXTO POR DEFECTO (igual que asistencia SALIDA Luis Belleza OK que funciona 100%).
+    // Eliminamos el logo default b64/url del payload. Esto causa:
+    // EF enviar-comunicado → hayMediaReal=false → sendText_v1 PRIMERO 1 SOLO LLAMADO endpoint funcional.
+    // (El sendMedia con logo default wa-logo.png siempre fallaba 500 → retry 500 por rate-limit 2 requests.)
+    // Si el usuario SUBE UN ARCHIVO REAL (pdf/foto/imagen) → sí mandamos media.
+    const esArchivoReal = (!usamosLogoDefault && !!_comSendB64 && !!_comSendName);
+    let payload;
+    if(esArchivoReal) {
+      payload = { mediatype: _comSendType, mediaBase64: _comSendB64, filename: _comSendName, items };
+    } else {
+      payload = { items };
+      try { console.log(`%c[ENVIO COM v207z] MODO SOLO-TEXTO (sin logo default). Equivalente a asistencia SALIDA Luis Belleza (endpoint sendText_v1-soloComoAsistencia 1 llamado)`, 'background:#10b981;color:white;font-weight:bold;padding:4px 8px;border-radius:4px;'); } catch(_) {}
     }
     // ================================================================
     // ✅ v207x: DOBLE INTENTO para HTTP 5xx (1er fallo → reintento 1.5s)
@@ -17050,8 +17055,8 @@ ${ejemplo1}
     // UI TOAST
     // ================================================================
     try {
-      console.log(`%c[ENVIO COMUNICADO FIN v207y] items=${items.length} · intentos=${intentos} · HTTP=${Number(res?.status||0)} · ef_version=${body?.ef_version||'(no body)'}`, 'background:#6366f1;color:white;font-weight:bold;padding:4px 8px;border-radius:4px;');
-      console.log(`[ENVIO COMUNICADO v207y] FULL BODY=`, body, '| results=', body?.results);
+      console.log(`%c[ENVIO COMUNICADO FIN v207z] items=${items.length} · modoMedio=${esArchivoReal?'ARCHIVO_REAL':'SOLO_TEXTO_COMO_ASISTENCIA'} · intentos=${intentos} · HTTP=${Number(res?.status||0)} · ef_version=${body?.ef_version||'(no body)'}`, 'background:#6366f1;color:white;font-weight:bold;padding:4px 8px;border-radius:4px;');
+      console.log(`[ENVIO COMUNICADO v207z] FULL BODY=`, body, '| results=', body?.results);
       if(body?.results) {
         body.results.forEach((r, i) => {
           try { console.log(`  → item ${i+1} tel=...${String(r?.telefono||'').slice(-9)} ok=${r?.ok} status=${r?.status}${r?.statusText?' '+r.statusText:''} retry=${r?.retryAsText?'Y':'N'} firstFailedMedia=${r?.firstFailedMedia?'Y':'N'} error=${String(r?.error||'').slice(0,200)} modo=${r?.debug?.modoUsado||''} tookMs=${r?.debug?.tookMs||''} endpoint=${r?.debug?.endpointUsado||''}`); } catch(_) {}

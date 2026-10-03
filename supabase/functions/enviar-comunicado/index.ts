@@ -12,10 +12,10 @@ function sleep(ms: number) {
 }
 
 // ================================================================
-// ✅ v207y: WRAPPER SEGURIDAD TOTAL. Si hay crash de sintaxis o
+// ✅ v207z: WRAPPER SEGURIDAD TOTAL. Si hay crash de sintaxis o
 // error en inicialización de módulos, devolvemos JSON claro.
 // ================================================================
-const __EF_VERSION = 'v207y';
+const __EF_VERSION = 'v207z';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -52,12 +52,9 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json', 'X-Ef-Version': __EF_VERSION },
       });
     }
-    if (!urlImagen && (!mediaBase64 || !filename)) {
-      return new Response(JSON.stringify({ error: 'Faltan parámetros requeridos (urlImagen o mediaBase64+filename)', ef_version: __EF_VERSION }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json', 'X-Ef-Version': __EF_VERSION },
-      });
-    }
+    // ✅ v207z: YA NO OBLIGAMOS MEDIA (igual que EF enviar-whatsapp asistencia). Si no hay urlImagen
+    // ni mediaBase64 → usamos sendText_v1 DIRECTAMENTE (como Luis Belleza SALIDA OK).
+    // Sólo validamos que al menos haya mensaje en items.
 
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
@@ -153,7 +150,36 @@ serve(async (req) => {
       // ============================================================
       // ✅ v207x: Devolvemos { res, mode, endpoint } para forense.
       // NO throw aquí. Si fetch throw, caller atrapa por item.
+      // ✅ v207z: PRIORIDAD sendText_v1 SI NO HAY MEDIA REAL (igual
+      // que asistencia Luis Belleza). Solo intentamos sendMedia si
+      // el usuario realmente subió archivo (mediaBase64 real o urlImagen
+      // distinta a logo default). Orden NUEVO:
+      // (1) Si NO hay media de ningún tipo → sendText_v1 PRIMERO (1 solo llamado)
+      // (2) Si HAY media → sendMedia primero
       // ============================================================
+      const hayMediaReal = (!!(mediaBase64 && filename) || !!urlImagen);
+      if (!hayMediaReal) {
+        // ✅ v207z: Comunicado SOLO-TEXTO (igual que asistencia).
+        // Esto es lo que usará STAFF con logo default (ninguna imagen real).
+        const epText1 = `${factilizaBase}/api/v1/message/sendText/${instanciaSafe}`;
+        const resNew = await fetch(epText1, {
+          method: 'POST',
+          headers: factilizaHeaders,
+          body: JSON.stringify({ number: num, text: mensaje, numero: num, texto: mensaje }),
+        });
+        if (resNew.status !== 404) return { res: resNew, mode: 'sendText_v1-soloComoAsistencia', endpoint: epText1 };
+        const epText2 = `${factilizaBase}/v1/message/sendtext/${instanciaSafe}`;
+        return {
+          res: await fetch(epText2, {
+            method: 'POST',
+            headers: factilizaHeaders,
+            body: JSON.stringify({ number: num, text: mensaje }),
+          }),
+          mode: 'sendtext_legacy_solo',
+          endpoint: epText2,
+        };
+      }
+      // Hay media real (o logo default anterior): mantener sendMedia primero
       if (mediaBase64 && filename) {
         const ep = `${factilizaBase}/api/v1/message/sendMedia/${instanciaSafe}`;
         const res = await fetch(ep, {
@@ -184,23 +210,14 @@ serve(async (req) => {
         };
       }
 
-      const epText1 = `${factilizaBase}/api/v1/message/sendText/${instanciaSafe}`;
-      const resNew = await fetch(epText1, {
+      // Fallback (no media).
+      const epText1Fb = `${factilizaBase}/api/v1/message/sendText/${instanciaSafe}`;
+      const fb = await fetch(epText1Fb, {
         method: 'POST',
         headers: factilizaHeaders,
         body: JSON.stringify({ number: num, text: mensaje, numero: num, texto: mensaje }),
       });
-      if (resNew.status !== 404) return { res: resNew, mode: 'sendText_v1', endpoint: epText1 };
-      const epText2 = `${factilizaBase}/v1/message/sendtext/${instanciaSafe}`;
-      return {
-        res: await fetch(epText2, {
-          method: 'POST',
-          headers: factilizaHeaders,
-          body: JSON.stringify({ number: num, text: mensaje }),
-        }),
-        mode: 'sendtext_legacy',
-        endpoint: epText2,
-      };
+      return { res: fb, mode: 'sendText_v1_fallback', endpoint: epText1Fb };
     }
 
     const results: any[] = [];
@@ -327,6 +344,9 @@ serve(async (req) => {
         if (firstFailedMediaNoPago) {
           retryAsText = true;
           try {
+            // ✅ v207z: Retardo 1100ms antes del retry para evitar rate-limit interno
+            // Factiliza cuando hay 2 requests en <100ms (sendMedia fallido + retry).
+            await sleep(1100);
             const epText1 = `${factilizaBase}/api/v1/message/sendText/${instanciaSafe}`;
             const sf2 = await fetch(epText1, {
               method: 'POST',
