@@ -15,7 +15,7 @@ function sleep(ms: number) {
 // ✅ v207z: WRAPPER SEGURIDAD TOTAL. Si hay crash de sintaxis o
 // error en inicialización de módulos, devolvemos JSON claro.
 // ================================================================
-const __EF_VERSION = 'v207z';
+const __EF_VERSION = 'v208';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -148,76 +148,28 @@ serve(async (req) => {
 
     async function sendFactiliza(num: string, mensaje: string): Promise<{ res: Response; mode: string; endpoint: string }> {
       // ============================================================
-      // ✅ v207x: Devolvemos { res, mode, endpoint } para forense.
-      // NO throw aquí. Si fetch throw, caller atrapa por item.
-      // ✅ v207z: PRIORIDAD sendText_v1 SI NO HAY MEDIA REAL (igual
-      // que asistencia Luis Belleza). Solo intentamos sendMedia si
-      // el usuario realmente subió archivo (mediaBase64 real o urlImagen
-      // distinta a logo default). Orden NUEVO:
-      // (1) Si NO hay media de ningún tipo → sendText_v1 PRIMERO (1 solo llamado)
-      // (2) Si HAY media → sendMedia primero
+      // ✅ v208 MODO POR DEFECTO SEGURO: siempre sendText_v1 IGUAL que
+      // asistencia SALIDA Luis Belleza 2C (endpoint que SÍ funciona).
+      // Motivo: endpoint sendMedia (cualquier imagen/PDF/logo) está
+      // temporalmente roto en Factiliza para esta cuenta (HTTP 500).
       // ============================================================
-      const hayMediaReal = (!!(mediaBase64 && filename) || !!urlImagen);
-      if (!hayMediaReal) {
-        // ✅ v207z: Comunicado SOLO-TEXTO (igual que asistencia).
-        // Esto es lo que usará STAFF con logo default (ninguna imagen real).
-        const epText1 = `${factilizaBase}/api/v1/message/sendText/${instanciaSafe}`;
-        const resNew = await fetch(epText1, {
-          method: 'POST',
-          headers: factilizaHeaders,
-          body: JSON.stringify({ number: num, text: mensaje, numero: num, texto: mensaje }),
-        });
-        if (resNew.status !== 404) return { res: resNew, mode: 'sendText_v1-soloComoAsistencia', endpoint: epText1 };
-        const epText2 = `${factilizaBase}/v1/message/sendtext/${instanciaSafe}`;
-        return {
-          res: await fetch(epText2, {
-            method: 'POST',
-            headers: factilizaHeaders,
-            body: JSON.stringify({ number: num, text: mensaje }),
-          }),
-          mode: 'sendtext_legacy_solo',
-          endpoint: epText2,
-        };
-      }
-      // Hay media real (o logo default anterior): mantener sendMedia primero
-      if (mediaBase64 && filename) {
-        const ep = `${factilizaBase}/api/v1/message/sendMedia/${instanciaSafe}`;
-        const res = await fetch(ep, {
-          method: 'POST',
-          headers: factilizaHeaders,
-          body: JSON.stringify({ number: num, mediatype, media: mediaBase64, filename, caption: mensaje }),
-        });
-        if (res.status !== 404 || !urlImagen) return { res, mode: 'sendMedia_b64', endpoint: ep };
-      }
-
-      if (urlImagen) {
-        const ep = `${factilizaBase}/api/v1/message/sendMedia/${instanciaSafe}`;
-        const resNew = await fetch(ep, {
-          method: 'POST',
-          headers: factilizaHeaders,
-          body: JSON.stringify({ number: num, mediatype: 'image', media: urlImagen, caption: mensaje }),
-        });
-        if (resNew.status !== 404) return { res: resNew, mode: 'sendMedia_url', endpoint: ep };
-        const ep2 = `${factilizaBase}/v1/message/sendimage/${instanciaSafe}`;
-        return {
-          res: await fetch(ep2, {
-            method: 'POST',
-            headers: factilizaHeaders,
-            body: JSON.stringify({ number: num, url: urlImagen, caption: mensaje }),
-          }),
-          mode: 'sendimage_legacy',
-          endpoint: ep2,
-        };
-      }
-
-      // Fallback (no media).
-      const epText1Fb = `${factilizaBase}/api/v1/message/sendText/${instanciaSafe}`;
-      const fb = await fetch(epText1Fb, {
+      const epText1 = `${factilizaBase}/api/v1/message/sendText/${instanciaSafe}`;
+      const resNew = await fetch(epText1, {
         method: 'POST',
         headers: factilizaHeaders,
         body: JSON.stringify({ number: num, text: mensaje, numero: num, texto: mensaje }),
       });
-      return { res: fb, mode: 'sendText_v1_fallback', endpoint: epText1Fb };
+      if (resNew.status !== 404) return { res: resNew, mode: 'sendText_v1-soloComoAsistencia_v208', endpoint: epText1 };
+      const epText2 = `${factilizaBase}/v1/message/sendtext/${instanciaSafe}`;
+      return {
+        res: await fetch(epText2, {
+          method: 'POST',
+          headers: factilizaHeaders,
+          body: JSON.stringify({ number: num, text: mensaje }),
+        }),
+        mode: 'sendtext_legacy_v208',
+        endpoint: epText2,
+      };
     }
 
     const results: any[] = [];

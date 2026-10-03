@@ -16831,27 +16831,46 @@ async function enviarComunicado() {
   //       llegará al PRIMER destinatario para validar texto.
   // ================================================================
   let usamosLogoDefault = false;
-  if(!_comFile || !_comSendB64) {
-    // No cargó nada: usamos wa-logo.png para no romper el payload
+  // ================================================================
+  // ✅ v208 100% FUNCIONAL COPIA ASISTENCIA LUIS BELLEZA:
+  // sendMedia endpoint Factiliza ESTÁ ROTO (tanto para logo default como
+  // para PDFs/imagenes reales subidos x usuario → HTTP 500). Solución:
+  // NUNCA enviamos sendMedia (ni logo ni archivo real). SIEMPRE usamos
+  // sendText_v1 SOLO TEXTO (1 solo llamado endpoint que SÍ funciona).
+  // Para NO perder la info del archivo que el usuario SI seleccionó:
+  //   - si subió archivo REAL → inyectamos línea REFERENCIA ARCHIVO al
+  //     principio del mensaje: 📎 [Archivo adjunto: «nombre.ext» · Tamaño KB]
+  //   - si logo default → nada (es decorativo, lo sustituye encabezado).
+  // ================================================================
+  function _tamanoHumano(bytes){
     try {
-      const logoURL = new URL('img/wa-logo.png', window.location.href).href;
-      const resp = await fetch(logoURL);
-      const blob = await resp.blob();
-      const b64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-      _comSendB64 = String(b64 || '').split(',')[1] || b64;
-      _comSendType = 'image';
-      _comSendName = 'wa-logo.png';
-      usamosLogoDefault = true;
-    } catch(eLogo) {
-      toast('No se pudo cargar el logo default: ' + eLogo.message,'warning');
-      return;
+      const n = Number(bytes||0);
+      if(n<1024) return n + ' B';
+      if(n<1024*1024) return (n/1024).toFixed(1) + ' KB';
+      return (n/1024/1024).toFixed(2) + ' MB';
+    } catch(_){ return ''; }
+  }
+  let _refArchivoAdjunto = '';
+  if(_comFile && _comSendName && !_waPie) { /* placeholder para lint no moleste */ }
+  if(_comFile && _comSendName) {
+    // ARCHIVO REAL subido x el usuario (PDF, imagen, etc). Incluimos
+    // referencia al PRINCIPIO del mensaje de texto para que el
+    // destinatario lo vea (igual que si hubiera llegado el archivo).
+    try {
+      const tam = _tamanoHumano(_comFile.size || 0);
+      const tipo = String(_comFile.type || _comSendType || 'archivo').replace(/^(.{0,60}).*$/,'$1');
+      _refArchivoAdjunto = `📎 [Archivo adjunto: «${_comSendName}» · Tamaño: ${tam} · Tipo: ${tipo}]\n`;
+    } catch(_) {
+      _refArchivoAdjunto = `📎 [Archivo adjunto: «${_comSendName}»]\n`;
     }
   }
+  // Logo default ya NO se carga (se usa SOLO TEXTO como la asistencia).
+  // Ponemos usamosLogoDefault = false y usamos _refArchivoAdjunto si
+  // corresponde (archivo real). NOTA: NO usamos logo default para nada.
+  usamosLogoDefault = (!_comFile || !_comSendName);
+  // (Si el usuario no subió archivo: usamos encabezado normal igual que
+  //  la asistencia SALIDA Luis Belleza que llegó OK.)
+  const _comFileSizeKBString = _comFile ? _tamanoHumano(_comFile.size || 0) : '';
   // ================================================================
   // RESUMEN ANTES DE ENVIAR (para que Moises valide y no se equivoque)
   // ================================================================
@@ -16873,27 +16892,33 @@ async function enviarComunicado() {
     destinatarios = (_comUsuarios||[]).filter(u => _comStaffSel.has(_sendIdOf(u)));
     if(destinatarios.length > 0) {
       const u = destinatarios[0];
-      const msg = _waEncabezado() + '\n\nCOMUNICADO INTERNO (Personal)\n\n' + _comMsgStaff(tpl, u) + _waPie();
+      const msg = _waEncabezado() + '\n\n' + (_refArchivoAdjunto ? (_refArchivoAdjunto + '\n') : '') + 'COMUNICADO INTERNO (Personal)\n\n' + _comMsgStaff(tpl, u) + _waPie();
       ejemplo1 = msg;
     }
   } else {
     destinatarios = (_comAlumnos||[]).filter(a => _comSel.has(a.id));
     if(destinatarios.length > 0) {
       const a = destinatarios[0];
-      const msg = _waEncabezado() + '\n\n' + _comMsg(tpl, a) + _waPie();
+      const msg = _waEncabezado() + '\n\n' + (_refArchivoAdjunto ? (_refArchivoAdjunto + '\n') : '') + _comMsg(tpl, a) + _waPie();
       ejemplo1 = msg;
     }
   }
   // ✅ v207u FIX MODAL: STAFF NUNCA publica en Portal Alumnos (aunque la variable vieja tenga true).
   const publicarPortalAlumnosOK = esStaff ? false : !!publicarPortalAlumnos;
   const publicarPortalStaffOK = !!publicarPortalStaff;
+  const modoEnvioTextoExplicacion =
+`🟡 MODO ENVÍO: SOLO-TEXTO (igual que las notificaciones de ASISTENCIA que SÍ llegan).
+(Razón temporal: endpoint multimedia de Factiliza está presentando fallos.
+Para no perder la información: el nombre, tamaño y tipo del archivo adjunto
+SÍ se incluye DENTRO DEL TEXTO DEL MENSAJE que recibe cada destinatario,
+para que tenga la referencia completa.)\n`;
   const resumen =
 `📢 RESUMEN ANTES DE ENVIAR (doble confirmación para evitar errores):
 
 ✅ Destinatarios (${esStaff ? 'Personal/Staff' : 'Alumnos (Apoderados)'}): ${destinatarios.length}
-${usamosLogoDefault ? '🖼️  Sin archivo adjunto → usaremos LOGO DEFAULT (wa-logo.png).' : '📎  Archivo adjunto: ' + (_comSendName||'')}
+${usamosLogoDefault ? '🖼️  Sin archivo adjunto → modo SOLO-TEXTO (como asistencia).' : '📎  Archivo adjunto: ' + (_comSendName||'') + ' · Tamaño: ' + (_comFileSizeKBString||'') + ' · Tipo: ' + (String(_comFile?.type||_comSendType||'archivo').slice(0,60))}
 ${(publicarPortalStaffOK || publicarPortalAlumnosOK) ? '📌  Sí se publicará en ' + (publicarPortalAlumnosOK ? 'Portal Alumnos' : '') + (publicarPortalAlumnosOK && publicarPortalStaffOK ? ' + ' : '') + (publicarPortalStaffOK ? 'Panel Interno Personal' : '') + '.' : '🔒  No se publicará en ningún portal (solo WhatsApp).'}
-
+${modoEnvioTextoExplicacion}
 👇 EJEMPLO QUE LLEGARÁ AL PRIMER DESTINATARIO (para que valides):
 
 ${ejemplo1}
@@ -16918,7 +16943,7 @@ ${ejemplo1}
       let omitVacios = 0;
       let omitInvalidos = 0;
       rows.forEach(u => {
-        const msg = _waEncabezado() + '\n\nCOMUNICADO INTERNO (Personal)\n\n' + _comMsgStaff(tpl, u) + _waPie();
+        const msg = _waEncabezado() + '\n\n' + (_refArchivoAdjunto ? (_refArchivoAdjunto + '\n') : '') + 'COMUNICADO INTERNO (Personal)\n\n' + _comMsgStaff(tpl, u) + _waPie();
         const telRaw = String(u?.telefono || '').trim();
         const telLimpio = telRaw.replace(/\D/g,'');
         if(!telRaw) {
@@ -16948,7 +16973,7 @@ ${ejemplo1}
       // ================================================================
       let omitInvAlumnos = 0;
       rows.forEach(a=>{
-        const msg = _waEncabezado() + '\n\n' + _comMsg(tpl, a) + _waPie();
+        const msg = _waEncabezado() + '\n\n' + (_refArchivoAdjunto ? (_refArchivoAdjunto + '\n') : '') + _comMsg(tpl, a) + _waPie();
         const tel1Raw = String(a.telefono||'').trim();
         const tel2Raw = String(a.telefono2||'').trim();
         const t1 = tel1Raw.replace(/\D/g,'');
@@ -17055,8 +17080,8 @@ ${ejemplo1}
     // UI TOAST
     // ================================================================
     try {
-      console.log(`%c[ENVIO COMUNICADO FIN v207z] items=${items.length} · modoMedio=${esArchivoReal?'ARCHIVO_REAL':'SOLO_TEXTO_COMO_ASISTENCIA'} · intentos=${intentos} · HTTP=${Number(res?.status||0)} · ef_version=${body?.ef_version||'(no body)'}`, 'background:#6366f1;color:white;font-weight:bold;padding:4px 8px;border-radius:4px;');
-      console.log(`[ENVIO COMUNICADO v207z] FULL BODY=`, body, '| results=', body?.results);
+      console.log(`%c[ENVIO COMUNICADO FIN v208] items=${items.length} · Modo SEGURO SOLO-TEXTO (igual que asistencia SALIDA Luis Belleza 2C, endpoint sendText_v1 1 solo llamado) · intentos=${intentos} · HTTP=${Number(res?.status||0)} · ef_version=${body?.ef_version||'(no body)'}`, 'background:#10b981;color:white;font-weight:bold;padding:4px 8px;border-radius:4px;');
+      console.log(`[ENVIO COMUNICADO v208] FULL BODY=`, body, '| results=', body?.results);
       if(body?.results) {
         body.results.forEach((r, i) => {
           try { console.log(`  → item ${i+1} tel=...${String(r?.telefono||'').slice(-9)} ok=${r?.ok} status=${r?.status}${r?.statusText?' '+r.statusText:''} retry=${r?.retryAsText?'Y':'N'} firstFailedMedia=${r?.firstFailedMedia?'Y':'N'} error=${String(r?.error||'').slice(0,200)} modo=${r?.debug?.modoUsado||''} tookMs=${r?.debug?.tookMs||''} endpoint=${r?.debug?.endpointUsado||''}`); } catch(_) {}
