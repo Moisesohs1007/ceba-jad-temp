@@ -13386,7 +13386,7 @@ async function probarFactiliza() {
     const { data: { session } } = await _sb.auth.getSession();
     const jwt = session?.access_token;
     if(!jwt) { toast('Inicia sesión para enviar WhatsApp','warning'); return; }
-    let num = '51972898389'.replace(/[^0-9]/g, '');
+    let num = '914629285'.replace(/[^0-9]/g, '');
     if(num.startsWith('0')) num = num.substring(1);
     if(num.length === 9) num = '51' + num;
     const img = new URL('img/wa-logo.png', window.location.href).href;
@@ -13415,7 +13415,7 @@ async function probarFactiliza() {
       console.error('[probarFactiliza] Body completo del error EF:', body, 'Status HTTP EF=', res.status);
       return false;
     } else {
-      toast('✅ Mensaje de prueba enviado correctamente (llegará en ~1 minuto)','success');
+      toast(`✅ Mensaje de prueba enviado correctamente a tu celular ${num} (llegará en ~1 minuto) 🎉`,'success');
       return true;
     }
   } catch(e) {
