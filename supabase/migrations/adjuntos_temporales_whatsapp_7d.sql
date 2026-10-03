@@ -6,6 +6,25 @@
 -- Sin costo: bucket publico, upload SOLO authenticated CEBA admin/director/coordinador/docente
 -- =====================================================================
 
+-- PRIMERO: Función helper user_colegio_id() (usada en policies RLS).
+--  Si ya existe, CREATE OR REPLACE no rompe nada.
+CREATE OR REPLACE FUNCTION public.user_colegio_id()
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT COALESCE((
+    SELECT u.colegio_id
+    FROM public.usuarios u
+    WHERE u.id = auth.uid()
+    LIMIT 1
+  ), '')
+$$;
+
+GRANT EXECUTE ON FUNCTION public.user_colegio_id() TO authenticated;
+
 -- Requiere extension pg_cron para auto-borrado
 CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA extensions;
 GRANT USAGE ON SCHEMA cron TO postgres;
