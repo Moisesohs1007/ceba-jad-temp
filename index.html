@@ -15588,6 +15588,7 @@ function _comFiltrados() {
 
 function _renderComListaStaff() {
   window._renderComListaStaff = _renderComListaStaff;
+  try { window.__DEBUG_STAFF_FIRST__ = false; } catch(_) {}
   const tbody = document.getElementById('com-tbody-staff');
   if(!tbody) return;
   const rol   = String(document.getElementById('com-staff-rol')?.value || '').trim();
@@ -15644,6 +15645,21 @@ function _renderComListaStaff() {
     const telRaw = String(u.telefono || '').trim();
     const telLimpio = telRaw.replace(/\D/g, '');
     const valido = _esTelPeruValido(telLimpio);
+    // DEBUG FORENSAL: imprimir primeros 8 filas (si id === 'HUINCHO' nombre incluye)
+    try {
+      if(!window.__DEBUG_STAFF_FIRST__) {
+        window.__DEBUG_STAFF_FIRST__ = true;
+        (rows.slice(0, 8)).forEach(u2 => {
+          const id2 = u2.id; const nm = String(u2.nombre || '').trim();
+          const tl2 = String(u2.telefono || '').trim().replace(/\D/g, '');
+          const v2 = _esTelPeruValido(tl2);
+          console.log(`[RENDER STAFF ROW v207r] id=${id2} · nom=${nm} · telRaw=${u2.telefono||''} · telLimpio=${tl2} · valido=${v2}`);
+        });
+      }
+      if(nombre.toUpperCase().includes('HUINCHO') || nombre.toUpperCase().includes('ORLANDO')) {
+        console.log(`[RENDER STAFF ROW v207r ORLANDO!!] id=${id} · nom=${nombre} · telRaw=${telRaw} · telLimpio=${telLimpio} · valido=${valido} · checkbox <input> onchange=comToggleStaffSel('${id}', this.checked)`);
+      }
+    } catch(_) {}
     const vacio = !telLimpio;
     const invalido = !vacio && !valido;
     const rolRaw = _normRol(u.rol);
@@ -16170,7 +16186,15 @@ function comToastSinTelefonoStaff(nombreEncoded) {
 // v207: STAFF checkbox 1x1. Con guardia final v206.
 // ================================================================
 function comToggleStaffSel(id, on) {
+  // ✅ RC: ASIGNACIÓN TEMPRANA WINDOW (project rule hard constraints)
   window.comToggleStaffSel = comToggleStaffSel;
+
+  // ✅ MOISES v207r DEBUG FORENSAL STAFF CHECKBOX:
+  const uDEBUG_PRE = (_comUsuarios || []).find(x => x && String(x.id) === String(id));
+  const tlDEBUG_PRE = uDEBUG_PRE ? String(uDEBUG_PRE.telefono||'').trim().replace(/\D/g,'') : '';
+  const vDEBUG_PRE = _esTelPeruValido(tlDEBUG_PRE);
+  console.log(`[COM STAFF TOGGLE v207r] id=${id} · on=${on} · nom=${uDEBUG_PRE?.nombre || '—'} · telRaw=${uDEBUG_PRE?.telefono || '—'} · telLimpio=${tlDEBUG_PRE} · valido=${vDEBUG_PRE}`);
+
   try {
     if(window._comUsuarios && Array.isArray(window._comUsuarios) && window._comUsuarios.length > 0 &&
        (!Array.isArray(_comUsuarios) || _comUsuarios.length === 0)) {
