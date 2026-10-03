@@ -16053,7 +16053,30 @@ async function comSetTarget(tgt) {
     if(!_comUsuariosLoaded) {
       try {
         const arr = await _cargarUsuariosCache();
-        _comUsuarios = Array.isArray(arr) ? arr.filter(Boolean) : [];
+        let _arrTemp = Array.isArray(arr) ? arr.filter(Boolean) : [];
+        // ================================================================
+        // ✅ v207u DEDUP MOISES HUINCHO 2 VECES: eliminar duplicados
+        //    (clave = Nombre limpio lowercase + Telefono limpio)
+        // ================================================================
+        try {
+          const __seen = new Set();
+          _arrTemp = (_arrTemp || []).filter(u => {
+            const nl = String(u?.nombre || '').toLowerCase().replace(/[^a-z0-9ñáéíóúü]+/g,'');
+            const tl = String(u?.telefono || '').replace(/\D/g,'');
+            const k = nl + '__' + tl;
+            if(!nl || __seen.has(k)) return false;
+            __seen.add(k);
+            return true;
+          });
+          try {
+            if(window) {
+              window.__COM_USUARIOS_ORIG_LEN = Array.isArray(arr)? arr.length : 0;
+              window.__COM_USUARIOS_DEDUP_LEN = _arrTemp.length;
+              console.log(`%c[STAFF v207u DEDUP] original=${window.__COM_USUARIOS_ORIG_LEN}, despues dedup=${window.__COM_USUARIOS_DEDUP_LEN} (quedaron únicos por nombre+tel).`, 'background:#3b82f6;color:#FFFFFF;font-weight:bold;padding:4px 8px;border-radius:4px;');
+            }
+          } catch(_) {}
+        } catch(_) {}
+        _comUsuarios = _arrTemp;
         _comUsuariosLoaded = true;
       } catch(e) {
         try { console.warn('[comunicado.staff] error cargando usuarios', e?.message||e); } catch(_) {}
@@ -16065,7 +16088,7 @@ async function comSetTarget(tgt) {
       // ================================================================
       (_comUsuarios || []).forEach((u, i) => { try { u.__sidx = 'S'+String(i).padStart(4,'0'); } catch(_) {} });
       try { window.__STAFF_TOTAL_LOADED = (_comUsuarios||[]).length; } catch(_) {}
-      try { console.log('%c[STAFF v207t CARGADO] ASIGNADOS IDs __sidx ÚNICOS: S0000, S0001... (' + ((_comUsuarios||[]).length) + ' usuarios). ORLANDO YA NO DEBERÍA CHOCAR CON ACUÑA.', 'background:#FFD700;color:#000;font-weight:bold;padding:4px 8px;border-radius:4px;'); } catch(_) {}
+      try { console.log('%c[STAFF v207u CARGADO] ASIGNADOS IDs __sidx ÚNICOS: S0000, S0001... (' + ((_comUsuarios||[]).length) + ' usuarios). ORLANDO YA NO DEBERÍA CHOCAR CON ACUÑA. DEDUP APLICADO.', 'background:#FFD700;color:#000;font-weight:bold;padding:4px 8px;border-radius:4px;'); } catch(_) {}
       try { window._comUsuarios = Array.isArray(_comUsuarios) ? _comUsuarios.slice() : []; } catch(_) {}
       try { window._comUsuariosLoaded = true; } catch(_) {}
       // ✅ TOAST INFO VISIBLE PARA MOISES = confirmación que cargó la VERSIÓN CORRECTA (no cache vieja)
@@ -16832,10 +16855,22 @@ async function enviarComunicado() {
   // ================================================================
   // RESUMEN ANTES DE ENVIAR (para que Moises valide y no se equivoque)
   // ================================================================
+  // Helper ID robusto (RC#STAFF_ID_UNDEFINED_v207t __sidx) PARA ENVÍO.
+  function _sendIdOf(x){
+    if(!x) return '';
+    try { if(x.__sidx!=null && String(x.__sidx).trim()) return String(x.__sidx).trim(); } catch(_) {}
+    if(x.id!=null && String(x.id).trim()) return String(x.id).trim();
+    if(x.uid!=null && String(x.uid).trim()) return String(x.uid).trim();
+    if(x.usuario_id!=null && String(x.usuario_id).trim()) return String(x.usuario_id).trim();
+    if(x.codigo!=null && String(x.codigo).trim()) return String(x.codigo).trim();
+    if(x.ID!=null && String(x.ID).trim()) return String(x.ID).trim();
+    if(x._id!=null && String(x._id).trim()) return String(x._id).trim();
+    try { return 'USR_'+String(x.nombre||'').toLowerCase().replace(/[^a-z0-9ñáéíóúü]+/g,''); } catch(_){return '';}
+  }
   let destinatarios = [];
   let ejemplo1 = '';
   if(esStaff) {
-    destinatarios = (_comUsuarios||[]).filter(u => _comStaffSel.has(u.id));
+    destinatarios = (_comUsuarios||[]).filter(u => _comStaffSel.has(_sendIdOf(u)));
     if(destinatarios.length > 0) {
       const u = destinatarios[0];
       const msg = _waEncabezado() + '\n\nCOMUNICADO INTERNO (Personal)\n\n' + _comMsgStaff(tpl, u) + _waPie();
@@ -16849,12 +16884,15 @@ async function enviarComunicado() {
       ejemplo1 = msg;
     }
   }
+  // ✅ v207u FIX MODAL: STAFF NUNCA publica en Portal Alumnos (aunque la variable vieja tenga true).
+  const publicarPortalAlumnosOK = esStaff ? false : !!publicarPortalAlumnos;
+  const publicarPortalStaffOK = !!publicarPortalStaff;
   const resumen =
 `📢 RESUMEN ANTES DE ENVIAR (doble confirmación para evitar errores):
 
 ✅ Destinatarios (${esStaff ? 'Personal/Staff' : 'Alumnos (Apoderados)'}): ${destinatarios.length}
 ${usamosLogoDefault ? '🖼️  Sin archivo adjunto → usaremos LOGO DEFAULT (wa-logo.png).' : '📎  Archivo adjunto: ' + (_comSendName||'')}
-${publicarPortalStaff || publicarPortalAlumnos ? '📌  Sí se publicará en ' + (publicarPortalAlumnos ? 'Portal Alumnos' : '') + (publicarPortalAlumnos && publicarPortalStaff ? ' + ' : '') + (publicarPortalStaff ? 'Panel Interno Personal' : '') + '.' : '🔒  No se publicará en ningún portal (solo WhatsApp).'}
+${(publicarPortalStaffOK || publicarPortalAlumnosOK) ? '📌  Sí se publicará en ' + (publicarPortalAlumnosOK ? 'Portal Alumnos' : '') + (publicarPortalAlumnosOK && publicarPortalStaffOK ? ' + ' : '') + (publicarPortalStaffOK ? 'Panel Interno Personal' : '') + '.' : '🔒  No se publicará en ningún portal (solo WhatsApp).'}
 
 👇 EJEMPLO QUE LLEGARÁ AL PRIMER DESTINATARIO (para que valides):
 
@@ -16871,7 +16909,7 @@ ${ejemplo1}
     let rows = [];
     const otroTel = (document.getElementById('com-otro-tel')?.value || '').trim();
     if(esStaff) {
-      rows = (_comUsuarios||[]).filter(u => _comStaffSel.has(u.id));
+      rows = (_comUsuarios||[]).filter(u => _comStaffSel.has(_sendIdOf(u)));
       // ================================================================
       // ✅ v207e MOISES GLOBAL (AMBOS TABS): SOLO ENVÍA VÁLIDOS /^9\d{8}$/.
       //   Los inválidos (o vacíos) se cuentan en omitidosInvalidos para
