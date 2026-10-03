@@ -22520,6 +22520,36 @@ async function generarAlertasAsistencia() {
     const ausThRaw  = String(ausThEl?.value || '3');
     const tardTh = Math.max(1, parseInt(tardThRaw, 10) || 3);
     const ausTh  = Math.max(1, parseInt(ausThRaw, 10) || 3);
+
+    // ================================================================
+    // ✅ MOISES v207p FIX: INVALIDAR CACHE REGISTROS FUERZA TOTAL
+    //   RC confirmado: caché local (_registrosCache, LS reg_*) retorna
+    //   datos ANTIGUOS incompletos para Septiembre = 8 días menos.
+    //   Ejemplo ANTUANET: 9 faltas real = 21 presencias →
+    //                     caché antiguo: 13 presencias = 17 faltas (ERROR).
+    //   Antes del cálculo de alertas: BORRAMOS TODO el caché y el LS.
+    // ================================================================
+    try {
+      if (typeof DB !== 'undefined') {
+        // Clear RAM cache:
+        const antesRegKeys = Object.keys(DB._registrosCache || {}).length;
+        DB._registrosCache = {};
+        DB._registrosCacheTime = {};
+        DB._resumenMesCache = {};
+        DB._resumenMesCacheTime = {};
+        // Clear localStorage cache reg_* (mismo prefijo save db_supabase.js L569 asmqr_reg_*)
+        let lsBorrados = 0;
+        try {
+          const borrables = Object.keys(localStorage).filter(k =>
+            k.startsWith('asmqr_reg_') || k.startsWith('reg_')
+          );
+          borrables.forEach(k => { try { localStorage.removeItem(k); lsBorrados++; } catch(_){} });
+        } catch(_) {}
+        toast(`🗑️ Caché registros invalidado (RAM ${antesRegKeys} keys · LS ${lsBorrados} keys). Datos en limpio desde DB.`, 'info');
+        console.log(`[ALERTAS v207p] Cache invalidada pre-cálculo: RAM keys=${antesRegKeys} · LS borrados=${lsBorrados}`);
+      }
+    } catch(_) {}
+
     // ✅ MOISES: MOSTRAR VALORES REALES (sin conjeturas):
     //  - Muestro en el status + toast EXTRA INFO para que MOISES pueda COMPRUEBE que lee el input actual:
     const modoCalc = (() => { const cfg = typeof configCache !== 'undefined' ? configCache : (typeof window !== 'undefined' ? window._cfg : null); try { if(cfg) { const v = String(cfg.tipo_colegio || cfg.modalidad || cfg.nombre_colegio || '').toUpperCase(); if(v.includes('EBR') && !v.includes('CEBA') && !v.includes('EBA')) return 'L-V (EBR)'; if(v.includes('CEBA') || v.includes('EBA')) return 'L-D (CEBA)'; } } catch(_){} return 'L-D (CEBA)';})();
@@ -22827,6 +22857,22 @@ async function generarAlertasAsistencia() {
           if(!presTotal[r.alumnoId]) presTotal[r.alumnoId] = new Set();
           presTotal[r.alumnoId].add(r.fecha);
         });
+
+      // ================================================================
+      // ✅ MOISES v207p DEBUG CRÍTICO INDIVIDUAL:
+      //   3 alumnos TESTIGO que antes tenian 9,10,11 faltas.
+      //   Imprime en consola C/U con: fechas presentes, cuenta, faltas calculadas.
+      //   DNI (alumnoId) directos de captura Moises:
+      //   ANTUANET = 61455424 | VILLAJUAN = 61791314 | AROTOMA = 41470052
+      // ================================================================
+      const dnisDebug = ['61455424','61791314','41470052','77031949','77727672','17582934'];
+      dnisDebug.forEach(dni => {
+        const a = alumnosById[dni] || {};
+        const pres = presTotal[dni] || new Set();
+        const fechas = [...pres].sort();
+        const faltasCalc = Math.max(0, diasHab - fechas.length);
+        console.log(`[ALERTAS v207p TESTIGO ${((a.apellidos||'')+' '+(a.nombres||'')).trim() || dni}] DNI=${dni} · Presencias=${fechas.length} · FaltasCalculadas=${faltasCalc} · FechasPresentes=${fechas.map(f=>f.slice(8,10)+'/'+f.slice(5,7)).join(',')} · DiasHab=${diasHab}`);
+      });
 
       // Estadística presencias: cuántos alumnos tienen 0,1-5,6-15,16-25,26-30 presencias
       const presCnts = Object.values(presTotal).map(s => s.size);
