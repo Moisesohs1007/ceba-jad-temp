@@ -15619,12 +15619,23 @@ function _renderComListaStaff() {
   // ================================================================
   const hc = document.getElementById('com-staff-all');
   if(hc) {
+    // Helper robust id igual que render (RC STAFF_ID_UNDEFINED_v207s)
+    function _hcId(x){
+      if(!x) return '';
+      if(x.id!=null && String(x.id).trim()) return String(x.id).trim();
+      if(x.uid!=null && String(x.uid).trim()) return String(x.uid).trim();
+      if(x.usuario_id!=null && String(x.usuario_id).trim()) return String(x.usuario_id).trim();
+      if(x.codigo!=null && String(x.codigo).trim()) return String(x.codigo).trim();
+      if(x.ID!=null && String(x.ID).trim()) return String(x.ID).trim();
+      if(x._id!=null && String(x._id).trim()) return String(x._id).trim();
+      try { return 'USR_'+String(x.nombre||'').toLowerCase().replace(/[^a-z0-9ñáéíóúü]+/g,''); } catch(_){return '';}
+    }
     const totalValidos = rows.filter(u => {
       const tl = String(u?.telefono||'').trim().replace(/\D/g,'');
       return _esTelPeruValido(tl);
     }).length;
     const marcadosValidos = (Array.from(_comStaffSel)).filter(id => {
-      const u = (_comUsuarios||[]).find(x => String(x.id) === String(id));
+      const u = (_comUsuarios||[]).find(x => _hcId(x) === String(id||'').trim());
       if(!u) return false;
       const tl = String(u.telefono||'').trim().replace(/\D/g,'');
       return _esTelPeruValido(tl);
@@ -15640,7 +15651,23 @@ function _renderComListaStaff() {
     }
   }
   tbody.innerHTML = rows.map(u => {
-    const id = u.id;
+    // ✅ RC v207s: u.id PUEDE SER UNDEFINED (carga _usuariosCacheData).
+    //              Extractor ROBUSTO de ID = llave primaria real.
+    const id = (function extractId(uu){
+      if(!uu) return '';
+      if(uu.id!=null && String(uu.id).trim()) return uu.id;
+      if(uu.uid!=null && String(uu.uid).trim()) return uu.uid;
+      if(uu.usuario_id!=null && String(uu.usuario_id).trim()) return uu.usuario_id;
+      if(uu.codigo!=null && String(uu.codigo).trim()) return uu.codigo;
+      if(uu.ID!=null && String(uu.ID).trim()) return uu.ID;
+      if(uu.Id!=null && String(uu.Id).trim()) return uu.Id;
+      if(uu._id!=null && String(uu._id).trim()) return uu._id;
+      // Fallback: usar nombre limpio (no ideal pero evita undefined todos iguales)
+      try {
+        return 'USR_' + String(uu.nombre||'').toLowerCase().replace(/[^a-z0-9ñáéíóúü]+/g,'');
+      } catch(_) { return 'USR_'+(Date.now()+'').slice(-6); }
+    })(u);
+
     const nombre = String(u.nombre || '').trim();
     const telRaw = String(u.telefono || '').trim();
     const telLimpio = telRaw.replace(/\D/g, '');
@@ -15649,15 +15676,26 @@ function _renderComListaStaff() {
     try {
       if(!window.__DEBUG_STAFF_FIRST__) {
         window.__DEBUG_STAFF_FIRST__ = true;
+        console.log(`[RENDER STAFF v207s ESTRUCTURA u[0]]:`, Object.keys(rows[0]||{}), (rows[0]||{}));
         (rows.slice(0, 8)).forEach(u2 => {
-          const id2 = u2.id; const nm = String(u2.nombre || '').trim();
+          const id2 = (function(x){
+            if(!x) return '';
+            if(x.id!=null && String(x.id).trim()) return x.id;
+            if(x.uid!=null && String(x.uid).trim()) return x.uid;
+            if(x.usuario_id!=null && String(x.usuario_id).trim()) return x.usuario_id;
+            if(x.codigo!=null && String(x.codigo).trim()) return x.codigo;
+            if(x.ID!=null && String(x.ID).trim()) return x.ID;
+            if(x._id!=null && String(x._id).trim()) return x._id;
+            try { return 'USR_'+String(x.nombre||'').toLowerCase().replace(/[^a-z0-9ñáéíóúü]+/g,''); } catch(_){return '';}
+          })(u2);
+          const nm = String(u2.nombre || '').trim();
           const tl2 = String(u2.telefono || '').trim().replace(/\D/g, '');
           const v2 = _esTelPeruValido(tl2);
-          console.log(`[RENDER STAFF ROW v207r] id=${id2} · nom=${nm} · telRaw=${u2.telefono||''} · telLimpio=${tl2} · valido=${v2}`);
+          console.log(`[RENDER STAFF ROW v207s] id=${id2} · nom=${nm} · telRaw=${u2.telefono||''} · telLimpio=${tl2} · valido=${v2}`);
         });
       }
       if(nombre.toUpperCase().includes('HUINCHO') || nombre.toUpperCase().includes('ORLANDO')) {
-        console.log(`[RENDER STAFF ROW v207r ORLANDO!!] id=${id} · nom=${nombre} · telRaw=${telRaw} · telLimpio=${telLimpio} · valido=${valido} · checkbox <input> onchange=comToggleStaffSel('${id}', this.checked)`);
+        console.log(`[RENDER STAFF ROW v207s ORLANDO!!] id=${id} · nom=${nombre} · telRaw=${telRaw} · telLimpio=${telLimpio} · valido=${valido} · checkbox <input> onchange=comToggleStaffSel('${id}', this.checked)`);
       }
     } catch(_) {}
     const vacio = !telLimpio;
@@ -16091,6 +16129,17 @@ function comToggleAllStaff(chk) {
     }
   } catch(_) {}
   const rows = _comStaffFiltrados();
+  // Helper ID robusto RC#STAFF_ID_UNDEFINED_v207s
+  function _aid(x){
+    if(!x) return '';
+    if(x.id!=null && String(x.id).trim()) return String(x.id).trim();
+    if(x.uid!=null && String(x.uid).trim()) return String(x.uid).trim();
+    if(x.usuario_id!=null && String(x.usuario_id).trim()) return String(x.usuario_id).trim();
+    if(x.codigo!=null && String(x.codigo).trim()) return String(x.codigo).trim();
+    if(x.ID!=null && String(x.ID).trim()) return String(x.ID).trim();
+    if(x._id!=null && String(x._id).trim()) return String(x._id).trim();
+    try { return 'USR_'+String(x.nombre||'').toLowerCase().replace(/[^a-z0-9ñáéíóúü]+/g,''); } catch(_){return '';}
+  }
   // ================================================================
   // v207e AMBOS TABS: solo seleccionar USUARIOS CON TELEFONO VALIDO PERU
   //   /^9\d{8}$/.  Los inválidos = disabled wrapper; no se seleccionan.
@@ -16101,7 +16150,8 @@ function comToggleAllStaff(chk) {
       const tl = String(u.telefono||'').trim().replace(/\D/g,'');
       return _esTelPeruValido(tl);
     })
-    .map(u => u.id);
+    .map(u => _aid(u))
+    .filter(Boolean);
   if(chk.checked) {
     if(idsValidos.length === 0) {
       const total = rows.length;
@@ -16189,12 +16239,6 @@ function comToggleStaffSel(id, on) {
   // ✅ RC: ASIGNACIÓN TEMPRANA WINDOW (project rule hard constraints)
   window.comToggleStaffSel = comToggleStaffSel;
 
-  // ✅ MOISES v207r DEBUG FORENSAL STAFF CHECKBOX:
-  const uDEBUG_PRE = (_comUsuarios || []).find(x => x && String(x.id) === String(id));
-  const tlDEBUG_PRE = uDEBUG_PRE ? String(uDEBUG_PRE.telefono||'').trim().replace(/\D/g,'') : '';
-  const vDEBUG_PRE = _esTelPeruValido(tlDEBUG_PRE);
-  console.log(`[COM STAFF TOGGLE v207r] id=${id} · on=${on} · nom=${uDEBUG_PRE?.nombre || '—'} · telRaw=${uDEBUG_PRE?.telefono || '—'} · telLimpio=${tlDEBUG_PRE} · valido=${vDEBUG_PRE}`);
-
   try {
     if(window._comUsuarios && Array.isArray(window._comUsuarios) && window._comUsuarios.length > 0 &&
        (!Array.isArray(_comUsuarios) || _comUsuarios.length === 0)) {
@@ -16202,12 +16246,33 @@ function comToggleStaffSel(id, on) {
       _comUsuariosLoaded = true;
     }
   } catch(_) {}
+
+  // Extractor ID robusto IGUAL que _renderComListaStaff (RC#STAFF_ID_UNDEFINED_v207s)
+  function _idOf(x){
+    if(!x) return '';
+    if(x.id!=null && String(x.id).trim()) return String(x.id).trim();
+    if(x.uid!=null && String(x.uid).trim()) return String(x.uid).trim();
+    if(x.usuario_id!=null && String(x.usuario_id).trim()) return String(x.usuario_id).trim();
+    if(x.codigo!=null && String(x.codigo).trim()) return String(x.codigo).trim();
+    if(x.ID!=null && String(x.ID).trim()) return String(x.ID).trim();
+    if(x._id!=null && String(x._id).trim()) return String(x._id).trim();
+    try { return 'USR_'+String(x.nombre||'').toLowerCase().replace(/[^a-z0-9ñáéíóúü]+/g,''); } catch(_){return '';}
+  }
+  function _nombreOf(x){ return String(x?.nombre||'').trim().toLowerCase(); }
+  const idNorm = String(id || '').trim();
+
+  // Buscar u por id robusto, si falla por nombre (fallback USR_ nombre limpio)
+  let u = (_comUsuarios || []).find(x => x && _idOf(x) === idNorm);
+  if(!u) { u = (_comUsuarios || []).find(x => x && ('USR_'+_nombreOf(x).replace(/[^a-z0-9ñáéíóúü]+/g,'')) === idNorm); }
+
+  const tlDEBUG_PRE = u ? String(u.telefono||'').trim().replace(/\D/g,'') : '';
+  const vDEBUG_PRE = tlDEBUG_PRE ? _esTelPeruValido(tlDEBUG_PRE) : null;
+  console.log(`[COM STAFF TOGGLE v207s] id=${idNorm} · on=${on} · nom=${u?.nombre || '—'} · telRaw=${u?.telefono || '—'} · telLimpio=${tlDEBUG_PRE} · valido=${vDEBUG_PRE}`);
   // ================================================================
   // v207e GUARDIA (ahora STAFF = ALUMNOS, MISMA REGLA):
   //   Si usuario existe y telefono NO VALIDO /^9\d{8}$/ => reject.
   //   Vacio = toast sin asignado. Invalido = toast con numero visible.
   // ================================================================
-  const u = (_comUsuarios || []).find(x => x && String(x.id) === String(id));
   if(u) {
     const tl = String(u.telefono||'').trim().replace(/\D/g,'');
     const valido = _esTelPeruValido(tl);
@@ -16229,9 +16294,9 @@ function comToggleStaffSel(id, on) {
       renderComLista();
       return;
     }
-    _comStaffSel.add(id);
+    _comStaffSel.add(idNorm);
   } else {
-    _comStaffSel.delete(id);
+    _comStaffSel.delete(idNorm);
   }
   try { window._comStaffSel = _comStaffSel; } catch(_) {}
   const cnt = document.getElementById('com-count-staff');
