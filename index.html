@@ -22510,6 +22510,25 @@ async function generarAlertasAsistencia() {
       return s.slice(8,10) + '/' + s.slice(5,7);
     };
     const _compact = (arr, max = 10) => arr.length <= max ? arr.join(', ') : (arr.slice(0, max).join(', ') + ` … (+${arr.length - max})`);
+    // ================================================================
+    // ✅ MOISES FIX 1: CEBA / EBA = INCLUYE SÁBADO Y DOMINGO en la
+    //   cuenta de días del período. EBR = solo L-V (dow 1-5).
+    //   Por defecto esta app = CEBA => finesDeSemana = true.
+    //   (Si algún día se usa EBR aquí, cambiarlo a false o derivar de
+    //   configCache.modalidad).
+    // ================================================================
+    const _alertasIncluyeFinesSemana = (() => {
+      try {
+        const cfg = typeof configCache !== 'undefined' ? configCache : (typeof window !== 'undefined' ? window._cfg : null);
+        if (cfg) {
+          const v = String(cfg.tipo_colegio || cfg.modalidad || cfg.nombre_colegio || '').toUpperCase();
+          if (v.includes('EBR') && !v.includes('CEBA') && !v.includes('EBA')) return false;
+          if (v.includes('CEBA') || v.includes('EBA')) return true;
+        }
+      } catch(_){}
+      // Default para esta app = CEBA (incluye Sáb/Dom):
+      return true;
+    })();
     const _buildBusinessDays = (startIso, endIso) => {
       const s = _repIsoToDate(startIso);
       const e = _repIsoToDate(endIso);
@@ -22517,6 +22536,9 @@ async function generarAlertasAsistencia() {
       const out = [];
       for(let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
         const dow = d.getDay();
+        // CEBA -> dow 0,1,2,3,4,5,6 = todos los días.
+        // EBR  -> dow 1,2,3,4,5 = lunes a viernes.
+        if(_alertasIncluyeFinesSemana) { out.push(_repDateToIso(d)); continue; }
         if(dow !== 0 && dow !== 6) out.push(_repDateToIso(d));
       }
       return out;
@@ -22615,9 +22637,17 @@ async function generarAlertasAsistencia() {
       const absentCandidates = alumnos
         .map(a => {
           const aus = Math.max(0, diasHab - (presCount[a.id] || 0));
-          return { alumnoId: a.id, ausencias: aus };
+          return { alumnoId: a.id, ausenciasEstimadas: aus };
         })
-        .filter(x => x.ausencias >= ausTh)
+        // ================================================================
+        // ✅ MOISES FIX 2 (BUG umbral >= ausTh): NO filtramos aquí con el
+        //   valor estimado ausenciasEstimadas. Primero generamos las
+        //   absentRows con el CALCULO REAL DE FALTAS (diasHabiles - presCand),
+        //   y luego filtramos DESPUÉS para que lo que se ve en la COLUMNA
+        //   sea LO MISMO que lo que se filtra por umbral.
+        //   (Antes: filtrar antes con valor viejo = 22 faltas, mostrar 9
+        //   reales porque resumen_mensual desactualizado.)
+        // ================================================================
         .map(x => x.alumnoId);
 
       const presCand = {};
@@ -22645,10 +22675,14 @@ async function generarAlertasAsistencia() {
             seccion: a.seccion,
             nivel: _alumnoNivelText(a, typeof configCache !== 'undefined' ? configCache : {}) || a.turno,
             dias: _compact(faltas.map(_diaLabel).filter(Boolean), 12) || '-',
-            ausencias: faltas.length || '-',
-            tardanzas: '-'
+            ausencias: faltas.length || 0,
+            tardanzas: 0
           };
         })
+        // ✅ MOISES FIX 2: Filtrar >= ausTh SOLO DESPUÉS de calcular
+        //    ausencias REALES con registros día a día (no estimado viejo).
+        //    Aplica para modo RANGO y modo MES (ambas ramas replace_all).
+        .filter(x => x.ausencias >= ausTh)
         .sort((a,b) => (b.ausencias - a.ausencias) || a.nombre.localeCompare(b.nombre));
 
       rows = [...tardyRows, ...absentRows];
@@ -22719,9 +22753,13 @@ async function generarAlertasAsistencia() {
         .map(a => {
           const r = resMap[a.id] || { puntual: 0, tardanza: 0 };
           const aus = Math.max(0, diasHab - (r.puntual + r.tardanza));
-          return { alumnoId: a.id, ausencias: aus };
+          return { alumnoId: a.id, ausenciasEstimadas: aus };
         })
-        .filter(x => x.ausencias >= ausTh)
+        // ================================================================
+        // ✅ MOISES FIX 2 (BUG umbral >= ausTh): Mismo fix MODO MES
+        //   Retrasar el filtro >= ausTh HASTA DESPUÉS del cálculo real
+        //   real de ausencias con registros de días exactos (no resumen).
+        // ================================================================
         .map(x => x.alumnoId);
 
       const presCand = {};
@@ -22749,10 +22787,14 @@ async function generarAlertasAsistencia() {
             seccion: a.seccion,
             nivel: _alumnoNivelText(a, typeof configCache !== 'undefined' ? configCache : {}) || a.turno,
             dias: _compact(faltas.map(_diaLabel).filter(Boolean), 12) || '-',
-            ausencias: faltas.length || '-',
-            tardanzas: '-'
+            ausencias: faltas.length || 0,
+            tardanzas: 0
           };
         })
+        // ✅ MOISES FIX 2: Filtrar >= ausTh SOLO DESPUÉS de calcular
+        //    ausencias REALES con registros día a día (no estimado viejo).
+        //    Aplica para modo RANGO y modo MES (ambas ramas replace_all).
+        .filter(x => x.ausencias >= ausTh)
         .sort((a,b) => (b.ausencias - a.ausencias) || a.nombre.localeCompare(b.nombre));
 
       rows = [...tardyRows, ...absentRows];
