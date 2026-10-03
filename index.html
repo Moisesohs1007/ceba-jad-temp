@@ -17030,22 +17030,41 @@ ${ejemplo1}
     const fail = results.length - ok;
     if(st) st.textContent = `Envío terminado: ${ok} ok, ${fail} fallos`;
 
-    // ✅ v207v: feedback DETALLADO de fallos (mostrar primer error Factiliza si hay)
+    // ✅ v207w: feedback DETALLADO de fallos (tomar error HUMANO desde EF results[].error)
     const fallosDetalle = results.filter(r => !r.ok).slice(0, 3).map((r, i) => {
-      const er = String(r?.error || r?.message || 'sin detalle').slice(0, 240);
+      const er = String(
+        r?.error ||
+        r?.details?.message ||
+        r?.details?.mensaje ||
+        r?.details?.error ||
+        (r?.status === 405 ? 'HTTP 405 Token con falta de pago Factiliza' : '') ||
+        (r?.status ? `HTTP ${r.status}` : '') ||
+        'sin detalle'
+      ).slice(0, 320);
       const tl = String(r?.telefono || '').slice(-9);
-      const payErr = (er.includes('falta de pago') || er.includes('405') || er.toLowerCase().includes('token'));
+      const payErr = (
+        er.includes('falta de pago') ||
+        er.includes('405') ||
+        er.includes('FACTILIZA') ||
+        er.includes('949035687') ||
+        (r?.status === 405) ||
+        er.toLowerCase().includes('token')
+      );
       return `  ${i+1}) Tel ...${tl}: ${payErr ? '💰 FALTA PAGO Factiliza → ' : ''}${er}`;
     }).join('\n');
     let msjFin = `📢 Comunicado enviado: ${ok} ok, ${fail} fallos.`;
     if(fail > 0 && fallosDetalle) msjFin += `\n\n🔍 Detalle fallos (primeros ${Math.min(3, fail)}):\n${fallosDetalle}`;
-    const payGlobal = results.some(r => {
-      const m = String(r?.error||r?.message||'');
-      return m.includes('falta de pago') || m.includes('405') || m.toLowerCase().includes('token');
-    });
-    if(payGlobal) msjFin += `\n\n💰 🚨 GLOBAL: Factiliza sin saldo. Escribe a Soporte WhatsApp +51 949035687 para recargar.`;
-    toast(msjFin, fail ? (payGlobal ? 'warning' : 'warning') : 'success', fail > 0 ? 16000 : 5000);
-    try { console.log(`[ENVIO COMUNICADO FIN] items=${items.length} · results=${results.length} · ok=${ok} · fail=${fail}`, results); } catch(_){}
+    // Fallback si aun sin detalle pero hay fallos y status 405
+    const payGlobal = (function(){
+      if(results.some(r => r?.status === 405)) return true;
+      return results.some(r => {
+        const m = String(r?.error || r?.details?.message || r?.details?.mensaje || r?.details?.error || '');
+        return m.includes('falta de pago') || m.includes('405') || m.toLowerCase().includes('token') || m.includes('949035687');
+      });
+    })();
+    if(payGlobal) msjFin += `\n\n💰 🚨 GLOBAL: Factiliza sin saldo. Escribe YA a Soporte WhatsApp +51 949035687 para recargar créditos de envío.`;
+    toast(msjFin, fail ? (payGlobal ? 'warning' : 'warning') : 'success', fail > 0 ? 17000 : 5000);
+    try { console.log(`%c[ENVIO COMUNICADO FIN v207w] items=${items.length} · results=${results.length} · ok=${ok} · fail=${fail}`, 'background:#6366f1;color:white;font-weight:bold;padding:4px 8px;border-radius:4px;', results); } catch(_){}
     if(!esStaff && publicarPortalAlumnos) {
       await _publicarComunicadosPortal(rows, tituloPortal, tpl);
     }

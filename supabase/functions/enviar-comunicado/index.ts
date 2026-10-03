@@ -196,7 +196,39 @@ serve(async (req) => {
       const txt = await res.text();
       let details: any = { raw: txt ?? '' };
       try { details = txt ? JSON.parse(txt) : { raw: '' }; } catch (e) {}
-      results.push({ telefono: num, ok: res.ok, status: res.status, details });
+      // ====================================================================
+      // ✅ v207w: MOISES - CALCULAR CAMPO ERROR HUMANO CLARO
+      //   (UI lee results[].error para mostrarle a Moises que pasó)
+      // ====================================================================
+      const dMessage =
+        typeof details?.message === 'string' ? details.message :
+        typeof details?.mensaje === 'string' ? details.mensaje :
+        typeof details?.error === 'string' ? details.error :
+        typeof details?.msg === 'string' ? details.msg :
+        '';
+      const isFactilizaPago =
+        (res.status === 405) ||
+        dMessage.toLowerCase().includes('falta de pago') ||
+        dMessage.toLowerCase().includes('soporte') ||
+        String(details?.success) === 'false' && dMessage.length > 0;
+      let errorHumano = dMessage;
+      if (isFactilizaPago) {
+        errorHumano =
+          (dMessage ? (dMessage + ' ') : '') +
+          '👉 CONTACTA SOPORTE FACTILIZA WHATSAPP: +51 949035687 (proveedor WhatsApp sin saldo/falta de pago).';
+      } else if (!errorHumano) {
+        if (res.status === 401 || res.status === 403) errorHumano = 'Token Factiliza inválido/expirado. Revisa Configuración → WhatsApp.';
+        else if (res.status >= 500) errorHumano = `Servidor Factiliza caído (HTTP ${res.status}). Inténtalo en 1 minuto.`;
+        else if (res.status === 429) errorHumano = 'Demasiados envíos seguidos. Espera 30s y vuelve a intentar.';
+        else errorHumano = `HTTP ${res.status} sin detalle adicional`;
+      }
+      results.push({
+        telefono: num,
+        ok: res.ok,
+        status: res.status,
+        error: errorHumano,
+        details,
+      });
 
       await sleep(1200);
     }
