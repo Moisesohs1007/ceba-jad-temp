@@ -22723,19 +22723,24 @@ async function generarAlertasAsistencia() {
           };
         });
 
-      // Debug distribución modo RANGO (mismo patrón v207m)
+      // Debug distribución modo RANGO (mismo patrón v207n)
       const todasAusR = preFilterRangoRows.map(r => r.ausencias);
+      const minAR = todasAusR.length ? Math.min(...todasAusR) : 0;
+      const maxAR = todasAusR.length ? Math.max(...todasAusR) : 0;
+      const avgAR = todasAusR.length ? (todasAusR.reduce((s,v)=>s+v,0)/todasAusR.length).toFixed(1) : '0';
       const cntR = (n1,n2) => todasAusR.filter(v => v>=n1 && v<=n2).length;
       const cntGER = (n) => todasAusR.filter(v => v>=n).length;
       const statsR = [`[0-2]=${cntR(0,2)}`,`[3-5]=${cntR(3,5)}`,`[6-9]=${cntR(6,9)}`,`[10-15]=${cntR(10,15)}`,`[16-20]=${cntR(16,20)}`,`[21-29]=${cntR(21,29)}`,`[30+]=${cntR(30,999)}`,`≥${ausTh}=${cntGER(ausTh)}`].join(' · ');
-      console.log(`[ALERTAS RANGO v207m] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${todasAusR.length?Math.min(...todasAusR):0} Max=${todasAusR.length?Math.max(...todasAusR):0} | Dist: ${statsR}`);
+      console.log(`[ALERTAS v207n RANGO] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${minAR} Max=${maxAR} Prom=${avgAR} | Dist: ${statsR}`);
+      console.log(`[ALERTAS v207n RANGO] 20 alumnos CON MENOS faltas:`,
+        [...preFilterRangoRows].sort((a,b)=>a.ausencias-b.ausencias).slice(0,20).map(r => `${r.nombre.split(' ').slice(0,2).join(' ')}=${r.ausencias}`).join(' | ')
+      );
+      window.__ALERTAS_DIST_FALTAS__ = { modo: 'RANGO', minA: minAR, maxA: maxAR, avgA: avgAR, rangos: statsR, umbralAus: ausTh, totalAlumnos: preFilterRangoRows.length };
 
       const absentRows = preFilterRangoRows
-        // ✅ MOISES FIX 2: Filtrar >= ausTh SOLO DESPUÉS de calcular
-        //    ausencias REALES con registros día a día (no estimado viejo).
-        //    Aplica para modo RANGO y modo MES (ambas ramas replace_all).
         .filter(x => x.ausencias >= ausTh)
-        .sort((a,b) => (b.ausencias - a.ausencias) || a.nombre.localeCompare(b.nombre));
+        // ✅ MOISES v207n FIX BLOQUEO 17: ORDEN ASCENDENTE (MENORES faltas PRIMEROS = visibles ARRIBA sin scroll)
+        .sort((a,b) => (a.ausencias - b.ausencias) || a.nombre.localeCompare(b.nombre));
 
       rows = [...tardyRows, ...absentRows];
     } else {
@@ -22895,16 +22900,19 @@ async function generarAlertasAsistencia() {
         `[30]=${cnt(30,30)}`,
         `≥${ausTh}=${cntGE(ausTh)}`
       ].join(' · ');
-      console.log(`[ALERTAS v207m] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${minA} Max=${maxA} Prom=${avgA} | Dist: ${statsDebug}`);
-      console.log(`[ALERTAS v207m] Ejemplos 10 primeros alumnos (faltas):`, preFilterRows.slice(0,10).map(r => `${r.nombre.split(' ').slice(0,2).join(' ')}=${r.ausencias}`).join(' | '));
-      toast(`📊 Debug distribución faltas: Min=${minA} · Máx=${maxA} · Prom=${avgA} · Rangos: ${statsDebug}`, 'info');
+      console.log(`[ALERTAS v207n MES] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${minA} Max=${maxA} Prom=${avgA} | Dist: ${statsDebug}`);
+      console.log(`[ALERTAS v207n MES] 20 alumnos CON MENOS faltas:`,
+        [...preFilterRows].sort((a,b)=>a.ausencias-b.ausencias).slice(0,20).map(r => `${r.nombre.split(' ').slice(0,2).join(' ')}=${r.ausencias}`).join(' | ')
+      );
+      console.log(`[ALERTAS v207n MES] Total alumnos preFilterRows: ${preFilterRows.length} · Total registros INGRESO recuperados: ${Object.values(presCand).reduce((s,v)=>s+v.size,0)}`);
+      toast(`📊 Debug: Min=${minA} · Máx=${maxA} · Prom=${avgA} · Rangos: ${statsDebug}`, 'info');
+      window.__ALERTAS_DIST_FALTAS__ = { modo: 'MES', minA, maxA, avgA, rangos: statsDebug, umbralAus: ausTh, totalAlumnos: preFilterRows.length };
 
       const absentRows = preFilterRows
-        // ✅ MOISES FIX 2: Filtrar >= ausTh SOLO DESPUÉS de calcular
-        //    ausencias REALES con registros día a día (no estimado viejo).
-        //    Aplica para modo RANGO y modo MES (ambas ramas replace_all).
         .filter(x => x.ausencias >= ausTh)
-        .sort((a,b) => (b.ausencias - a.ausencias) || a.nombre.localeCompare(b.nombre));
+        // ✅ MOISES v207n FIX BLOQUEO 17: ORDEN ASCENDENTE (PRIMERO los de MENOS faltas = 3,4,5 visibles ARRIBA)
+        //   Antes: DESCENDENTE = los de 17,18,30 aparecían PRIMEROS, ocultando <17 abajo.
+        .sort((a,b) => (a.ausencias - b.ausencias) || a.nombre.localeCompare(b.nombre));
 
       rows = [...tardyRows, ...absentRows];
     }
@@ -22913,8 +22921,16 @@ async function generarAlertasAsistencia() {
 
     const mkUnifiedTable = (rows) => {
       if(!rows.length) return `<div style="color:var(--muted);font-size:.85rem;margin-top:6px;">Sin resultados con los filtros actuales.</div>`;
+      const dist = typeof window !== 'undefined' ? window.__ALERTAS_DIST_FALTAS__ : null;
+      const distHtml = dist ? `
+        <div style="background:linear-gradient(135deg,#0ea5e9,#6366f1);color:#fff;padding:12px 16px;border-radius:10px;margin:10px 0 14px;font-weight:600;">
+          <div style="font-size:.92rem;opacity:.95;letter-spacing:.2px;">📊 DISTRIBUCIÓN FALTAS · MODO: ${dist.modo} · UMBRAL ≥ ${dist.umbralAus}</div>
+          <div style="font-size:1rem;margin-top:6px;letter-spacing:.2px;">${dist.rangos}</div>
+          <div style="font-size:.78rem;margin-top:4px;opacity:.9;">Total alumnos: ${dist.totalAlumnos} · Mínimo: ${dist.minA} · Máximo: ${dist.maxA} · Promedio: ${dist.avgA}</div>
+        </div>` : '';
       return `
         <div style="margin-top:10px;">
+          ${distHtml}
           <div style="overflow:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface2);">
             <table class="table" style="width:100%;">
               <thead>
