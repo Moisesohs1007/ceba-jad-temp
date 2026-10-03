@@ -15619,9 +15619,10 @@ function _renderComListaStaff() {
   // ================================================================
   const hc = document.getElementById('com-staff-all');
   if(hc) {
-    // Helper robust id igual que render (RC STAFF_ID_UNDEFINED_v207s)
+    // Helper robust id igual que render (RC STAFF_ID_UNDEFINED_v207s + __sidx v207t)
     function _hcId(x){
       if(!x) return '';
+      try { if(x.__sidx!=null && String(x.__sidx).trim()) return String(x.__sidx).trim(); } catch(_) {}
       if(x.id!=null && String(x.id).trim()) return String(x.id).trim();
       if(x.uid!=null && String(x.uid).trim()) return String(x.uid).trim();
       if(x.usuario_id!=null && String(x.usuario_id).trim()) return String(x.usuario_id).trim();
@@ -15651,10 +15652,10 @@ function _renderComListaStaff() {
     }
   }
   tbody.innerHTML = rows.map(u => {
-    // ✅ RC v207s: u.id PUEDE SER UNDEFINED (carga _usuariosCacheData).
-    //              Extractor ROBUSTO de ID = llave primaria real.
+    // ✅ RC v207t: PRIMERO __sidx (garantizado único S0000, S0001...), luego el resto.
     const id = (function extractId(uu){
       if(!uu) return '';
+      try { if(uu.__sidx!=null && String(uu.__sidx).trim()) return String(uu.__sidx).trim(); } catch(_) {}
       if(uu.id!=null && String(uu.id).trim()) return uu.id;
       if(uu.uid!=null && String(uu.uid).trim()) return uu.uid;
       if(uu.usuario_id!=null && String(uu.usuario_id).trim()) return uu.usuario_id;
@@ -15676,10 +15677,11 @@ function _renderComListaStaff() {
     try {
       if(!window.__DEBUG_STAFF_FIRST__) {
         window.__DEBUG_STAFF_FIRST__ = true;
-        console.log(`[RENDER STAFF v207s ESTRUCTURA u[0]]:`, Object.keys(rows[0]||{}), (rows[0]||{}));
+        console.log(`[RENDER STAFF v207t ESTRUCTURA u[0]]:`, Object.keys(rows[0]||{}), (rows[0]||{}));
         (rows.slice(0, 8)).forEach(u2 => {
           const id2 = (function(x){
             if(!x) return '';
+            try { if(x.__sidx!=null && String(x.__sidx).trim()) return String(x.__sidx).trim(); } catch(_) {}
             if(x.id!=null && String(x.id).trim()) return x.id;
             if(x.uid!=null && String(x.uid).trim()) return x.uid;
             if(x.usuario_id!=null && String(x.usuario_id).trim()) return x.usuario_id;
@@ -15691,11 +15693,11 @@ function _renderComListaStaff() {
           const nm = String(u2.nombre || '').trim();
           const tl2 = String(u2.telefono || '').trim().replace(/\D/g, '');
           const v2 = _esTelPeruValido(tl2);
-          console.log(`[RENDER STAFF ROW v207s] id=${id2} · nom=${nm} · telRaw=${u2.telefono||''} · telLimpio=${tl2} · valido=${v2}`);
+          console.log(`[RENDER STAFF ROW v207t] id=${id2} · nom=${nm} · telRaw=${u2.telefono||''} · telLimpio=${tl2} · valido=${v2}`);
         });
       }
       if(nombre.toUpperCase().includes('HUINCHO') || nombre.toUpperCase().includes('ORLANDO')) {
-        console.log(`[RENDER STAFF ROW v207s ORLANDO!!] id=${id} · nom=${nombre} · telRaw=${telRaw} · telLimpio=${telLimpio} · valido=${valido} · checkbox <input> onchange=comToggleStaffSel('${id}', this.checked)`);
+        console.log(`%c[RENDER STAFF ROW v207t ORLANDO!!] id=${id} · nom=${nombre} · valido=${valido} · onchange=comToggleStaffSel('${id}', this.checked)`, 'background:#006600;color:#FFFFFF;font-weight:bold;padding:3px 6px;border-radius:4px;');
       }
     } catch(_) {}
     const vacio = !telLimpio;
@@ -16057,8 +16059,17 @@ async function comSetTarget(tgt) {
         try { console.warn('[comunicado.staff] error cargando usuarios', e?.message||e); } catch(_) {}
         _comUsuarios = []; _comUsuariosLoaded = true;
       }
+      // ================================================================
+      // ✅ v207t FIX GARANTIZADO ID ÚNICO: asignar __sidx incremental a CADA usuario
+      // (ya que .id/.uid/.codigo TODOS pueden ser undefined en _usuariosCacheData)
+      // ================================================================
+      (_comUsuarios || []).forEach((u, i) => { try { u.__sidx = 'S'+String(i).padStart(4,'0'); } catch(_) {} });
+      try { window.__STAFF_TOTAL_LOADED = (_comUsuarios||[]).length; } catch(_) {}
+      try { console.log('%c[STAFF v207t CARGADO] ASIGNADOS IDs __sidx ÚNICOS: S0000, S0001... (' + ((_comUsuarios||[]).length) + ' usuarios). ORLANDO YA NO DEBERÍA CHOCAR CON ACUÑA.', 'background:#FFD700;color:#000;font-weight:bold;padding:4px 8px;border-radius:4px;'); } catch(_) {}
       try { window._comUsuarios = Array.isArray(_comUsuarios) ? _comUsuarios.slice() : []; } catch(_) {}
       try { window._comUsuariosLoaded = true; } catch(_) {}
+      // ✅ TOAST INFO VISIBLE PARA MOISES = confirmación que cargó la VERSIÓN CORRECTA (no cache vieja)
+      toast(`✅ STAFF v207t cargado (Fix Huincho Orlando: IDs únicos asignados). ${((_comUsuarios||[]).length)} miembros del personal.`, 'success', 5500);
       // Poblar selector "Cargos" con valores reales de la BD (no hardcodeados)
       const selCargo = document.getElementById('com-staff-cargo');
       if(selCargo) {
@@ -16129,9 +16140,10 @@ function comToggleAllStaff(chk) {
     }
   } catch(_) {}
   const rows = _comStaffFiltrados();
-  // Helper ID robusto RC#STAFF_ID_UNDEFINED_v207s
+  // Helper ID robusto RC#STAFF_ID_UNDEFINED_v207s + __sidx v207t (garantizado único)
   function _aid(x){
     if(!x) return '';
+    try { if(x.__sidx!=null && String(x.__sidx).trim()) return String(x.__sidx).trim(); } catch(_) {}
     if(x.id!=null && String(x.id).trim()) return String(x.id).trim();
     if(x.uid!=null && String(x.uid).trim()) return String(x.uid).trim();
     if(x.usuario_id!=null && String(x.usuario_id).trim()) return String(x.usuario_id).trim();
@@ -16247,9 +16259,10 @@ function comToggleStaffSel(id, on) {
     }
   } catch(_) {}
 
-  // Extractor ID robusto IGUAL que _renderComListaStaff (RC#STAFF_ID_UNDEFINED_v207s)
+  // Extractor ID robusto IGUAL que _renderComListaStaff (RC#STAFF_ID_UNDEFINED_v207s + __sidx v207t)
   function _idOf(x){
     if(!x) return '';
+    try { if(x.__sidx!=null && String(x.__sidx).trim()) return String(x.__sidx).trim(); } catch(_) {}
     if(x.id!=null && String(x.id).trim()) return String(x.id).trim();
     if(x.uid!=null && String(x.uid).trim()) return String(x.uid).trim();
     if(x.usuario_id!=null && String(x.usuario_id).trim()) return String(x.usuario_id).trim();
@@ -16267,7 +16280,11 @@ function comToggleStaffSel(id, on) {
 
   const tlDEBUG_PRE = u ? String(u.telefono||'').trim().replace(/\D/g,'') : '';
   const vDEBUG_PRE = tlDEBUG_PRE ? _esTelPeruValido(tlDEBUG_PRE) : null;
-  console.log(`[COM STAFF TOGGLE v207s] id=${idNorm} · on=${on} · nom=${u?.nombre || '—'} · telRaw=${u?.telefono || '—'} · telLimpio=${tlDEBUG_PRE} · valido=${vDEBUG_PRE}`);
+  if(String(u?.nombre||'').toUpperCase().includes('HUINCHO') || String(u?.nombre||'').toUpperCase().includes('ORLANDO')) {
+    console.log(`%c[COM STAFF TOGGLE v207t ORLANDO!!] id=${idNorm} · on=${on} · nom=${u?.nombre || '—'} · tel=${tlDEBUG_PRE} · valido=${vDEBUG_PRE}`, 'background:#006600;color:#FFFFFF;font-weight:bold;padding:4px 8px;border-radius:4px;');
+  } else {
+    console.log(`[COM STAFF TOGGLE v207t] id=${idNorm} · on=${on} · nom=${u?.nombre || '—'} · telRaw=${u?.telefono || '—'} · telLimpio=${tlDEBUG_PRE} · valido=${vDEBUG_PRE}`);
+  }
   // ================================================================
   // v207e GUARDIA (ahora STAFF = ALUMNOS, MISMA REGLA):
   //   Si usuario existe y telefono NO VALIDO /^9\d{8}$/ => reject.
@@ -16295,8 +16312,11 @@ function comToggleStaffSel(id, on) {
       return;
     }
     _comStaffSel.add(idNorm);
+    // ✅ v207t: toast VERDE confirmación al marcar (Moises se entera que marcó HUINCHO, no a otros)
+    if(u) toast(`✅ ${String(u.nombre || '').trim()} AGREGADO a destinatarios. Total: ${Math.max((_comStaffSel||new Set()).size,((window._comStaffSel||new Set()).size))}/${_COM_MAX}.`, 'success', 2800);
   } else {
     _comStaffSel.delete(idNorm);
+    if(u) toast(`ℹ ${String(u.nombre || '').trim()} retirado de destinatarios.`, 'info', 2200);
   }
   try { window._comStaffSel = _comStaffSel; } catch(_) {}
   const cnt = document.getElementById('com-count-staff');
