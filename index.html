@@ -21207,6 +21207,8 @@ async function initAlertas() {
     _disableSelect('al-grado');
     _disableSelect('al-seccion');
     await _autoSelectTutoria('al-nivel', 'al-grado', 'al-seccion', { cfg, alumnos });
+    // ✅ MOISES FIX UX: precargar últimos umbrales guardados (si existen)
+    _alCargarUmbralesLocal();
     _alertasInitKey = initKey;
   }
   const st = document.getElementById('al-alertas-status');
@@ -21254,7 +21256,37 @@ function onAlRangoChangeAlertas() {
   _alClearAlertasOutput();
 }
 
+// ================================================================
+// ✅ MOISES FIX UX: Persistir ÚLTIMOS umbrales usados en localStorage.
+//   Evita que cada refresh / volver se reinicie a 3 todo el rato.
+// ================================================================
+const _AL_KEY_UMBRAL_TARD = 'ceba_al_umbral_tard_v1';
+const _AL_KEY_UMBRAL_AUS  = 'ceba_al_umbral_aus_v1';
+function _alGuardarUmbralesLocal() {
+  try {
+    const t = document.getElementById('al-alert-tard');
+    const a = document.getElementById('al-alert-aus');
+    if(t && t.value) localStorage.setItem(_AL_KEY_UMBRAL_TARD, String(t.value));
+    if(a && a.value) localStorage.setItem(_AL_KEY_UMBRAL_AUS,  String(a.value));
+  } catch(_){}
+}
+function _alCargarUmbralesLocal() {
+  try {
+    const t = document.getElementById('al-alert-tard');
+    const a = document.getElementById('al-alert-aus');
+    if(t) {
+      const saved = localStorage.getItem(_AL_KEY_UMBRAL_TARD);
+      if(saved && /^[1-9]\d*$/.test(saved.trim())) t.value = saved.trim();
+    }
+    if(a) {
+      const saved = localStorage.getItem(_AL_KEY_UMBRAL_AUS);
+      if(saved && /^[1-9]\d*$/.test(saved.trim())) a.value = saved.trim();
+    }
+  } catch(_){}
+}
+
 function onAlUmbralChangeAlertas() {
+  _alGuardarUmbralesLocal();
   _alClearAlertasOutput();
 }
 
@@ -21275,6 +21307,8 @@ async function limpiarFiltrosAlertas() {
   if(gra) gra.value = '';
   if(sec) sec.value = '';
   if(q) q.value = '';
+  // ✅ UX: al darle "Limpiar" NO borramos los umbrales (se acuerda Moises!).
+  //    Si el usuario quiere volver a 3, lo cambia manual o borra localStorage.
   await poblarFiltroGrado('al-grado', null);
   await poblarFiltroSeccion('al-seccion', null);
   _disableSelect('al-grado');
