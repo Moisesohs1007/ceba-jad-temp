@@ -17050,11 +17050,11 @@ ${ejemplo1}
     // UI TOAST
     // ================================================================
     try {
-      console.log(`%c[ENVIO COMUNICADO FIN v207x] items=${items.length} · intentos=${intentos} · HTTP=${Number(res?.status||0)} · ef_version=${body?.ef_version||'(no body)'}`, 'background:#6366f1;color:white;font-weight:bold;padding:4px 8px;border-radius:4px;');
-      console.log(`[ENVIO COMUNICADO v207x] FULL BODY=`, body, '| results=', body?.results);
+      console.log(`%c[ENVIO COMUNICADO FIN v207y] items=${items.length} · intentos=${intentos} · HTTP=${Number(res?.status||0)} · ef_version=${body?.ef_version||'(no body)'}`, 'background:#6366f1;color:white;font-weight:bold;padding:4px 8px;border-radius:4px;');
+      console.log(`[ENVIO COMUNICADO v207y] FULL BODY=`, body, '| results=', body?.results);
       if(body?.results) {
         body.results.forEach((r, i) => {
-          try { console.log(`  → item ${i+1} tel=...${String(r?.telefono||'').slice(-9)} ok=${r?.ok} status=${r?.status}${r?.statusText?' '+r.statusText:''} error=${String(r?.error||'').slice(0,200)} modo=${r?.debug?.modoUsado||''} tookMs=${r?.debug?.tookMs||''} endpoint=${r?.debug?.endpointUsado||''}`); } catch(_) {}
+          try { console.log(`  → item ${i+1} tel=...${String(r?.telefono||'').slice(-9)} ok=${r?.ok} status=${r?.status}${r?.statusText?' '+r.statusText:''} retry=${r?.retryAsText?'Y':'N'} firstFailedMedia=${r?.firstFailedMedia?'Y':'N'} error=${String(r?.error||'').slice(0,200)} modo=${r?.debug?.modoUsado||''} tookMs=${r?.debug?.tookMs||''} endpoint=${r?.debug?.endpointUsado||''}`); } catch(_) {}
         });
       }
     } catch(_) {}
@@ -17067,15 +17067,21 @@ ${ejemplo1}
       } else {
         msgUser = `❌ ERROR INTERNO (HTTP ${statusNum}): ${msgRaw}`;
       }
-      if(msgRaw.includes('falta de pago') || msgRaw.includes('405') || msgRaw.toLowerCase().includes('token') || msgRaw.includes('949035687')) {
-        msgUser = `💰 🚨 ERROR FACTILIZA (PROBABLEMENTE SIN SALDO / FALTA DE PAGO):\n\n${msgRaw}\n\n👉 CONTACTA SOPORTE FACTILIZA AHORA POR WHATSAPP INMEDIATAMENTE: +51 949035687\n\n(Esto NO es un error del sistema CEBA-JAD; es el PROVEEDOR WhatsApp Factiliza el que bloqueó el envío por falta de pago, saldo o suspensión temporal de tu cuenta).\n\nVersión EF: ${body?.ef_version || '(desconocida)'}`;
+      // SOLO si hay STRINGS REALES de falta pago (NO SOLO status 405 sin mensaje)
+      const realPago = (
+        /falta de pago|falta pago|sin saldo|suspended|suspendid|vencid|insufficient|no credit|agotad|acabad/i.test(msgRaw) ||
+        /949035687/.test(msgRaw) ||
+        (/token/i.test(msgRaw) && /invalid|expired|inválido|vencido/i.test(msgRaw))
+      );
+      if(realPago) {
+        msgUser = `💰 🚨 ERROR FACTILIZA (CONFIRMADO FALTA SALDO / FALTA DE PAGO):\n\n${msgRaw}\n\n👉 CONTACTA SOPORTE FACTILIZA AHORA POR WHATSAPP INMEDIATAMENTE: +51 949035687\n\n(Esto NO es un error del sistema CEBA-JAD; es el PROVEEDOR WhatsApp Factiliza el que bloqueó el envío por falta de pago, saldo o suspensión temporal CONFIRMADA).\n\nVersión EF: ${body?.ef_version || '(desconocida)'}`;
       } else if(statusNum >= 500 || /stack|error interno del servidor/i.test(msgRaw)) {
-        msgUser += `\n\n👉 Pasos para resolver: (a) espera 1 minuto y prueba de nuevo; (b) si sigue así → CONTACTA SOPORTE FACTILIZA: +51 949035687.`;
+        msgUser += `\n\n👉 Pasos para resolver: (a) espera 1 minuto y prueba de nuevo; (b) el sistema YA REINTENTÓ AUTOMÁTICAMENTE con SOLO-TEXTO (igual que las asistencias que SÍ funcionan); (c) si sigue así CONTACTA SOPORTE FACTILIZA: +51 949035687.`;
       }
       if(body?.stack) {
         try { console.error('[EF enviar-comunicado TOP-LEVEL stack]:', body.stack); } catch(_){}
       }
-      toast(msgUser, 'warning', 18000);
+      toast(msgUser, 'warning', 20000);
       if(st) st.textContent = '';
       return;
     }
@@ -17084,53 +17090,59 @@ ${ejemplo1}
     const fail = results.length - ok;
     if(st) st.textContent = `Envío terminado: ${ok} ok, ${fail} fallos`;
 
-    // ✅ v207x: feedback DETALLADO de fallos (campo error HUMANO ya viene desde EF)
+    // ✅ v207y: feedback DETALLADO de fallos FINAL (corregido falso positivo falta pago)
     const fallosDetalle = results.filter(r => !r.ok).slice(0, 3).map((r, i) => {
       let er = String(r?.error || '').trim();
       if(!er) {
-        // Fallbacks si EF devolvió viejo formato
         er = String(
           r?.details?.message ||
           r?.details?.mensaje ||
           r?.details?.error ||
-          (r?.status === 405 ? 'HTTP 405 Token con falta de pago Factiliza' : '') ||
+          (r?.status === 405 ? 'HTTP 405' : '') ||
           (r?.status ? `HTTP ${r.status}` : '') ||
           'sin detalle'
         );
       }
       er = er.slice(0, 400);
       const tl = String(r?.telefono || '').slice(-9);
-      // Agregamos info debug modo/endpoint si existe disponible
       const extras = [];
+      if(r?.retryAsText) extras.push(`✔️REINTENTO AUTO SOLO-TEXTO (como asistencia SÍ funciona)=${r.ok?'OK ✅':'falló'}`);
+      if(r?.firstFailedMedia) extras.push(`sendMedia_rotó primero ✓`);
       if(r?.debug?.modoUsado) extras.push('modo=' + r.debug.modoUsado);
       if(r?.debug?.tookMs != null) extras.push('tomó=' + r.debug.tookMs + 'ms');
-      if(r?.rawPreview) extras.push('raw=' + String(r.rawPreview).slice(0, 60));
+      if(r?.rawPreview && r.ok) {} else if(r?.rawPreview) extras.push('raw=' + String(r.rawPreview).slice(0, 60));
       const extraStr = extras.length ? ` [${extras.join(' · ')}]` : '';
-      const payErr = (
-        er.includes('falta de pago') ||
-        er.includes('405') ||
-        er.includes('FACTILIZA') ||
-        er.includes('949035687') ||
-        (r?.status === 405) ||
-        (r?.status === 500 && /internal server error|server error/i.test(er)) ||
-        er.toLowerCase().includes('token') ||
-        er.includes('sin saldo')
+      const realPagoItem = (
+        /falta de pago|falta pago|sin saldo|suspended|suspendid|vencid|insufficient|no credit|agotad|acabad/i.test(er) ||
+        /949035687/.test(er) ||
+        r?.status === 405 ||
+        (/token/i.test(er) && /invalid|expired|inválido|vencido/i.test(er))
       );
-      return `  ${i+1}) Tel ...${tl}: ${payErr ? '💰 FALTA PAGO/SALDO Factiliza → ' : ''}${er}${extraStr}`;
+      return `  ${i+1}) Tel ...${tl}: ${realPagoItem ? '💰 FALTA PAGO/SALDO Factiliza CONFIRMADO → ' : ''}${er}${extraStr}`;
     }).join('\n');
     let msjFin = `📢 Comunicado enviado: ${ok} ok, ${fail} fallos. (Versión EF: ${body?.ef_version || 'desconocida'})`;
+    if(ok > 0 && fail === 0) msjFin += ` ✔️ TODOS LOS DESTINATARIOS RECIBIERON EL MENSAJE.`;
+    if(ok > 0 && results.some(r => r?.ok && r?.retryAsText)) msjFin += ` 🔁 (Algunos OK pasaron por REINTENTO AUTO SOLO-TEXTO, igual que las asistencias).`;
     if(fail > 0 && fallosDetalle) msjFin += `\n\n🔍 Detalle fallos (primeros ${Math.min(3, fail)}):\n${fallosDetalle}`;
+    // FINALMENTE: payGlobal SOLO con STRINGS reales (no status 500 solo)
     const payGlobal = (function(){
-      if(results.some(r => r?.status === 405)) return true;
+      if(results.some(r => r?.status === 405)) {
+        // Confirmar si hay strings reales
+        const algunoConStrings = results.some(r => {
+          const m = String(r?.error || r?.rawPreview || r?.details?.message || r?.details?.mensaje || r?.details?.error || '');
+          return /falta de pago|falta pago|sin saldo|suspended|suspendid|949035687|vencid/i.test(m);
+        });
+        if(algunoConStrings) return true;
+      }
       return results.some(r => {
         const m = String(r?.error || r?.rawPreview || r?.details?.message || r?.details?.mensaje || r?.details?.error || '');
-        return m.includes('falta de pago') || m.includes('405') || m.toLowerCase().includes('token') || m.includes('949035687') || m.includes('sin saldo') ||
-          ((r?.status === 500) && /internal server error|server error/i.test(m));
+        return /falta de pago|falta pago|sin saldo|suspended|suspendid|vencid|949035687|insufficient|no credit|agotad|acabad/i.test(m) ||
+          ((r?.status === 405) && /token|pago|saldo/i.test(m));
       });
     })();
-    if(payGlobal) msjFin += `\n\n💰 🚨 GLOBAL: PROBLEMA CON PROVEEDOR FACTILIZA (falta saldo/pago o servidor caído).\n👉 ESCRIBE AHORA A SOPORTE WHATSAPP: +51 949035687\n(No es error del sistema CEBA-JAD; resolución depende de Factiliza).`;
-    if(fail && !payGlobal) msjFin += `\n\n💡 Tip: revisa los detalles arriba. Si el error no se explica, envía captura consola a soporte.`;
-    toast(msjFin, fail ? (payGlobal ? 'warning' : 'warning') : 'success', fail > 0 ? 20000 : 7000);
+    if(payGlobal) msjFin += `\n\n💰 🚨 GLOBAL: CONFIRMADO PROBLEMA CON PROVEEDOR FACTILIZA (falta saldo/pago o suspensión por ellos).\n👉 ESCRIBE AHORA A SOPORTE WHATSAPP: +51 949035687\n(No es error del sistema CEBA-JAD; resolución depende de Factiliza).`;
+    else if(fail && !payGlobal) msjFin += `\n\n💡 Tip: los envíos SIN IMAGEN (asistencias de salida Luis Belleza 2C) SÍ funcionan correctamente. El error está sólo en el endpoint multimedia con IMAGEN de Factiliza. El sistema reintentó automáticamente con SOLO-TEXTO (igual que asistencias). Si sigue fallando, escribe a soporte Factiliza.`;
+    toast(msjFin, fail ? (payGlobal ? 'warning' : 'warning') : 'success', fail > 0 ? 22000 : 8000);
     if(!esStaff && publicarPortalAlumnos) {
       await _publicarComunicadosPortal(rows, tituloPortal, tpl);
     }

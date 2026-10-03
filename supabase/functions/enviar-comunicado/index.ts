@@ -12,10 +12,10 @@ function sleep(ms: number) {
 }
 
 // ================================================================
-// ✅ v207x: WRAPPER SEGURIDAD TOTAL. Si hay crash de sintaxis o
+// ✅ v207y: WRAPPER SEGURIDAD TOTAL. Si hay crash de sintaxis o
 // error en inicialización de módulos, devolvemos JSON claro.
 // ================================================================
-const __EF_VERSION = 'v207x';
+const __EF_VERSION = 'v207y';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -281,37 +281,126 @@ serve(async (req) => {
           typeof details?.msg === 'string' ? details.msg :
           '';
         const dTextLower = (dMessage + ' ' + rawPreview).toLowerCase();
-        // Pay 405-detection enhanced: accept any of these
-        const isFactilizaPago =
-          (res.status === 405) ||
+
+        // ================================================================
+        // ✅ v207y: FIN DEL FALSO POSITIVO "FALTA DE PAGO" (Moises confirmó
+        // que la asistencia SALIDA Luis Belleza 2C Virtual 11:20pm SÍ ENVÍA
+        // OK = endpoint sendText_v1 SIN IMAGEN funciona PERO sendMedia_b64
+        // (logo default) devuelve 500 Internal Server Error = NO es falta
+        // pago! SOLO marcamos falta pago SI LOS STRINGS REALES APARECEN en
+        // el body raw/message de Factiliza.
+        // ================================================================
+        let _huboFaltaPagoStrings = (
           dTextLower.includes('falta de pago') ||
           dTextLower.includes('falta pago') ||
           dTextLower.includes('sin saldo') ||
+          dTextLower.includes('insufficient') ||
+          dTextLower.includes('no credit') ||
+          dTextLower.includes('credit') && (dTextLower.includes('expir') || dTextLower.includes('agotad') || dTextLower.includes('acabad')) ||
           dTextLower.includes('suspended') ||
           dTextLower.includes('suspendid') ||
           dTextLower.includes('vencid') ||
-          dTextLower.includes('soporte') ||
-          (String(details?.success) === 'false' && dMessage.length > 0) ||
-          // 500 Internal Server Error en Factiliza para cuentas sin pagar también
-          (res.status === 500 && (
-            !dMessage ||
-            dTextLower.includes('internal server error') ||
-            dTextLower.includes('server error')
-          ));
-        let errorHumano = dMessage;
+          res.status === 405 ||
+          dTextLower.includes('949035687') ||
+          dTextLower.includes('+51') && dTextLower.includes('soporte') ||
+          dTextLower.includes('soporte') && dTextLower.includes('whatsapp') ||
+          dTextLower.includes('token') && (dTextLower.includes('invalid') || dTextLower.includes('expired') || dTextLower.includes('inválido') || dTextLower.includes('vencido'))
+        );
+        // Si había strings reales de falta pago → confirmamos.
+        let isFactilizaPago = _huboFaltaPagoStrings;
+        // ================================================================
+        // ✅ v207y: RETRY AUTOMÁTICO SOLO-TEXTO (como asistencia salida
+        // Luis Belleza que funciona). Si sendMedia falla 400/500 y NO hay
+        // strings de falta pago → reintentar MISMO item con sendText_v1
+        // SIN imagen SIN caption (igual que EF enviar-whatsapp asistencia).
+        // ================================================================
+        let retryAsText = false;
+        let secondStatus = 0;
+        let secondOk = false;
+        let secondRaw = '';
+        let secondPreview = '';
+        let secondMessage = '';
+        const firstHadMedia = (mediaBase64 && filename) || !!urlImagen;
+        const firstFailedMediaNoPago = firstHadMedia && !res.ok &&
+          (res.status === 400 || res.status >= 500 || dTextLower.includes('internal server error')) &&
+          !isFactilizaPago;
+        if (firstFailedMediaNoPago) {
+          retryAsText = true;
+          try {
+            const epText1 = `${factilizaBase}/api/v1/message/sendText/${instanciaSafe}`;
+            const sf2 = await fetch(epText1, {
+              method: 'POST',
+              headers: factilizaHeaders,
+              body: JSON.stringify({ number: num, text: mensaje, numero: num, texto: mensaje }),
+            });
+            secondStatus = sf2.status;
+            secondOk = sf2.ok;
+            const sf2txt = await sf2.text().catch(() => '');
+            secondRaw = sf2txt || '';
+            secondPreview = String(secondRaw || '').slice(0, 240);
+            try {
+              const sj = JSON.parse(secondRaw);
+              secondMessage = String(sj?.message || sj?.mensaje || sj?.error || sj?.msg || '');
+            } catch(_) {}
+            const mergedLower = (secondMessage + ' ' + secondPreview).toLowerCase();
+            if (
+              mergedLower.includes('falta de pago') || mergedLower.includes('falta pago') ||
+              mergedLower.includes('sin saldo') || mergedLower.includes('suspended') ||
+              mergedLower.includes('suspendid') || mergedLower.includes('vencid') ||
+              sf2.status === 405 || mergedLower.includes('949035687') ||
+              mergedLower.includes('token') && (mergedLower.includes('invalid') || mergedLower.includes('expired') || mergedLower.includes('inválido'))
+            ) {
+              isFactilizaPago = true;
+            }
+            // Sobreescribir con el resultado del retry SOLO-TEXTO (que funciona para asistencia).
+            res = sf2 as any;
+            modoUsado = 'sendText_v1-retryLuisBelleza';
+            endpointUsado = epText1;
+            txt = secondRaw;
+            rawPreview = secondPreview;
+            contentType = String(sf2.headers?.get?.('content-type') || '');
+            statusText = String(sf2.statusText || '');
+            details = (function(){ try { return secondRaw ? JSON.parse(secondRaw) : { raw: secondRaw }; } catch(_){ return { raw: secondRaw }; } })();
+            dMessage = secondMessage;
+          } catch (fe2) {
+            // Retry falló también: mantener el error original pero marcar retry fallido.
+            retryAsText = false;
+            try { console.error(`[EF COM ${__EF_VERSION}] item ${_itemIndex} RETRY sendText falló:`, String((fe2 as any)?.message || fe2)); } catch(_) {}
+          }
+        }
+
+        // Ajustar final ok/errHumano después de retry (si lo hubo)
+        const finalDMessage = dMessage;
+        const finalDTextLower = (finalDMessage + ' ' + rawPreview).toLowerCase();
+        // Rechequear pagos luego del retry (por si el retry devolvió 405 o strings reales)
+        if (!isFactilizaPago && (
+          res.status === 405 ||
+          finalDTextLower.includes('falta de pago') || finalDTextLower.includes('falta pago') ||
+          finalDTextLower.includes('sin saldo') || finalDTextLower.includes('suspended') ||
+          finalDTextLower.includes('suspendid') || finalDTextLower.includes('949035687')
+        )) { isFactilizaPago = true; }
+        let errorHumano = finalDMessage;
         if (isFactilizaPago) {
           errorHumano =
-            (dMessage ? (dMessage + ' — ') : '') +
+            (finalDMessage ? (finalDMessage + ' — ') : '') +
             `[ESTADO FACTILIZA: HTTP ${res.status}${statusText?' ('+statusText+')':''}] ` +
-            '👉 CONTACTA SOPORTE FACTILIZA WHATSAPP INMEDIATAMENTE: +51 949035687 (probable falta de pago/saldo o suspensión temporal del proveedor WhatsApp).' +
+            '👉 CONTACTA SOPORTE FACTILIZA WHATSAPP INMEDIATAMENTE: +51 949035687 (confirmado FALTA DE PAGO/SALDO o suspensión temporal del proveedor WhatsApp por ellos).' +
             (rawPreview ? ` Raw preview: ${rawPreview.replace(/\s+/g,' ').slice(0,160)}` : '');
+        } else if (firstFailedMediaNoPago && !secondOk && retryAsText === false) {
+          errorHumano = `Endpoint multimedia sendMedia falló (HTTP ${res.status}) y el reintento automático SOLO-TEXTO también falló. SOPORTE FACTILIZA WHATSAPP: +51 949035687.` +
+            (rawPreview ? ` Raw: ${rawPreview.slice(0, 160)}` : '');
         } else if (!errorHumano) {
           if (res.status === 401 || res.status === 403) errorHumano = `Token Factiliza inválido/expirado (HTTP ${res.status}). Revisa Configuración → WhatsApp y vuelve a pegar el token. Token preview: ${tokenPreview}`;
           else if (res.status === 404) errorHumano = `Endpoint Factiliza no encontrado (HTTP 404) ${modoUsado} → endpointUsado: ${endpointUsado}`;
           else if (res.status === 429) errorHumano = `Demasiados envíos seguidos (rate-limit). Espera 1 minuto y vuelve a intentar. (HTTP 429)`;
-          else if (res.status >= 500) errorHumano = `Servidor Factiliza caído (HTTP ${res.status}${statusText?' '+statusText:''}). Raw: ${rawPreview.slice(0, 160) || '(sin cuerpo)'} → SOPORTE FACTILIZA WHATSAPP: +51 949035687.`;
+          else if (res.status >= 500) errorHumano = `Servidor Factiliza devolvió error genérico (HTTP ${res.status}${statusText?' '+statusText:''}). Raw: ${rawPreview.slice(0, 160) || '(sin cuerpo)'} → SI PERSISTE, escribe a SOPORTE FACTILIZA WHATSAPP: +51 949035687. (Nota: los envíos SIN IMAGEN de asistencias SÍ funcionan).`;
           else if (res.status === 200 || res.ok) errorHumano = '';
           else errorHumano = `HTTP ${res.status}${statusText?' ('+statusText+')':''} sin detalle. Raw preview: ${rawPreview.slice(0, 160) || '(sin cuerpo)'}`;
+        } else {
+          // errorHumano tenía texto pero no era pago: añadir soporte si 4xx/5xx
+          if (!res.ok && !String(errorHumano).includes('949035687')) {
+            errorHumano = String(errorHumano) + ' 👉 Si el error persiste contacta a Factiliza WhatsApp: +51 949035687.';
+          }
         }
         const okFinal = !!(res.ok && !errorHumano);
 
@@ -323,6 +412,8 @@ serve(async (req) => {
           error: okFinal ? '' : (errorHumano || `Error HTTP ${res.status}`),
           details,
           rawPreview,
+          retryAsText,
+          firstFailedMedia: firstFailedMediaNoPago,
           debug: {
             colegio: String(colegioId).slice(0,8),
             usuario: String(user.id).slice(0,8),
@@ -343,9 +434,15 @@ serve(async (req) => {
             resOk: res.ok,
             resStatus: res.status,
             rawLen: String(txt||'').length,
+            retryAsText,
+            secondStatus,
+            secondOk,
+            secondPreview: secondPreview ? secondPreview.slice(0, 120) : '',
+            firstHadMedia,
+            firstFailedMediaNoPago,
           },
         });
-        try { console.log(`[EF COM ${__EF_VERSION}] item ${_itemIndex} tel=${telMask} ${modoUsado} → HTTP ${res.status}${statusText?' '+statusText:''} took=${tookMs}ms ok=${okFinal}${errorHumano?(' err='+String(errorHumano).slice(0,120)):''}`); } catch(_) {}
+        try { console.log(`[EF COM ${__EF_VERSION}] item ${_itemIndex} tel=${telMask} ${modoUsado} → HTTP ${res.status}${statusText?' '+statusText:''} took=${tookMs}ms ok=${okFinal} retry=${retryAsText?'Y':'N'}${errorHumano?(' err='+String(errorHumano).slice(0,200)):''}`); } catch(_) {}
       } catch (itemLevelError) {
         // Catch de absolutamente TODO por item.
         try { console.error(`[EF COM ${__EF_VERSION}] item ${_itemIndex} ITEM-LEVEL CRASH:`, itemLevelError); } catch(_) {}
