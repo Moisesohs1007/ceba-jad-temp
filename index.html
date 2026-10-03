@@ -22751,13 +22751,7 @@ async function generarAlertasAsistencia() {
       const diasHabiles = _buildBusinessDays(periodoInicio, periodoFin);
       diasHab = diasHabiles.length;
 
-      const resumen = await DB.getResumenMes(mesSel);
-      const resMap = {};
-      (resumen||[]).forEach(r => {
-        if(!r || !alumnosIds.has(r.alumnoId)) return;
-        resMap[r.alumnoId] = { puntual: (r.puntual||0), tardanza: (r.tardanza||0) };
-      });
-
+      // TARDANZAS = mismo fetch exitoso de siempre (usa alumnoIdsList directo):
       const regsTard = await DB.getRegistros({
         desde: periodoInicio,
         hasta: periodoFin,
@@ -22807,82 +22801,73 @@ async function generarAlertasAsistencia() {
         .sort((a,b) => (b.tardanzas - a.tardanzas) || a.nombre.localeCompare(b.nombre));
 
       // ================================================================
-      // ✅ MOISES FIX v207l: FALLBACK si tabla resumen_mensual NO EXISTE
-      //   o tiene menos del 30% de alumnos con datos → NO USAR resumen,
-      //   calcular presencias REALES con registros INGRESO para TODO alumno
-      //   (igual que Modo Rango que ya funciona 100%).
+      // ✅ MOISES v207o FIX DEFINITIVO MODO MES:
+      //   FETCH SIMPLE (como para regsTard) DE TODOS LOS INGRESO DEL MES
+      //   CON ALUMNOIDSLIST (igual que tardanzas). NUNCA más resumen_mensual,
+      //   nunca más absentCandidates, nunca más chunks. Presencia Set por alumno.
       // ================================================================
-      const resumenConfiable = (resumen||[]).length > 0 &&
-        (resumen.filter(r => r && alumnosIds.has(r.alumnoId)).length >= Math.ceil(alumnos.length * 0.3));
+      toast('🔄 Cargando TODOS los INGRESOS del mes (mismo método que Tardanzas)...', 'info');
+      const regsIngreso = await DB.getRegistros({
+        desde: periodoInicio,
+        hasta: periodoFin,
+        tipo: 'INGRESO',
+        turno: filtroNivel || undefined,
+        grado: filtroGrado || undefined,
+        seccion: filtroSecc || undefined,
+        alumnoIds: alumnoIdsList || undefined,
+        columns: 'alumno_id,fecha,estado,tipo'
+      });
+      console.log(`[ALERTAS v207o MES] regsIngreso TOTAL recuperados: ${(regsIngreso||[]).length}`);
+      console.log(`[ALERTAS v207o MES] regsIngreso aleatorios 10:`, (regsIngreso||[]).slice(0,10).map(r=>`${r.alumnoId}|${r.fecha}|${r.estado||'-'}`).join(' · '));
 
-      if(!resumenConfiable) {
-        toast('ℹ️ Tabla resumen_mensual no disponible o insuficiente. Usando registros INGRESO reales para calcular faltas (modo seguro fallback).', 'info');
-      }
-
-      let absentCandidates;
-      if(resumenConfiable) {
-        absentCandidates = alumnos
-          .map(a => {
-            const r = resMap[a.id] || { puntual: 0, tardanza: 0 };
-            const aus = Math.max(0, diasHab - (r.puntual + r.tardanza));
-            return { alumnoId: a.id, ausenciasEstimadas: aus };
-          })
-          .map(x => x.alumnoId);
-      } else {
-        absentCandidates = alumnos.map(a => a.id);
-      }
-
-      const presCand = {};
-      if(absentCandidates.length) {
-        let regsCand;
-        if(!resumenConfiable) {
-          // Fallback: fetch TODOS los INGRESO del mes (sin filtro alumnoIds),
-          // más robusto porque no depende de chunks con arrays gigantes
-          if(alumnos.length <= 500) {
-            regsCand = await DB.getRegistros({
-              desde: periodoInicio, hasta: periodoFin, tipo:'INGRESO',
-              alumnoIds: absentCandidates, columns:'alumno_id,fecha,tipo'
-            });
-          } else {
-            regsCand = await _fetchRegistrosChunked(
-              { desde: periodoInicio, hasta: periodoFin, tipo:'INGRESO', columns:'alumno_id,fecha,tipo' },
-              absentCandidates
-            );
-          }
-        } else {
-          regsCand = (absentCandidates.length <= 500)
-            ? await DB.getRegistros({ desde: periodoInicio, hasta: periodoFin, tipo:'INGRESO', alumnoIds: absentCandidates, columns:'alumno_id,fecha,tipo' })
-            : await _fetchRegistrosChunked({ desde: periodoInicio, hasta: periodoFin, tipo:'INGRESO', columns:'alumno_id,fecha,tipo' }, absentCandidates);
-        }
-        (regsCand||[]).forEach(r => {
-          if(!r || !r.alumnoId || !r.fecha) return;
-          if(!presCand[r.alumnoId]) presCand[r.alumnoId] = new Set();
-          presCand[r.alumnoId].add(r.fecha);
-        });
-      }
-
-      const preFilterRows = (resumenConfiable ? absentCandidates : alumnos.map(a => a.id))
-        .map(id => {
-          const a = alumnosById[id] || {};
-          const pres = presCand[id] || new Set();
-          const faltas = diasHabiles.filter(d => !pres.has(d));
-          return {
-            tipo: 'AUSENCIA',
-            alumnoId: id,
-            nombre: ((a.apellidos||'')+' '+(a.nombres||'')).trim() || id,
-            grado: a.grado,
-            seccion: a.seccion,
-            nivel: _alumnoNivelText(a, typeof configCache !== 'undefined' ? configCache : {}) || a.turno,
-            dias: _compact(faltas.map(_diaLabel).filter(Boolean), 12) || '-',
-            ausencias: faltas.length || 0,
-            tardanzas: 0
-          };
+      const presTotal = {};
+      (regsIngreso||[])
+        .filter(r => alumnosIds.has(r.alumnoId) && r.fecha)
+        .forEach(r => {
+          if(!presTotal[r.alumnoId]) presTotal[r.alumnoId] = new Set();
+          presTotal[r.alumnoId].add(r.fecha);
         });
 
+      // Estadística presencias: cuántos alumnos tienen 0,1-5,6-15,16-25,26-30 presencias
+      const presCnts = Object.values(presTotal).map(s => s.size);
+      const pMin = presCnts.length ? Math.min(...presCnts) : 0;
+      const pMax = presCnts.length ? Math.max(...presCnts) : 0;
+      const pAvg = presCnts.length ? (presCnts.reduce((s,v)=>s+v,0)/presCnts.length).toFixed(1) : '0';
+      const alumnosConPresencia = Object.keys(presTotal).length;
+      console.log(`[ALERTAS v207o MES] Presencia stats: Alumnos c/ al menos 1 ingreso=${alumnosConPresencia}/${alumnos.length} · MinPres=${pMin} · MaxPres=${pMax} · AvgPres=${pAvg} · DíasHabiles=${diasHab}`);
+      console.log(`[ALERTAS v207o MES] 20 alumnos CON MÁS presencias: `,
+        Object.entries(presTotal)
+          .sort((a,b)=>b[1].size - a[1].size)
+          .slice(0,20)
+          .map(([id,s])=>{ const a=alumnosById[id]||{}; return `${((a.apellidos||'')+' '+(a.nombres||'')).trim().split(' ').slice(0,2).join(' ')}=${s.size}pres → ${Math.max(0,diasHab-s.size)}faltas`; })
+          .join(' | ')
+      );
+      console.log(`[ALERTAS v207o MES] 20 alumnos CON MENOS presencias: `,
+        Object.entries(presTotal)
+          .sort((a,b)=>a[1].size - b[1].size)
+          .slice(0,20)
+          .map(([id,s])=>{ const a=alumnosById[id]||{}; return `${((a.apellidos||'')+' '+(a.nombres||'')).trim().split(' ').slice(0,2).join(' ')}=${s.size}pres → ${Math.max(0,diasHab-s.size)}faltas`; })
+          .join(' | ')
+      );
+
+      const preFilterRows = alumnos.map(a => {
+        const pres = presTotal[a.id] || new Set();
+        const faltas = diasHabiles.filter(d => !pres.has(d));
+        return {
+          tipo: 'AUSENCIA',
+          alumnoId: a.id,
+          nombre: ((a.apellidos||'')+' '+(a.nombres||'')).trim() || a.id,
+          grado: a.grado,
+          seccion: a.seccion,
+          nivel: _alumnoNivelText(a, typeof configCache !== 'undefined' ? configCache : {}) || a.turno,
+          dias: _compact(faltas.map(_diaLabel).filter(Boolean), 12) || '-',
+          ausencias: faltas.length || 0,
+          tardanzas: 0
+        };
+      });
+
       // ================================================================
-      // ✅ MOISES DEBUG v207m: Estadísticas distribución faltas ANTES del filtro
-      //   Sirve para verificar que sí existen alumnos con 3,4,5,8,10,12 faltas
-      //   y no todos tienen 30 (verificación root cause fix).
+      // ✅ MOISES DEBUG v207o: Estadísticas distribución faltas ANTES filtro
       // ================================================================
       const todasAus = preFilterRows.map(r => r.ausencias);
       const minA = todasAus.length ? Math.min(...todasAus) : 0;
@@ -22900,18 +22885,15 @@ async function generarAlertasAsistencia() {
         `[30]=${cnt(30,30)}`,
         `≥${ausTh}=${cntGE(ausTh)}`
       ].join(' · ');
-      console.log(`[ALERTAS v207n MES] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${minA} Max=${maxA} Prom=${avgA} | Dist: ${statsDebug}`);
-      console.log(`[ALERTAS v207n MES] 20 alumnos CON MENOS faltas:`,
+      console.log(`[ALERTAS v207o MES] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${minA} Max=${maxA} Prom=${avgA} | Dist: ${statsDebug}`);
+      console.log(`[ALERTAS v207o MES] 20 alumnos CON MENOS faltas:`,
         [...preFilterRows].sort((a,b)=>a.ausencias-b.ausencias).slice(0,20).map(r => `${r.nombre.split(' ').slice(0,2).join(' ')}=${r.ausencias}`).join(' | ')
       );
-      console.log(`[ALERTAS v207n MES] Total alumnos preFilterRows: ${preFilterRows.length} · Total registros INGRESO recuperados: ${Object.values(presCand).reduce((s,v)=>s+v.size,0)}`);
       toast(`📊 Debug: Min=${minA} · Máx=${maxA} · Prom=${avgA} · Rangos: ${statsDebug}`, 'info');
       window.__ALERTAS_DIST_FALTAS__ = { modo: 'MES', minA, maxA, avgA, rangos: statsDebug, umbralAus: ausTh, totalAlumnos: preFilterRows.length };
 
       const absentRows = preFilterRows
         .filter(x => x.ausencias >= ausTh)
-        // ✅ MOISES v207n FIX BLOQUEO 17: ORDEN ASCENDENTE (PRIMERO los de MENOS faltas = 3,4,5 visibles ARRIBA)
-        //   Antes: DESCENDENTE = los de 17,18,30 aparecían PRIMEROS, ocultando <17 abajo.
         .sort((a,b) => (a.ausencias - b.ausencias) || a.nombre.localeCompare(b.nombre));
 
       rows = [...tardyRows, ...absentRows];
