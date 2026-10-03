@@ -22705,7 +22705,7 @@ async function generarAlertasAsistencia() {
         });
       }
 
-      const absentRows = absentCandidates
+      const preFilterRangoRows = absentCandidates
         .map(id => {
           const a = alumnosById[id] || {};
           const pres = presCand[id] || new Set();
@@ -22721,7 +22721,16 @@ async function generarAlertasAsistencia() {
             ausencias: faltas.length || 0,
             tardanzas: 0
           };
-        })
+        });
+
+      // Debug distribución modo RANGO (mismo patrón v207m)
+      const todasAusR = preFilterRangoRows.map(r => r.ausencias);
+      const cntR = (n1,n2) => todasAusR.filter(v => v>=n1 && v<=n2).length;
+      const cntGER = (n) => todasAusR.filter(v => v>=n).length;
+      const statsR = [`[0-2]=${cntR(0,2)}`,`[3-5]=${cntR(3,5)}`,`[6-9]=${cntR(6,9)}`,`[10-15]=${cntR(10,15)}`,`[16-20]=${cntR(16,20)}`,`[21-29]=${cntR(21,29)}`,`[30+]=${cntR(30,999)}`,`≥${ausTh}=${cntGER(ausTh)}`].join(' · ');
+      console.log(`[ALERTAS RANGO v207m] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${todasAusR.length?Math.min(...todasAusR):0} Max=${todasAusR.length?Math.max(...todasAusR):0} | Dist: ${statsR}`);
+
+      const absentRows = preFilterRangoRows
         // ✅ MOISES FIX 2: Filtrar >= ausTh SOLO DESPUÉS de calcular
         //    ausencias REALES con registros día a día (no estimado viejo).
         //    Aplica para modo RANGO y modo MES (ambas ramas replace_all).
@@ -22847,7 +22856,7 @@ async function generarAlertasAsistencia() {
         });
       }
 
-      const absentRows = (resumenConfiable ? absentCandidates : alumnos.map(a => a.id))
+      const preFilterRows = (resumenConfiable ? absentCandidates : alumnos.map(a => a.id))
         .map(id => {
           const a = alumnosById[id] || {};
           const pres = presCand[id] || new Set();
@@ -22863,7 +22872,34 @@ async function generarAlertasAsistencia() {
             ausencias: faltas.length || 0,
             tardanzas: 0
           };
-        })
+        });
+
+      // ================================================================
+      // ✅ MOISES DEBUG v207m: Estadísticas distribución faltas ANTES del filtro
+      //   Sirve para verificar que sí existen alumnos con 3,4,5,8,10,12 faltas
+      //   y no todos tienen 30 (verificación root cause fix).
+      // ================================================================
+      const todasAus = preFilterRows.map(r => r.ausencias);
+      const minA = todasAus.length ? Math.min(...todasAus) : 0;
+      const maxA = todasAus.length ? Math.max(...todasAus) : 0;
+      const avgA = todasAus.length ? (todasAus.reduce((s,v)=>s+v,0)/todasAus.length).toFixed(1) : '0';
+      const cnt = (n1,n2) => todasAus.filter(v => v>=n1 && v<=n2).length;
+      const cntGE = (n) => todasAus.filter(v => v>=n).length;
+      const statsDebug = [
+        `[0-2]=${cnt(0,2)}`,
+        `[3-5]=${cnt(3,5)}`,
+        `[6-9]=${cnt(6,9)}`,
+        `[10-15]=${cnt(10,15)}`,
+        `[16-20]=${cnt(16,20)}`,
+        `[21-29]=${cnt(21,29)}`,
+        `[30]=${cnt(30,30)}`,
+        `≥${ausTh}=${cntGE(ausTh)}`
+      ].join(' · ');
+      console.log(`[ALERTAS v207m] Distribución faltas (ANTES filtro ≥${ausTh}): Min=${minA} Max=${maxA} Prom=${avgA} | Dist: ${statsDebug}`);
+      console.log(`[ALERTAS v207m] Ejemplos 10 primeros alumnos (faltas):`, preFilterRows.slice(0,10).map(r => `${r.nombre.split(' ').slice(0,2).join(' ')}=${r.ausencias}`).join(' | '));
+      toast(`📊 Debug distribución faltas: Min=${minA} · Máx=${maxA} · Prom=${avgA} · Rangos: ${statsDebug}`, 'info');
+
+      const absentRows = preFilterRows
         // ✅ MOISES FIX 2: Filtrar >= ausTh SOLO DESPUÉS de calcular
         //    ausencias REALES con registros día a día (no estimado viejo).
         //    Aplica para modo RANGO y modo MES (ambas ramas replace_all).
